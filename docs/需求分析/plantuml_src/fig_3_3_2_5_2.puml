@@ -1,0 +1,11 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:进入考试列表;
+:按科目或日期设置筛选条件;
+:系统查询并展示结果;
+if (无匹配结果?) then (是)
+:提示暂无相关考试;
+endif
+stop
+@enduml

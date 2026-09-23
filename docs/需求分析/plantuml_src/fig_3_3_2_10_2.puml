@@ -1,0 +1,14 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:进入日历视图;
+:切换日视图/周视图/月视图;
+:拖拽任务调整时间;
+:触发冲突检测;
+if (存在冲突?) then (是)
+:回弹原位置并提示;
+else (否)
+:保存新时间;
+endif
+stop
+@enduml

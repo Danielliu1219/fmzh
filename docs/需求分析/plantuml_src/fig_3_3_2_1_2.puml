@@ -1,0 +1,12 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:学生登录进入首页;
+:加载今日待办任务、近期考试、提醒与复习进度;
+:计算各考试倒计时天数;
+if (存在 7 天内考试?) then (是)
+:突出显示倒计时与压力提示;
+endif
+:聚合展示并实时更新;
+stop
+@enduml

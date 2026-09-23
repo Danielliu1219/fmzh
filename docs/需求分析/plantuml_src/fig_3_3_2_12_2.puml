@@ -1,0 +1,8 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:进入科目设置;
+:为各科目选择颜色标签;
+:保存后日历与任务按颜色区分展示;
+stop
+@enduml

@@ -1,0 +1,11 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:输入历年题分析结果与用户画像;
+:以历年题必考点为核心计算基础权重;
+:按画像调整：基础差→提高基础知识点权重，保及格;
+:目标高→提高知识点覆盖率与难题权重;
+:结合资料权重修正;
+:输出各知识点权重;
+stop
+@enduml

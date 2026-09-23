@@ -1,0 +1,10 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:学生进入救急模式（或由压力指数触发）;
+:选择即将考试的科目;
+:按高权重考点与剩余时间生成冲刺清单;
+:优先安排高频基础考点;
+:生成高优先级短期任务;
+stop
+@enduml

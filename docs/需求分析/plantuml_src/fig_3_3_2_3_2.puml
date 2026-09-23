@@ -1,0 +1,16 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:选择目标考试;
+if (选择修改?) then (修改)
+:编辑信息并保存;
+else (否)
+:弹出二次确认;
+if (确认删除?) then (是)
+:删除考试记录;
+else (否)
+:取消删除;
+endif
+endif
+stop
+@enduml

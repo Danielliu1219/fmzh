@@ -1,0 +1,11 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:用户或管理员执行关键操作;
+:后端拦截并记录操作日志（操作人、时间、类型、对象）;
+:日志持久化存储;
+if (管理员查看日志?) then (是)
+:按条件查询展示日志;
+endif
+stop
+@enduml

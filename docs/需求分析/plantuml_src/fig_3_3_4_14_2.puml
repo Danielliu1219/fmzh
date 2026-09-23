@@ -1,0 +1,8 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:构造提示词，限定输出基于用户上传资料、课程资料与考试目标;
+:要求大模型输出固定 JSON 格式;
+:页面固定展示免责提示：内容仅供复习参考，需结合教材与课堂要求判断;
+stop
+@enduml

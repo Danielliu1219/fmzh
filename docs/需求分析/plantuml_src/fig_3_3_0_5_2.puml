@@ -1,0 +1,16 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:用户选择文件上传;
+if (格式在允许列表?) then (是)
+if (大小不超过上限?) then (是)
+:安全扫描（后缀与内容头校验）;
+:保存文件并记录元数据;
+else (否)
+:拒绝并提示文件过大;
+endif
+else (否)
+:拒绝并提示格式不支持;
+endif
+stop
+@enduml

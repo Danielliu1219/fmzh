@@ -1,0 +1,14 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:选择科目并上传文件（PDF/Word/PPT/TXT/图片）;
+:调用统一文件校验（公共功能 0.5）;
+if (校验通过?) then (是)
+:后台解析文件内容（文本提取）;
+:保存文件与解析结果;
+:提示上传成功;
+else (否)
+:拒绝并提示原因;
+endif
+stop
+@enduml

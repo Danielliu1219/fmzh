@@ -1,0 +1,31 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "学生" as ST
+actor "游客" as V
+actor "管理员" as AD
+actor "DeepSeek 大模型 API" as LLM <<外部系统>>
+actor "四川大学教务处网站" as JW <<外部系统>>
+rectangle "期末周别慌！系统" {
+  usecase "账号管理" as UC1
+  usecase "考试与日程管理" as UC2
+  usecase "复习资料管理" as UC3
+  usecase "AI 智能分析" as UC4
+  usecase "学习统计" as UC5
+  usecase "提醒通知" as UC6
+  usecase "特色功能" as UC7
+  usecase "管理端功能" as UC8
+}
+ST --> UC1
+ST --> UC2
+ST --> UC3
+ST --> UC4
+ST --> UC5
+ST --> UC6
+ST --> UC7
+V --> UC1
+AD --> UC1
+AD --> UC8
+JW --> UC2
+LLM --> UC4
+@enduml

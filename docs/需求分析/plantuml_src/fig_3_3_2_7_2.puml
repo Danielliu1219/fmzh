@@ -1,0 +1,11 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:选择目标学习任务;
+if (选择编辑?) then (修改)
+:修改属性并保存（冲突检测同上）;
+else (否)
+:二次确认后删除;
+endif
+stop
+@enduml

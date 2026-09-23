@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 本地配置与数据（不要把本地数据库/密钥推上去）
+.env
+fmzh.db
+uploads/
+
+# 编辑器
+.vscode/
+.idea/

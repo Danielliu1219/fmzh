@@ -1,0 +1,50 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "学生" as ST
+actor "DeepSeek 大模型 API" as LLM <<外部系统>>
+rectangle "AI 智能分析" {
+  usecase "4.1 用户画像采集" as I1
+  usecase "4.2 复习资料权重计算" as I2
+  usecase "4.3 知识点与复习提纲提取" as I3
+  usecase "4.4 思维导图与记忆卡片生成" as I4
+  usecase "4.5 资料问答" as I5
+  usecase "4.6 自测题生成与自动判分" as I6
+  usecase "4.7 常考题型与高频考点分析" as I7
+  usecase "4.8 知识点权重计算" as I8
+  usecase "4.9 知识点可视化" as I9
+  usecase "4.10 个性化复习方案生成" as I10
+  usecase "4.11 分级推荐策略" as I11
+  usecase "4.12 动态调整计划与权重" as I12
+  usecase "4.13 推荐依据解释" as I13
+  usecase "4.14 大模型输出约束与免责提示" as I14
+}
+ST --> I1
+ST --> I2
+ST --> I3
+ST --> I4
+ST --> I5
+ST --> I6
+ST --> I7
+ST --> I8
+ST --> I9
+ST --> I10
+ST --> I11
+ST --> I12
+ST --> I13
+ST --> I14
+LLM --> I1
+LLM --> I3
+LLM --> I4
+LLM --> I5
+LLM --> I6
+LLM --> I7
+LLM --> I8
+LLM --> I10
+LLM --> I12
+I8 ..> I7 : <<include>>
+I10 ..> I1 : <<include>>
+I10 ..> I8 : <<include>>
+I12 ..> I6 : <<include>>
+I13 ..> I11 : <<extend>>
+@enduml

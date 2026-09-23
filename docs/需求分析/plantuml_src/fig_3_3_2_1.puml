@@ -1,0 +1,37 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "学生" as ST
+actor "四川大学教务处网站" as JW <<外部系统>>
+rectangle "考试与日程管理" {
+  usecase "2.1 首页聚合视图" as C1
+  usecase "2.2 录入考试安排" as C2
+  usecase "2.3 修改/删除考试安排" as C3
+  usecase "2.4 导入教务处统一考表" as C4
+  usecase "2.5 筛选查看考试列表" as C5
+  usecase "2.6 创建备考计划与学习任务" as C6
+  usecase "2.7 编辑/删除学习任务" as C7
+  usecase "2.8 倒推生成备考时间表" as C8
+  usecase "2.9 任务冲突检测" as C9
+  usecase "2.10 日历视图与拖拽调整" as C10
+  usecase "2.11 番茄钟与每日学习目标" as C11
+  usecase "2.12 科目颜色标签" as C12
+  usecase "2.13 ICS 导入导出" as C13
+}
+ST --> C1
+ST --> C2
+ST --> C3
+ST --> C4
+ST --> C5
+ST --> C6
+ST --> C7
+ST --> C8
+ST --> C10
+ST --> C11
+ST --> C12
+ST --> C13
+JW --> C4
+C8 ..> C6 : <<include>>
+C6 ..> C9 : <<include>>
+C10 ..> C9 : <<include>>
+@enduml

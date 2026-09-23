@@ -1,0 +1,9 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:学生针对资料输入问题;
+:携带资料上下文请求 DeepSeek;
+:大模型基于资料作答;
+:保存对话历史并支持多轮追问;
+stop
+@enduml

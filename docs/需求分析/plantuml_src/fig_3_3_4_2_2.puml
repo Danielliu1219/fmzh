@@ -1,0 +1,11 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:读取该科目全部资料及其标注;
+:按默认层级赋权重（重点 ＞ 历年题/练习题 ＞ 作业/笔记 ＞ 教材/PPT/实验报告）;
+if (学生手动调整权重?) then (是)
+:以学生设置为准覆盖默认值;
+endif
+:输出资料权重表，供分析提示词引用;
+stop
+@enduml

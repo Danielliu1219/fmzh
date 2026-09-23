@@ -1,0 +1,13 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:请求 DeepSeek 按历年题题型生成自测题;
+:输出客观题（选择/判断/填空）及参考答案;
+:学生作答并提交;
+:系统自动判分;
+if (存在答错的题?) then (是)
+:自动加入错题本;
+endif
+:记录得分，供动态调整参考;
+stop
+@enduml

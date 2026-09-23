@@ -1,0 +1,12 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:学生每日记录情绪自评（1~5）;
+:系统读取当日完成率与压力指数;
+:情绪综合评分 = 0.4×自评 + 0.3×完成率 + 0.2×(5-压力÷20) + 0.1×连续达标因子;
+:按评分档位组合节奏建议、计划调整建议与疏导语;
+if (连续 3 天低分?) then (是)
+:提示开启救急模式或降低目标;
+endif
+stop
+@enduml

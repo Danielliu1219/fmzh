@@ -1,0 +1,20 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "学生" as ST
+rectangle "特色功能" {
+  usecase "7.1 期末压力指数" as F1
+  usecase "7.2 临时救急模式" as F2
+  usecase "7.3 考前重点回顾列表" as F3
+  usecase "7.4 今日最重要的三件事" as F4
+  usecase "7.5 学习时段推荐" as F5
+  usecase "7.6 情绪记录与复习节奏建议" as F6
+}
+ST --> F1
+ST --> F2
+ST --> F3
+ST --> F4
+ST --> F5
+ST --> F6
+F6 ..> F1 : <<include>>
+@enduml

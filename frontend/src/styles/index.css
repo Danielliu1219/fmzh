@@ -1,0 +1,241 @@
+/* ============================================================
+   期末周别慌 · 全局设计系统 v2（纸 × 墨 × 珊瑚 · 编辑杂志风）
+   暖米纸底 #f0ede3 / 墨绿黑 #0c1614 / 珊瑚朱红 #e66348
+   印刷感：硬偏移阴影、墨线描边、宋体大标题、Space Grotesk 大数字
+   ============================================================ */
+
+:root {
+  /* —— 纸与墨 —— */
+  --bg-page: #f0ede3;      /* 暖米纸底 */
+  --bg-card: #f8f5ec;      /* 卡片（更浅的纸） */
+  --bg-soft: #e9e5d7;      /* 内嵌浅米（列表项、看板列） */
+  --line: #d9d4c3;         /* 细规则线（表格、分隔） */
+  --line-strong: #0c1614;  /* 墨线（卡片描边） */
+
+  /* —— 文字层级（绿灰墨色） —— */
+  --ink-1: #0c1614;        /* 墨绿黑主文字 */
+  --ink-2: #454e48;        /* 次级文字 */
+  --ink-3: #8b9084;        /* 弱化文字 / 占位 */
+
+  /* —— 珊瑚朱红 —— */
+  --coral: #e66348;        /* 主色 */
+  --coral-deep: #c2472f;   /* 主色按下 / 深珊瑚文字 */
+  --coral-soft: #f8e1d7;   /* 主色浅底 */
+  --coral-bright: #f0846b; /* 深色底（墨面板）上的珊瑚文字 */
+
+  /* —— 状态色（墨绿系） —— */
+  --green: #35554c;  --green-soft: #dfe8e2;
+  --amber: #a06a22;  --amber-soft: #f2e7cf;
+  --red: #b63a2e;    --red-soft: #f6ddd7;
+  --teal: #3f6f66;   --teal-soft: #ddeae5;
+
+  /* —— 字体 —— */
+  --font-serif: 'Noto Serif SC', 'Source Han Serif SC', '思源宋体', 'Songti SC', 'STSong', 'SimSun', serif;
+  --font-sans: 'Noto Sans SC', 'Source Han Sans SC', '思源黑体', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --font-num: 'Space Grotesk', 'DIN Alternate', 'Bahnschrift', 'Consolas', monospace;
+
+  /* —— 圆角（印刷感：更收敛） —— */
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-sm: 6px;
+
+  /* —— 硬偏移阴影（杂志印刷签名元素） —— */
+  --shadow-ink: 4px 4px 0 var(--ink-1);
+  --shadow-ink-sm: 3px 3px 0 var(--ink-1);
+  --shadow-ink-xs: 2px 2px 0 var(--ink-1);
+  --shadow-coral: 4px 4px 0 var(--coral);
+  --shadow-card: 0 1px 0 rgba(12, 22, 20, 0.06), 0 6px 18px rgba(12, 22, 20, 0.05);
+  --shadow-hover: 6px 6px 0 var(--ink-1);
+
+  /* —— 旧页面兼容别名 —— */
+  --text-hi: var(--ink-1);
+  --text-mid: var(--ink-2);
+  --text-low: var(--ink-3);
+  --bg-deep: var(--bg-page);
+  --glass: var(--bg-card);
+  --glass-border: var(--line-strong);
+  --violet: #35554c;
+  --cyan: #3f6f66;
+  --pink: #e66348;
+
+  /* —— Element Plus 主题（珊瑚朱红 + 墨色文字） —— */
+  --el-color-primary: #e66348;
+  --el-color-primary-light-3: #ec8270;
+  --el-color-primary-light-5: #f2a795;
+  --el-color-primary-light-7: #f7cabb;
+  --el-color-primary-light-8: #fadcd2;
+  --el-color-primary-light-9: #fcece6;
+  --el-color-primary-dark-2: #c2472f;
+  --el-border-radius-base: 8px;
+  --el-text-color-primary: #0c1614;
+  --el-text-color-regular: #454e48;
+  --el-text-color-secondary: #8b9084;
+  --el-border-color: #d9d4c3;
+  --el-border-color-light: #e2ddcd;
+  --el-border-color-lighter: #eae6d9;
+  --el-fill-color-light: #e9e5d7;
+  --el-bg-color: #f8f5ec;
+  --el-bg-color-page: #f0ede3;
+  --el-font-family: var(--font-sans);
+}
+
+/* —— 基础 —— */
+html,
+body {
+  background: var(--bg-page);
+  color: var(--ink-1);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 标题默认走宋体大标题（编辑风） */
+h1, h2, h3, h4 {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  color: var(--ink-1);
+  letter-spacing: 0.01em;
+}
+
+/* 数字工具类：Space Grotesk */
+.num,
+.hr-num,
+.tl-days,
+.ring-pct,
+.stat-value {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c9c4b4;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a294;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* —— Element Plus 组件重造 —— */
+.el-card {
+  background: var(--bg-card);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* 主按钮：珊瑚 + 墨线 + 硬阴影，按下有位移 */
+.el-button--primary {
+  --el-button-bg-color: var(--coral);
+  --el-button-border-color: var(--ink-1);
+  --el-button-hover-bg-color: var(--coral-deep);
+  --el-button-hover-border-color: var(--ink-1);
+  --el-button-active-bg-color: var(--coral-deep);
+  --el-button-active-border-color: var(--ink-1);
+  --el-button-text-color: #fff;
+  background: var(--coral);
+  border: 1.5px solid var(--ink-1);
+  box-shadow: var(--shadow-ink-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: var(--coral-deep);
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow-ink-sm);
+}
+.el-button--primary:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--ink-1);
+}
+
+/* 普通按钮：纸面 + 墨线 */
+.el-button {
+  font-weight: 600;
+}
+.el-button:not(.el-button--primary):not(.el-button--text):not(.el-button--link) {
+  background: var(--bg-card);
+  border: 1.5px solid var(--ink-1);
+  color: var(--ink-1);
+}
+.el-button:not(.el-button--primary):not(.el-button--text):not(.el-button--link):hover {
+  background: var(--bg-soft);
+  border-color: var(--ink-1);
+  color: var(--ink-1);
+}
+
+/* 链接按钮：珊瑚 + 下划线感 */
+.el-button--link,
+.el-button--text {
+  font-weight: 700;
+}
+
+/* 输入框：墨线描边，聚焦珊瑚 */
+.el-input__wrapper,
+.el-textarea__inner {
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: none !important;
+  background: #fffdf5;
+  transition: border-color 0.15s;
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  border-color: var(--coral);
+  box-shadow: var(--shadow-ink-xs) !important;
+}
+
+/* 标签页：珊瑚下划线 */
+.el-tabs__active-bar {
+  background: var(--coral);
+  height: 3px;
+}
+.el-tabs__item {
+  font-weight: 600;
+}
+
+/* 上传拖拽区 */
+.el-upload-dragger {
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+  transition: all 0.2s;
+}
+.el-upload-dragger:hover {
+  border-color: var(--coral);
+  background: var(--coral-soft);
+}
+.el-upload-dragger .el-icon--upload {
+  color: var(--coral);
+}
+
+/* 选择器 / 下拉弹层 */
+.el-select__wrapper,
+.el-input-number {
+  border-radius: var(--radius-sm);
+}
+
+/* 消息提示 */
+.el-message {
+  border: 1.5px solid var(--line-strong);
+  box-shadow: var(--shadow-ink-xs);
+  font-weight: 600;
+}
+
+/* 旧类名兼容 */
+.neon-text {
+  color: var(--coral);
+}
+.neon-text-pink {
+  color: var(--red);
+}

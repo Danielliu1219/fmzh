@@ -1,0 +1,19 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "学生" as ST
+actor "管理员" as AD
+rectangle "公共功能" {
+  usecase "0.1 身份认证与会话管理" as P1
+  usecase "0.2 数据隔离与访问控制" as P2
+  usecase "0.3 重要操作二次确认" as P3
+  usecase "0.4 操作日志记录" as P4
+  usecase "0.5 文件上传统一校验" as P5
+}
+ST --> P1
+ST --> P2
+ST --> P3
+ST --> P5
+AD --> P1
+AD --> P4
+@enduml

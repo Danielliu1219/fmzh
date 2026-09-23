@@ -1,0 +1,10 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:管理员录入或导入统一考试安排;
+:选择目标课程与范围;
+:校验数据;
+:发布考试安排;
+:学生可在考试页一键导入;
+stop
+@enduml

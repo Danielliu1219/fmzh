@@ -1,0 +1,13 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "学生" as ST
+actor "系统定时任务" as SCH <<系统内部>>
+rectangle "提醒通知" {
+  usecase "6.1 考前与任务提醒" as N1
+  usecase "6.2 通知管理" as N2
+}
+ST --> N1
+ST --> N2
+SCH --> N1
+@enduml

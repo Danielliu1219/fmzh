@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+backend/.venv/
+backend/.env
+
+# 数据库与上传文件（本地数据，不提交）
+backend/fmzh.db
+backend/uploads/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Office 打开文件时的临时锁文件
+~$*
+
+# 需求整理期的中间产物（素材图与文本转换稿，不入库）
+/2a9e24901687b5316d6626eec30e97bd*.jpg
+/2a9e24901687b5316d6626eec30e97bd*.png
+/简要用户需求列表_刘添屹小组_extracted.txt
+/简要用户需求列表_刘添屹小组_utf8.txt
+/项目介绍与小组分工_utf8.txt

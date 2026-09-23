@@ -1,0 +1,17 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:进入 AI 复习分析页;
+:勾选备考目标（保及格/稳中等/冲高分）;
+:勾选学习基础（薄弱/一般/扎实）;
+:填写剩余天数与每日可用时长;
+:勾选薄弱章节（可多选）;
+:可选：输入自然语言补充描述;
+:大模型将描述合并进画像并输出固定 JSON;
+if (必填字段齐全?) then (是)
+:画像 JSON 就绪;
+else (否)
+:前端提示补全缺失字段;
+endif
+stop
+@enduml

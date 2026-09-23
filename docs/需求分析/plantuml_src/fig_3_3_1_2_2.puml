@@ -1,0 +1,16 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:输入账号和密码;
+if (账号存在且密码正确?) then (是)
+:生成 JWT 并进入首页;
+else (否)
+:错误次数加 1;
+if (连续 3 次失败?) then (是)
+:锁定账号，提示找回或等待解锁;
+else (否)
+:提示重新输入;
+endif
+endif
+stop
+@enduml

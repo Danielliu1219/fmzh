@@ -1,0 +1,8 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:管理员维护课程、科目与基础考试信息;
+:新增、修改、停用课程科目;
+:保存变更;
+stop
+@enduml

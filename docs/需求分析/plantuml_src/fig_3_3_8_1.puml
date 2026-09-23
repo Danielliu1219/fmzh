@@ -1,0 +1,13 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+left to right direction
+actor "管理员" as AD
+rectangle "管理端功能" {
+  usecase "8.1 发布统一考试安排" as G1
+  usecase "8.2 维护课程与科目信息" as G2
+  usecase "8.3 管理异常账号与违规内容" as G3
+}
+AD --> G1
+AD --> G2
+AD --> G3
+@enduml

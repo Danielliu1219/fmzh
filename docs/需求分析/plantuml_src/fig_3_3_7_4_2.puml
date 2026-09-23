@@ -1,0 +1,8 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:每日计算任务优先级;
+:综合知识点权重、截止时间与压力指数;
+:选出今日最重要的三件事置顶展示;
+stop
+@enduml

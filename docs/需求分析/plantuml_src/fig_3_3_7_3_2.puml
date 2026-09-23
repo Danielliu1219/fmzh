@@ -1,0 +1,9 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:考试前进入重点回顾列表;
+:聚合错题本、收藏内容与高权重知识点;
+:生成考前重点回顾列表;
+:按科目查看与复习;
+stop
+@enduml

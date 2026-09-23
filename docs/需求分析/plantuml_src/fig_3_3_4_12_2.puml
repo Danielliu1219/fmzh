@@ -1,0 +1,12 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:读取任务完成情况与自测表现;
+if (某知识点自测得分低?) then (是)
+:提高该知识点权重并追加练习任务;
+else (否)
+:保持或适当降低权重;
+endif
+:更新复习计划与知识点权重;
+stop
+@enduml

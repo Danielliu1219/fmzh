@@ -1,0 +1,14 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:为科目创建备考计划并添加学习任务;
+:填写名称、科目、起止时间、地点、优先级、难度等;
+:设置重复规则（每天/每周/自定义）与提醒时间;
+:系统检测时段冲突（调用 2.9）;
+if (存在冲突?) then (是)
+:提示冲突并要求调整;
+else (否)
+:保存任务并生成日程;
+endif
+stop
+@enduml

@@ -1,0 +1,18 @@
+# Web 框架
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# 数据库
+sqlalchemy>=2.0
+# 数据校验与配置
+pydantic>=2.9
+pydantic-settings>=2.6
+# 认证
+PyJWT>=2.9
+bcrypt>=4.2
+# 文件上传（multipart 表单）
+python-multipart>=0.0.12
+# 文件解析：PDF / Word
+pypdf>=5.0
+python-docx>=1.1
+# 调用大模型 API
+httpx>=0.27

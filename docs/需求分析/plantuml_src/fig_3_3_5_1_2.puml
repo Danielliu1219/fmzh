@@ -1,0 +1,8 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:完成任务后点击打卡;
+:标记完成并记录完成时间;
+:首页进度与统计实时更新;
+stop
+@enduml

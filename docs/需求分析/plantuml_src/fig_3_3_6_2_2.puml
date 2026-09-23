@@ -1,0 +1,8 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:进入通知中心查看通知历史;
+:标记已读/未读;
+:删除不再需要的通知;
+stop
+@enduml

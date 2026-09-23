@@ -1,0 +1,13 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:设定每日学习时长目标;
+:选择科目并开始番茄钟（25 分钟专注）;
+:计时结束，时长计入对应科目;
+if (达到当日目标?) then (是)
+:提示达成目标并计入统计;
+else (否)
+:提示继续加油;
+endif
+stop
+@enduml

@@ -1,0 +1,12 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:选择导入或导出 ICS;
+if (选择导入?) then (导入)
+:上传 ICS 文件并解析为任务;
+:合并入日程（冲突检测）;
+else (否)
+:将考试与任务导出为 ICS 文件;
+endif
+stop
+@enduml

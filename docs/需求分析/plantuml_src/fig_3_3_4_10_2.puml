@@ -1,0 +1,10 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:输入画像、知识点权重与剩余时间;
+:大模型估算各科复习时长;
+:从考试日倒推生成每日计划;
+:按权重分配每日复习内容;
+:输出复习方案并生成每日任务（联动 2.8）;
+stop
+@enduml

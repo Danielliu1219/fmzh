@@ -1,0 +1,12 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:选择科目与考试时间;
+:大模型结合用户画像估算总复习时长;
+:按每日可用时长从考试日倒推分配每日任务;
+:自动创建每日学习任务;
+if (与现有日程冲突?) then (是)
+:提示冲突并允许手动调整;
+endif
+stop
+@enduml

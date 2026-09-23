@@ -1,0 +1,11 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:输入关键词搜索资料全文;
+:按科目、标签、日期、类型筛选排序;
+:展示结果列表;
+if (无匹配结果?) then (是)
+:提示无匹配资料;
+endif
+stop
+@enduml

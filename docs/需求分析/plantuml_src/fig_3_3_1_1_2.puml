@@ -1,0 +1,17 @@
+@startuml
+skinparam defaultFontName "Noto Sans CJK SC"
+start
+:游客进入注册页，填写账号、密码、姓名、学号、专业等;
+if (信息格式合法?) then (是)
+:查询账号唯一性;
+if (账号已存在?) then (是)
+:提示重新输入;
+else (否)
+:密码哈希加密，创建账号;
+:跳转登录页;
+endif
+else (否)
+:提示格式错误;
+endif
+stop
+@enduml
