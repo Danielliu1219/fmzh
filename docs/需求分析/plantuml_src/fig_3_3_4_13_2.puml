@@ -1,8 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:学生查看推荐内容;
-:每条推荐展示依据标签（历年高频/教师重点/用户薄弱项）;
-:点击查看详细来源说明;
-stop
-@enduml

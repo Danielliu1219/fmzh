@@ -1,9 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:管理员查询异常账号（多次锁定/违规）;
-:冻结或封禁账号;
-:审查并删除违规资料内容;
-:记录处理日志;
-stop
-@enduml

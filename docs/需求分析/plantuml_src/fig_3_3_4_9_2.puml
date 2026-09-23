@@ -1,8 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:读取知识点权重与掌握状态;
-:以图表展示重要程度、掌握状态与建议投入时间;
-:支持按科目切换查看;
-stop
-@enduml

@@ -1,9 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:基于知识点提取结果请求 DeepSeek;
-:生成思维导图（Markdown 结构）与知识框架;
-:生成记忆卡片与背诵要点;
-:前端渲染思维导图与卡片;
-stop
-@enduml

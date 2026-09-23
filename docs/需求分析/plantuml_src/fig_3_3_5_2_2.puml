@@ -1,9 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:系统聚合番茄钟时长与任务完成数据;
-:按科目统计学习时长;
-:图表展示学习进度与任务完成率;
-:支持查看历史统计报表;
-stop
-@enduml

@@ -1,9 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:每周或按需生成备考周报;
-:统计本周任务完成率与学习时长;
-:结合大模型评测给出各科目掌握程度评分;
-:展示周报并支持导出;
-stop
-@enduml

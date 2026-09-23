@@ -1,9 +1,0 @@
-@startuml
-skinparam defaultFontName "Noto Sans CJK SC"
-start
-:浏览资料或自测题;
-:将重点、高频题标记收藏;
-:自测答错的题自动进入错题本;
-:查看、移除收藏与错题;
-stop
-@enduml
