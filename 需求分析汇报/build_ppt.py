@@ -624,7 +624,7 @@ txt(s, 7.05, 5.18, 5.5, 1.4, [
 
 # ============================================================ 12 原型展示 ①
 s = new_slide('11', '原型展示 ①')
-txt(s, MX, 1.14, 12.13, 0.38, [{'runs': [('已实现的系统界面 ·', 13.5, True, INK, SERIF)]}])
+txt(s, MX, 1.14, 12.13, 0.38, [{'runs': [('已实现的系统界面', 13.5, True, INK, SERIF)]}])
 browser(s, MX, 1.58, 5.95, 5.0, os.path.join(ASSETS, '01_login.png'),
         '登录 / 注册 · JWT 认证', 'localhost:5173/login')
 browser(s, 6.78, 1.58, 5.95, 5.0, os.path.join(ASSETS, '02_home.png'),
