@@ -1,4 +1,4 @@
-"""大模型客户端：封装 DeepSeek API（OpenAI 兼容格式），只处理真实调用
+"""大模型客户端：封装大模型 API（OpenAI 兼容格式），只处理真实调用
 
 Mock 逻辑在 prompts.py 中，由调用方按 settings.LLM_MOCK 分支选择。
 """
@@ -14,7 +14,7 @@ class LLMError(Exception):
 
 
 def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000) -> dict:
-    """调用 DeepSeek 并要求返回 JSON 对象
+    """调用大模型并要求返回 JSON 对象
 
     返回解析后的 dict；失败时抛出 LLMError。
     """
@@ -33,7 +33,7 @@ def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000) -> d
         ],
         "temperature": 0.3,
         "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},  # DeepSeek 的 JSON 模式
+        "response_format": {"type": "json_object"},  # 大模型的 JSON 模式（OpenAI 兼容）
     }
     try:
         resp = httpx.post(

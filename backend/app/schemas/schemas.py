@@ -215,7 +215,7 @@ class ExamDashboard(BaseModel):
     exam_date: date
     days_left: int
     location: str
-    duration_minutes: int  # 考表时间线展示时长
+    duration_minutes: int  # 考试时间线展示时长
     total_tasks: int
     done_tasks: int
     progress: float  # 0~1
