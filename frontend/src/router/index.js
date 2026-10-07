@@ -17,7 +17,8 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 用构建基路径（本地为 '/'，GitHub Pages 构建为 '/fmzh/'），子路径部署下路由才正确
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 })
 

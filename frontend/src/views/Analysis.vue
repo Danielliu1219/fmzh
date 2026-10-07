@@ -235,6 +235,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { aiApi, examApi } from '../api'
+import { USE_MOCK } from '../mock/dashboard'
+import { mockExams, mockProfile, mockAnalysis } from '../mock/pages'
 
 const FIELD_LABELS = {
   target: '备考目标',
@@ -283,7 +285,13 @@ const buildSupplement = () => {
 const onExtractProfile = async () => {
   profileLoading.value = true
   try {
-    profile.value = await aiApi.profile({ exam_id: examId.value, raw_text: rawText.value })
+    if (USE_MOCK) {
+      // mock 模式下返回本地演示画像
+      await new Promise((r) => setTimeout(r, 600))
+      profile.value = structuredClone(mockProfile)
+    } else {
+      profile.value = await aiApi.profile({ exam_id: examId.value, raw_text: rawText.value })
+    }
     step.value = 1
     if (profile.value.is_complete) ElMessage.success('画像提取完成')
     else ElMessage.warning('画像缺少部分信息，请补全')
@@ -315,8 +323,14 @@ const onAnalyze = async () => {
   analyzeError.value = ''
   step.value = 2
   try {
-    const resp = await aiApi.analyze(examId.value)
-    result.value = resp.result
+    if (USE_MOCK) {
+      // mock 模式下返回本地演示分析结果（模拟分析耗时）
+      await new Promise((r) => setTimeout(r, 1500))
+      result.value = structuredClone(mockAnalysis)
+    } else {
+      const resp = await aiApi.analyze(examId.value)
+      result.value = resp.result
+    }
     ElMessage.success('分析完成，复习计划已生成每日任务')
   } catch (e) {
     // 失败时展示原因和出口，避免页面空白
@@ -342,6 +356,7 @@ const onExamChange = async () => {
   rawText.value = ''
   profile.value = null
   result.value = null
+  if (USE_MOCK) return // 预览模式下每次都从第一步开始演示
   // 已有分析结果的科目直接展示
   try {
     const resp = await aiApi.latestAnalysis(examId.value)
@@ -353,6 +368,10 @@ const onExamChange = async () => {
 }
 
 onMounted(async () => {
+  if (USE_MOCK) {
+    exams.value = mockExams
+    return
+  }
   exams.value = await examApi.list()
 })
 </script>

@@ -104,6 +104,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi, materialApi } from '../api'
+import { USE_MOCK } from '../mock/dashboard'
+import { mockExams, mockMaterials } from '../mock/pages'
 
 const sourceTypes = ['历年题', '老师重点', '课堂笔记', '作业', '练习题', '其他']
 
@@ -126,16 +128,30 @@ const sourceTagType = (s) =>
   ({ 历年题: 'danger', 老师重点: 'warning', 课堂笔记: 'success', 作业: 'info', 练习题: 'info', 其他: 'info' }[s] || 'info')
 
 const loadExams = async () => {
+  if (USE_MOCK) {
+    exams.value = mockExams
+    return
+  }
   exams.value = await examApi.list()
 }
 const load = async () => {
   loading.value = true
   try {
-    materials.value = await materialApi.list({
-      exam_id: filter.exam_id || undefined,
-      source_type: filter.source_type || undefined,
-      keyword: filter.keyword || undefined,
-    })
+    // mock 模式下本地筛选演示数据；真实模式下走接口
+    if (USE_MOCK) {
+      materials.value = mockMaterials.filter(
+        (m) =>
+          (!filter.exam_id || m.exam_id === filter.exam_id) &&
+          (!filter.source_type || m.source_type === filter.source_type) &&
+          (!filter.keyword || m.title.includes(filter.keyword) || (m.description || '').includes(filter.keyword)),
+      )
+    } else {
+      materials.value = await materialApi.list({
+        exam_id: filter.exam_id || undefined,
+        source_type: filter.source_type || undefined,
+        keyword: filter.keyword || undefined,
+      })
+    }
   } finally {
     loading.value = false
   }
@@ -147,15 +163,30 @@ const onFileChange = (uploadFile) => {
 }
 
 const onUpload = async () => {
-  const formData = new FormData()
-  formData.append('file', file.value)
-  formData.append('title', uploadForm.title || file.value.name)
-  if (uploadForm.exam_id) formData.append('exam_id', uploadForm.exam_id)
-  formData.append('source_type', uploadForm.source_type)
-  formData.append('description', uploadForm.description)
   uploading.value = true
   try {
-    await materialApi.upload(formData)
+    if (USE_MOCK) {
+      // mock 模式下模拟解析成功并加入本地列表
+      await new Promise((r) => setTimeout(r, 800))
+      mockMaterials.unshift({
+        id: Date.now(),
+        title: uploadForm.title || file.value.name,
+        exam_id: uploadForm.exam_id,
+        source_type: uploadForm.source_type,
+        file_type: (file.value.name.split('.').pop() || 'txt').toLowerCase(),
+        parse_status: 'done',
+        description: uploadForm.description,
+        text_preview: '（静态演示文本）上传文件在真实后端下会解析出文本，此处为预览占位。',
+      })
+    } else {
+      const formData = new FormData()
+      formData.append('file', file.value)
+      formData.append('title', uploadForm.title || file.value.name)
+      if (uploadForm.exam_id) formData.append('exam_id', uploadForm.exam_id)
+      formData.append('source_type', uploadForm.source_type)
+      formData.append('description', uploadForm.description)
+      await materialApi.upload(formData)
+    }
     ElMessage.success('上传成功，解析完成')
     file.value = null
     uploadForm.title = ''
@@ -169,6 +200,10 @@ const onUpload = async () => {
 const onPreview = async (row) => {
   previewVisible.value = true
   previewTitle.value = row.title
+  if (USE_MOCK) {
+    previewText.value = row.text_preview || ''
+    return
+  }
   previewLoading.value = true
   try {
     const detail = await materialApi.detail(row.id)
@@ -180,6 +215,13 @@ const onPreview = async (row) => {
 
 const onDelete = async (row) => {
   await ElMessageBox.confirm(`确定删除「${row.title}」吗？解析文本也会被删除。`, '删除确认', { type: 'warning' })
+  if (USE_MOCK) {
+    const i = mockMaterials.findIndex((m) => m.id === row.id)
+    if (i >= 0) mockMaterials.splice(i, 1)
+    ElMessage.success('已删除')
+    load()
+    return
+  }
   await materialApi.remove(row.id)
   ElMessage.success('已删除')
   load()

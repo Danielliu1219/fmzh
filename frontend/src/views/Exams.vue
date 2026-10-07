@@ -65,6 +65,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi } from '../api'
+import { USE_MOCK } from '../mock/dashboard'
+import { mockExams } from '../mock/pages'
 
 const exams = ref([])
 const loading = ref(false)
@@ -89,7 +91,12 @@ const rules = {
 const load = async () => {
   loading.value = true
   try {
-    exams.value = await examApi.list()
+    // mock 模式下展示本地演示数据；真实模式下走接口
+    if (USE_MOCK) {
+      exams.value = mockExams
+    } else {
+      exams.value = await examApi.list()
+    }
   } finally {
     loading.value = false
   }
@@ -104,6 +111,19 @@ const onSave = async () => {
   await formRef.value.validate()
   saving.value = true
   try {
+    if (USE_MOCK) {
+      // mock 模式下仅改本地列表
+      if (form.id) {
+        const i = exams.value.findIndex((e) => e.id === form.id)
+        if (i >= 0) exams.value[i] = { ...exams.value[i], ...form }
+        ElMessage.success('修改成功')
+      } else {
+        exams.value.unshift({ ...form, id: Date.now(), days_left: null, progress: 0 })
+        ElMessage.success('添加成功')
+      }
+      dialogVisible.value = false
+      return
+    }
     if (form.id) {
       await examApi.update(form.id, form)
       ElMessage.success('修改成功')
@@ -124,6 +144,12 @@ const onDelete = async (row) => {
     '删除确认',
     { type: 'warning' },
   )
+  if (USE_MOCK) {
+    const i = exams.value.findIndex((e) => e.id === row.id)
+    if (i >= 0) exams.value.splice(i, 1)
+    ElMessage.success('已删除')
+    return
+  }
   await examApi.remove(row.id)
   ElMessage.success('已删除')
   load()
