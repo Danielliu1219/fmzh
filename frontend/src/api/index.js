@@ -41,6 +41,7 @@ export const taskApi = {
 export const dashboardApi = {
   overview: () => request.get('/dashboard'),
   stats: (examId) => request.get(`/stats/${examId}`),
+  statsOverview: (days) => request.get('/stats/overview', { params: { days } }),
 }
 
 export const focusApi = {
