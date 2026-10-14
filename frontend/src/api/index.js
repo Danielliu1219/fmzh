@@ -42,3 +42,10 @@ export const dashboardApi = {
   overview: () => request.get('/dashboard'),
   stats: (examId) => request.get(`/stats/${examId}`),
 }
+
+export const focusApi = {
+  createSession: (data) => request.post('/focus/sessions', data),
+  today: () => request.get('/focus/today'),
+  setGoal: (data) => request.put('/focus/goal', data),
+  sessions: (params) => request.get('/focus/sessions', { params }),
+}
