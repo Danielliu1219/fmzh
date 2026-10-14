@@ -95,10 +95,21 @@ class MaterialOut(BaseModel):
     description: str
     tags: str
     created_at: datetime
+    snippet: str = ""  # 全文搜索命中片段（用例 3.4），仅带 keyword 查询时返回
 
 
 class MaterialDetailOut(MaterialOut):
     text_preview: str = ""  # 解析文本前 1000 字
+
+
+class MaterialUpdate(BaseModel):
+    """资料编辑 / 移动分类（用例 3.3）：字段均可选，只更新请求里出现的字段"""
+
+    title: Optional[str] = None
+    exam_id: Optional[int] = None  # 传 null 表示移出科目（回到「未归类」）
+    source_type: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[str] = None
 
 
 # ==================== AI 画像（第一次调用） ====================

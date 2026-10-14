@@ -20,6 +20,7 @@ export const materialApi = {
   upload: (formData) =>
     request.post('/materials', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   detail: (id) => request.get(`/materials/${id}`),
+  update: (id, data) => request.put(`/materials/${id}`, data),
   remove: (id) => request.delete(`/materials/${id}`),
 }
 

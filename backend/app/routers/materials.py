@@ -1,5 +1,6 @@
-"""复习资料接口：上传（含解析）/ 列表筛选 / 详情预览 / 删除"""
+"""复习资料接口：上传（含解析）/ 列表筛选 / 详情预览 / 编辑移动分类 / 删除"""
 import uuid
+from datetime import date, datetime, time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import UPLOAD_DIR, settings
 from ..database import get_db
 from ..models.models import Exam, Material, User
-from ..schemas.schemas import MaterialDetailOut, MaterialOut
+from ..schemas.schemas import MaterialDetailOut, MaterialOut, MaterialUpdate
 from ..services.file_parser import parse_file
 from ..utils.security import get_current_user
 
@@ -16,7 +17,37 @@ router = APIRouter()
 
 ALLOWED_TYPES = {"txt", "pdf", "docx"}
 
-SOURCE_TYPES = {"历年题", "老师重点", "课堂笔记", "作业", "练习题", "其他"}
+# 资料七类来源（需求分析 3.3.3.2 / FMZH-USR-0029），外加「其他」作为兜底默认值
+SOURCE_TYPES = ("历年题", "老师重点", "平时作业", "课堂笔记", "教材章节", "实验报告", "练习题", "其他")
+
+
+SORT_OPTIONS = {
+    "date_desc": (Material.created_at.desc(), Material.id.desc()),
+    "date_asc": (Material.created_at.asc(), Material.id.asc()),
+    "title": (Material.title.asc(), Material.id.asc()),
+    "source_type": (Material.source_type.asc(), Material.created_at.desc()),
+    "exam": (Material.exam_id.asc(), Material.created_at.desc()),
+}
+
+
+def _match_snippet(text: str, keyword: str, width: int = 80) -> str:
+    """全文搜索命中片段：截关键词前后各约 width/2 字，供前端展示命中位置"""
+    idx = (text or "").find(keyword)
+    if idx < 0:
+        return ""
+    start = max(0, idx - width // 2)
+    end = min(len(text), idx + len(keyword) + width // 2)
+    body = text[start:end].replace("\n", " ").strip()
+    return f"{'…' if start > 0 else ''}{body}{'…' if end < len(text) else ''}"
+
+
+def _check_source_type(source_type: str) -> None:
+    """上传与编辑共用的来源类型白名单校验（用例 3.2）"""
+    if source_type not in SOURCE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"来源类型必须是：{'/'.join(SOURCE_TYPES)}",
+        )
 
 
 def _get_own_material(db: Session, user: User, material_id: int) -> Material:
@@ -48,11 +79,7 @@ async def upload_material(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"仅支持 {', '.join(sorted(ALLOWED_TYPES))} 格式（MVP 阶段），收到：{ext or '未知'}",
         )
-    if source_type not in SOURCE_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"来源类型必须是：{'/'.join(sorted(SOURCE_TYPES))}",
-        )
+    _check_source_type(source_type)
     if exam_id is not None:
         exam = db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user.id).first()
         if exam is None:
@@ -102,11 +129,15 @@ async def upload_material(
     return material
 
 
-@router.get("", response_model=list[MaterialOut], summary="资料列表（可按科目/关键词/来源类型筛选）")
+@router.get("", response_model=list[MaterialOut], summary="资料列表（全文搜索 + 科目/来源/标签/日期筛选 + 排序）")
 def list_materials(
     exam_id: int | None = None,
     keyword: str | None = None,
     source_type: str | None = None,
+    tag: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sort: str = "date_desc",
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -115,14 +146,29 @@ def list_materials(
         query = query.filter(Material.exam_id == exam_id)
     if source_type:
         query = query.filter(Material.source_type == source_type)
+    if tag:
+        query = query.filter(Material.tags.like(f"%{tag}%"))
+    if date_from is not None:
+        query = query.filter(Material.created_at >= datetime.combine(date_from, time.min))
+    if date_to is not None:
+        query = query.filter(Material.created_at <= datetime.combine(date_to, time.max))
+
+    keyword = (keyword or "").strip()
     if keyword:
         like = f"%{keyword}%"
+        # 全文搜索：命中解析出的正文 text_content（用例 3.4），而不只是标题/说明/标签
         query = query.filter(
             (Material.title.like(like))
             | (Material.description.like(like))
             | (Material.tags.like(like))
+            | (Material.text_content.like(like))
         )
-    return query.order_by(Material.id.desc()).all()
+
+    items = query.order_by(*SORT_OPTIONS.get(sort, SORT_OPTIONS["date_desc"])).all()
+    if keyword:
+        for item in items:
+            item.snippet = _match_snippet(item.text_content or "", keyword)
+    return items
 
 
 @router.get("/{material_id}", response_model=MaterialDetailOut, summary="资料详情（含解析文本预览）")
@@ -135,6 +181,35 @@ def get_material(
     out = MaterialDetailOut.model_validate(material)
     out.text_preview = material.text_content[:1000]
     return out
+
+
+@router.put("/{material_id}", response_model=MaterialOut, summary="编辑资料 / 移动分类（用例 3.3）")
+def update_material(
+    material_id: int,
+    payload: MaterialUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    material = _get_own_material(db, user, material_id)
+    data = payload.model_dump(exclude_unset=True)  # 只处理请求里出现的字段
+
+    if "title" in data:
+        title = (data["title"] or "").strip()
+        if not title:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="标题不能为空")
+        data["title"] = title
+    if "source_type" in data:
+        _check_source_type(data["source_type"])
+    if data.get("exam_id") is not None:
+        exam = db.query(Exam).filter(Exam.id == data["exam_id"], Exam.user_id == user.id).first()
+        if exam is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="考试不存在")
+
+    for field, value in data.items():
+        setattr(material, field, value)
+    db.commit()
+    db.refresh(material)
+    return material
 
 
 @router.delete("/{material_id}", summary="删除资料（同时删除磁盘文件）")

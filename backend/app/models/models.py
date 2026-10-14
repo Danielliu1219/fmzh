@@ -62,7 +62,7 @@ class Material(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=True)
     title = Column(String(128), nullable=False)
-    source_type = Column(String(32), default="其他")  # 历年题/老师重点/课堂笔记/作业/练习题/其他
+    source_type = Column(String(32), default="其他")  # 历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(16), nullable=False)  # txt / pdf / docx
     text_content = Column(Text, default="")  # 解析出的纯文本，AI 分析的数据源
