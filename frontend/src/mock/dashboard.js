@@ -44,3 +44,12 @@ export const mockDashboard = {
 // 模拟网络延迟，顺带演示骨架屏加载状态
 export const mockOverview = () =>
   new Promise((resolve) => setTimeout(() => resolve(structuredClone(mockDashboard)), 800))
+
+// 压力指数（模块 7.1）演示数据：need_emergency=true 会高亮提示救急入口
+export const mockPressure = {
+  score: 63.5,
+  level: '偏压',
+  suggestion: '压力偏高，建议开启临时救急模式',
+  breakdown: { exam_density: 0.25, task_backlog: 0.4, task_done_rate: 0.375, exam_proximity: 1 },
+  need_emergency: true,
+}

@@ -42,3 +42,7 @@ export const dashboardApi = {
   overview: () => request.get('/dashboard'),
   stats: (examId) => request.get(`/stats/${examId}`),
 }
+
+export const featureApi = {
+  pressure: () => request.get('/features/pressure'),
+}

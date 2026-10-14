@@ -102,6 +102,23 @@
         </div>
       </section>
 
+      <!-- ===== 压力指数（模块 7.1） ===== -->
+<section v-if="pressure" class="panel pressure rise" :class="{ alert: pressure.need_emergency }" style="--d: 200ms">
+  <div class="pressure-main">
+    <div class="pressure-score">
+      <span class="ps-num">{{ pressure.score }}</span>
+      <span class="ps-label">期末压力指数 · {{ pressure.level }}</span>
+    </div>
+    <div class="pressure-bar">
+      <div class="pb-fill" :style="{ width: pressure.score + '%' }"></div>
+    </div>
+    <p class="pressure-tip">{{ pressure.suggestion }}</p>
+  </div>
+  <el-button v-if="pressure.need_emergency" type="primary" round @click="onEmergency">
+    开启临时救急模式
+  </el-button>
+</section>
+
       <!-- ===== 考表 · 考试倒计时（日程时间线） ===== -->
       <section class="panel rise" style="--d: 240ms">
         <div class="panel-head">
@@ -230,9 +247,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { dashboardApi, taskApi } from '../api'
+import { dashboardApi, featureApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
-import { USE_MOCK, getToday, mockOverview } from '../mock/dashboard'
+import { USE_MOCK, getToday, mockOverview, mockPressure } from '../mock/dashboard'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -243,6 +260,7 @@ const exams = ref([])
 const tasks = ref([])
 const overall = ref({ total: 0, done: 0, rate: 0 })
 const extras = ref({ streak: 0, focus_minutes: 0 })
+const pressure = ref(null)
 
 const chartRef = ref(null)
 let chart = null
@@ -358,10 +376,11 @@ const load = async () => {
       exams.value = data.exams
       tasks.value = data.tasks
       extras.value = data.extras
+      pressure.value = { ...mockPressure }
       syncOverall()
     } else {
       // —— 真实接口 ——
-      const [overview, allTasks] = await Promise.all([dashboardApi.overview(), taskApi.list()])
+      const [overview, allTasks] = await Promise.all([dashboardApi.overview(), taskApi.list(), featureApi.pressure()])
       exams.value = overview.exams
       overall.value = overview.overall
       const examMap = Object.fromEntries(overview.exams.map((e) => [e.id, e.subject]))
@@ -379,6 +398,7 @@ const load = async () => {
         cursor.setDate(cursor.getDate() - 1)
       }
       extras.value = { streak, focus_minutes: focus }
+      pressure.value = pressureData
     }
     renderRing()
   } catch (e) {
@@ -415,6 +435,9 @@ const renderRing = () => {
   })
 }
 
+const onEmergency = () => {
+    ElMessage.info('临时救急模式将在用例 7.2 接入')
+  }
 const goStep = (to) => {
   if (to === '#board') {
     document.getElementById('board')?.scrollIntoView({ behavior: 'smooth' })
@@ -437,6 +460,50 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* -- 压力指数（模块 7.1） -- */
+.pressure {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.pressure.alert {
+  border-color: var(--coral-deep);
+  box-shadow: 4px 4px 0 var(--coral);
+}
+
+.pressure-main { flex: 1; min-width: 0; }
+.pressure-score { display: flex; align-items: baseline; gap: 10px; }
+
+.ps-num {
+  font-family: var(--font-num);
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-label { font-size: 13px; font-weight: 700; color: var(--ink-2); }
+
+.pressure-bar {
+  margin: 10px 0 8px;
+  height: 10px;
+  background: var(--bg-soft);
+  border: 1.5px solid var(--ink-1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pb-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.4s ease;
+}
+
+.pressure.alert .pb-fill { background: var(--coral); }
+.pressure-tip { margin: 0; font-size: 13px; color: var(--ink-3); }
+
 /* —— 通用面板（纸片 + 墨线 + 硬阴影） —— */
 .panel {
   background: var(--bg-card);

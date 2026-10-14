@@ -242,3 +242,12 @@ class StatsOut(BaseModel):
     rate: float
     by_date: list[DailyStat]
     knowledge_points: list[dict[str, Any]]
+
+
+# ===================== 特色功能（模块 7）=====================
+class PressureOut(BaseModel):
+    score: float        # 0~100
+    level: str          # 轻松 / 适中 / 偏压 / 高压
+    suggestion: str
+    breakdown: dict[str, float]
+    need_emergency: bool # score >= 60，前端据此提示救急模式
