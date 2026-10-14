@@ -112,6 +112,21 @@ class MaterialUpdate(BaseModel):
     tags: Optional[str] = None
 
 
+class MaterialMergeIn(BaseModel):
+    """合并导出复习笔记（用例 3.6）：勾选多份资料合并为一份"""
+
+    material_ids: list[int] = Field(min_length=1)
+    title: str = ""
+
+
+class MaterialMergeOut(BaseModel):
+    title: str
+    markdown: str
+    material_count: int
+    total_chars: int
+    warnings: list[str] = []  # 例如某份资料解析失败没有正文
+
+
 # ==================== 收藏与错题本（用例 3.5） ====================
 
 

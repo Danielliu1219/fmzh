@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 from ..config import UPLOAD_DIR, settings
 from ..database import get_db
 from ..models.models import Collection, Exam, Material, User
-from ..schemas.schemas import MaterialDetailOut, MaterialOut, MaterialUpdate
+from ..schemas.schemas import (
+    MaterialDetailOut,
+    MaterialMergeIn,
+    MaterialMergeOut,
+    MaterialOut,
+    MaterialUpdate,
+)
 from ..services.file_parser import parse_file
 from ..utils.security import get_current_user
 
@@ -210,6 +216,85 @@ def update_material(
     db.commit()
     db.refresh(material)
     return material
+
+
+MERGE_MAX_CHARS_PER_MATERIAL = 20000  # 单份资料导出时的正文上限，防止合成出超大文件
+
+
+@router.post("/merge", response_model=MaterialMergeOut, summary="合并多份资料为一份复习笔记（用例 3.6）")
+def merge_materials(
+    payload: MaterialMergeIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """把勾选的多份资料按顺序合并成一份 Markdown 复习笔记（导出格式由前端决定）"""
+    ids = list(dict.fromkeys(payload.material_ids))  # 去重且保持勾选顺序
+    items = (
+        db.query(Material)
+        .filter(Material.user_id == user.id, Material.id.in_(ids))
+        .all()
+    )
+    by_id = {m.id: m for m in items}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"资料不存在或不属于当前用户：{missing}",
+        )
+
+    # 所属科目名：一次查出来，避免在循环里逐条查询
+    exam_ids = {m.exam_id for m in items if m.exam_id is not None}
+    subjects = {}
+    if exam_ids:
+        exams = db.query(Exam).filter(Exam.user_id == user.id, Exam.id.in_(exam_ids)).all()
+        subjects = {e.id: e.subject for e in exams}
+
+    title = payload.title.strip() or "复习笔记"
+    lines = [
+        f"# {title}",
+        "",
+        f"> 由「期末周别慌」合并生成 · 共 {len(ids)} 份资料 · {datetime.now():%Y-%m-%d %H:%M}",
+        "",
+    ]
+    warnings: list[str] = []
+    total_chars = 0
+    for index, material_id in enumerate(ids, start=1):
+        material = by_id[material_id]
+        lines += [f"## {index}. {material.title}", ""]
+
+        meta = [f"来源类型：{material.source_type}"]
+        if material.exam_id in subjects:
+            meta.append(f"所属科目：{subjects[material.exam_id]}")
+        if material.tags:
+            meta.append(f"标签：{material.tags}")
+        if material.description:
+            meta.append(f"说明：{material.description}")
+        lines += ["- " + " · ".join(meta), ""]
+
+        body = (material.text_content or "").strip()
+        if not body:
+            lines += ["> 该资料没有可导出的正文（解析失败或为扫描件）。", ""]
+            warnings.append(f"《{material.title}》没有解析正文")
+        else:
+            if len(body) > MERGE_MAX_CHARS_PER_MATERIAL:
+                body = body[:MERGE_MAX_CHARS_PER_MATERIAL]
+                warnings.append(
+                    f"《{material.title}》正文过长，已截取前 {MERGE_MAX_CHARS_PER_MATERIAL} 字"
+                )
+            lines += [body, ""]
+            total_chars += len(body)
+        lines += ["---", ""]
+
+    while lines and lines[-1] in ("", "---"):
+        lines.pop()
+
+    return MaterialMergeOut(
+        title=title,
+        markdown="\n".join(lines) + "\n",
+        material_count=len(ids),
+        total_chars=total_chars,
+        warnings=warnings,
+    )
 
 
 @router.delete("/{material_id}", summary="删除资料（同时删除磁盘文件）")

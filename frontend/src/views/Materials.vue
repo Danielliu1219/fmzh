@@ -84,6 +84,9 @@
             <el-button @click="load"><el-icon><Search /></el-icon></el-button>
           </template>
         </el-input>
+        <el-button type="primary" plain :disabled="!selectedIds.length" @click="openMerge">
+          合并导出{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
+        </el-button>
       </div>
 
       <!-- 资料库视图：同科目的资料聚合归档（用例 3.3） -->
@@ -96,6 +99,11 @@
               <el-tag size="small" effect="plain" class="group-count">{{ g.items.length }} 份</el-tag>
             </template>
             <div v-for="row in g.items" :key="row.id" class="lib-row">
+              <el-checkbox
+                :model-value="selectedIds.includes(row.id)"
+                class="lib-check"
+                @change="(v) => onSelectRow(row.id, v)"
+              />
               <div class="lib-main">
                 <div class="lib-line">
                   <b class="lib-title">{{ row.title }}</b>
@@ -182,7 +190,14 @@
       </div>
 
       <!-- 列表视图 -->
-      <el-table v-else :data="materials" v-loading="loading" :empty-text="emptyText">
+      <el-table
+        v-else
+        :data="materials"
+        v-loading="loading"
+        :empty-text="emptyText"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column type="selection" width="46" />
         <el-table-column prop="title" label="标题" min-width="220">
           <template #default="{ row }">
             <b>{{ row.title }}</b>
@@ -263,11 +278,35 @@
         <el-button type="primary" :loading="editSaving" @click="onEditSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="mergeVisible" title="合并导出复习笔记" width="680px">
+      <el-form label-width="80px">
+        <el-form-item label="笔记标题">
+          <el-input v-model="mergeTitle" placeholder="复习笔记" />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        v-if="mergeWarnings.length"
+        type="warning"
+        :closable="false"
+        style="margin-bottom: 12px"
+      >
+        <div v-for="(w, i) in mergeWarnings" :key="i">{{ w }}</div>
+      </el-alert>
+      <div class="preview-box" v-loading="merging">
+        <pre>{{ mergePreview || '（合并中…）' }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="mergeVisible = false">取消</el-button>
+        <el-button :loading="merging" @click="exportAs('md')">下载 Markdown</el-button>
+        <el-button type="primary" :loading="merging" @click="exportAs('pdf')">导出 PDF</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { collectionApi, examApi, materialApi } from '../api'
 import { USE_MOCK } from '../mock/dashboard'
@@ -295,6 +334,18 @@ const filter = reactive({
 const editVisible = ref(false)
 const editSaving = ref(false)
 const editForm = reactive({ id: null, title: '', exam_id: null, source_type: '其他', description: '', tags: '' })
+
+// 合并导出复习笔记（用例 3.6）
+const selectedIds = ref([])
+const mergeVisible = ref(false)
+const mergeTitle = ref('复习笔记')
+const mergePreview = ref('')
+const mergeWarnings = ref([])
+const merging = ref(false)
+// 切视图时清空勾选，避免两种视图的选择状态对不上
+watch(viewMode, () => {
+  selectedIds.value = []
+})
 
 // 收藏与错题本（用例 3.5）
 const collections = ref([])
@@ -573,6 +624,134 @@ const onRemoveCollection = async (item) => {
   loadCollections()
 }
 
+// ---------------- 合并导出复习笔记（用例 3.6） ----------------
+
+const onSelectRow = (id, checked) => {
+  if (checked) {
+    if (!selectedIds.value.includes(id)) selectedIds.value = [...selectedIds.value, id]
+  } else {
+    selectedIds.value = selectedIds.value.filter((x) => x !== id)
+  }
+}
+const onSelectionChange = (rows) => {
+  selectedIds.value = rows.map((r) => r.id)
+}
+
+const buildMockMarkdown = (chosen, title) => {
+  const lines = [`# ${title}`, '', `> 由「期末周别慌」合并生成 · 共 ${chosen.length} 份资料`, '']
+  chosen.forEach((m, i) => {
+    lines.push(`## ${i + 1}. ${m.title}`, '', `- 来源类型：${m.source_type}`, '')
+    lines.push((m.text_preview || '（静态演示文本，真实后端下为解析出的正文）').trim())
+    lines.push('', '---')
+  })
+  return {
+    title,
+    markdown: lines.join('\n') + '\n',
+    material_count: chosen.length,
+    total_chars: 0,
+    warnings: [],
+  }
+}
+
+const requestMerge = async () => {
+  if (USE_MOCK) {
+    const chosen = selectedIds.value
+      .map((id) => materials.value.find((m) => m.id === id))
+      .filter(Boolean)
+    return buildMockMarkdown(chosen, mergeTitle.value.trim() || '复习笔记')
+  }
+  return await materialApi.merge({
+    material_ids: selectedIds.value,
+    title: mergeTitle.value.trim(),
+  })
+}
+
+const openMerge = async () => {
+  mergeTitle.value = '复习笔记'
+  mergePreview.value = ''
+  mergeWarnings.value = []
+  mergeVisible.value = true
+  merging.value = true
+  try {
+    const res = await requestMerge()
+    mergePreview.value = res.markdown
+    mergeWarnings.value = res.warnings || []
+  } finally {
+    merging.value = false
+  }
+}
+
+// 把生成的 Markdown 转成 HTML（只覆盖本项目自己生成的那几个语法：# / ## / - / > / --- / 空行）
+const mdToHtml = (md) => {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return md
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('# ')) return `<h1>${esc(line.slice(2))}</h1>`
+      if (line.startsWith('## ')) return `<h2>${esc(line.slice(3))}</h2>`
+      if (line.startsWith('- ')) return `<li>${esc(line.slice(2))}</li>`
+      if (line.startsWith('> ')) return `<p class="quote">${esc(line.slice(2))}</p>`
+      if (line.trim() === '---') return '<hr />'
+      if (!line.trim()) return ''
+      return `<p>${esc(line)}</p>`
+    })
+    .join('\n')
+}
+
+const downloadMarkdown = (title, markdown) => {
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${title}.md`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+// 导出 PDF：借浏览器「另存为 PDF」打印，避免在后端引入 PDF 依赖和字体问题
+const printPdf = (title, markdown) => {
+  const win = window.open('', '_blank')
+  if (!win) {
+    ElMessage.warning('浏览器拦截了新窗口，允许弹出窗口后重试')
+    return
+  }
+  const style =
+    'body{font-family:"Noto Serif SC","Songti SC",serif;line-height:1.9;color:#0c1614;' +
+    'max-width:720px;margin:40px auto;padding:0 24px}' +
+    'h1{font-size:26px;border-bottom:2px solid #0c1614;padding-bottom:12px}' +
+    'h2{font-size:19px;margin-top:32px}' +
+    '.quote{color:#5b6b66;border-left:3px solid #e66348;padding-left:10px}' +
+    'li{margin:4px 0}p{white-space:pre-wrap;word-break:break-word}' +
+    'hr{border:none;border-top:1px dashed #c9c3b4;margin:24px 0}'
+  win.document.write(
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" />' +
+      `<title>${title}</title><style>${style}</style></head><body>` +
+      mdToHtml(markdown) +
+      '</body></html>',
+  )
+  win.document.close()
+  win.focus()
+  setTimeout(() => win.print(), 300)
+}
+
+const exportAs = async (format) => {
+  if (!selectedIds.value.length) return
+  merging.value = true
+  try {
+    const res = await requestMerge()
+    if (format === 'md') {
+      downloadMarkdown(res.title, res.markdown)
+      ElMessage.success('已下载 Markdown 复习笔记')
+    } else {
+      printPdf(res.title, res.markdown)
+      ElMessage.success('已打开打印窗口，选「另存为 PDF」即可')
+    }
+    mergeVisible.value = false
+  } finally {
+    merging.value = false
+  }
+}
+
 onMounted(() => {
   loadExams()
   load()
@@ -642,6 +821,9 @@ onMounted(() => {
 }
 .lib-row:last-child {
   border-bottom: none;
+}
+.lib-check {
+  flex: none;
 }
 .lib-main {
   display: flex;
