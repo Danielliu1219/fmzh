@@ -244,6 +244,40 @@ class StatsOut(BaseModel):
     knowledge_points: list[dict[str, Any]]
 
 
+# ==================== 学习统计总览（FMZH-SRS-5.2.0） ====================
+
+
+class SubjectStat(BaseModel):
+    exam_id: Optional[int] = None  # None 表示未指定科目的自由专注
+    subject: str
+    minutes: int  # 番茄钟聚合时长（受 days 窗口限制）
+    total_tasks: int  # 全量课程进度（与首页口径一致）
+    done_tasks: int
+    rate: float
+    exam_date: Optional[date] = None
+    days_left: Optional[int] = None
+
+
+class DayStat(BaseModel):
+    date: str  # YYYY-MM-DD
+    minutes: int  # 当日专注时长
+    total: int  # 当日计划任务数
+    done: int
+    rate: float
+
+
+class StatsOverviewOut(BaseModel):
+    range_days: int
+    start_date: str
+    end_date: str
+    total_minutes: int  # 窗口内总专注时长
+    total_tasks: int
+    done_tasks: int
+    rate: float
+    subjects: list[SubjectStat]
+    days: list[DayStat]
+
+
 # ==================== 番茄钟（FMZH-SRS-2.10.0） ====================
 
 

@@ -50,6 +50,7 @@ const navItems = [
   { path: '/exams', label: '课程管理' },
   { path: '/materials', label: '复习资料' },
   { path: '/analysis', label: 'AI 复习分析' },
+  { path: '/stats', label: '学习统计' },
 ]
 
 const displayName = computed(() => userStore.displayName)

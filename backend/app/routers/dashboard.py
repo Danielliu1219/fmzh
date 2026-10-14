@@ -1,14 +1,22 @@
 """首页聚合与统计接口"""
 import json
-from datetime import date
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.models import Analysis, Exam, Task, User
-from ..schemas.schemas import DailyStat, DashboardOut, ExamDashboard, StatsOut
+from ..models.models import Analysis, Exam, FocusSession, Task, User
+from ..schemas.schemas import (
+    DailyStat,
+    DashboardOut,
+    DayStat,
+    ExamDashboard,
+    StatsOut,
+    StatsOverviewOut,
+    SubjectStat,
+)
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -70,6 +78,142 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
         "rate": round(done_all / total_all, 3) if total_all else 0.0,
     }
     return DashboardOut(exams=exam_list, today_tasks=today_tasks, overall=overall)
+
+
+# ⚠ 必须声明在 /stats/{exam_id} 之前：FastAPI 按注册顺序匹配，
+# 否则 /stats/overview 会先被 {exam_id:int} 捕获、"overview" 当整数解析 -> 422。
+@router.get(
+    "/stats/overview",
+    response_model=StatsOverviewOut,
+    summary="学习统计总览：各科学习时长 + 完成率 + 每日趋势（FMZH-SRS-5.2.0）",
+)
+def stats_overview(
+    days: int = 7,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    days = max(1, min(days, 90))
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    start_dt = datetime.combine(start, time.min)
+    end_dt = datetime.combine(end + timedelta(days=1), time.min)
+
+    # 番茄钟：窗口内一次取回，Python 侧按科目 / 按天累加（口径同 focus.py，半开区间只比 start_time）
+    sessions = (
+        db.query(FocusSession)
+        .filter(
+            FocusSession.user_id == user.id,
+            FocusSession.start_time >= start_dt,
+            FocusSession.start_time < end_dt,
+        )
+        .all()
+    )
+    minutes_by_exam: dict[int | None, int] = {}
+    minutes_by_day: dict[str, int] = {}
+    for s in sessions:
+        minutes_by_exam[s.exam_id] = minutes_by_exam.get(s.exam_id, 0) + s.duration_minutes
+        key = s.start_time.date().isoformat()
+        minutes_by_day[key] = minutes_by_day.get(key, 0) + s.duration_minutes
+
+    # 任务：全量课程进度（与首页 /dashboard 口径一致）
+    totals = dict(
+        db.query(Task.exam_id, func.count(Task.id))
+        .filter(Task.user_id == user.id)
+        .group_by(Task.exam_id)
+        .all()
+    )
+    dones = dict(
+        db.query(Task.exam_id, func.count(Task.id))
+        .filter(Task.user_id == user.id, Task.is_done.is_(True))
+        .group_by(Task.exam_id)
+        .all()
+    )
+
+    # 历史报表：窗口内按计划日期聚合任务
+    window_tasks = (
+        db.query(Task)
+        .filter(
+            Task.user_id == user.id,
+            Task.plan_date >= start,
+            Task.plan_date <= end,
+        )
+        .all()
+    )
+    total_by_day: dict[str, int] = {}
+    done_by_day: dict[str, int] = {}
+    for t in window_tasks:
+        key = t.plan_date.isoformat()
+        total_by_day[key] = total_by_day.get(key, 0) + 1
+        if t.is_done:
+            done_by_day[key] = done_by_day.get(key, 0) + 1
+
+    # 按科目汇总：番茄钟涉及的科目 ∪ 有任务的科目
+    exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
+    exam_ids = {eid for eid in minutes_by_exam if eid is not None} | set(totals)
+    subjects: list[SubjectStat] = []
+    for eid in exam_ids:
+        exam = exams.get(eid)
+        if exam is None:
+            continue
+        total = totals.get(eid, 0)
+        done = dones.get(eid, 0)
+        subjects.append(
+            SubjectStat(
+                exam_id=eid,
+                subject=exam.subject,
+                minutes=minutes_by_exam.get(eid, 0),
+                total_tasks=total,
+                done_tasks=done,
+                rate=round(done / total, 3) if total else 0.0,
+                exam_date=exam.exam_date,
+                days_left=_days_left(exam.exam_date),
+            )
+        )
+    free_minutes = minutes_by_exam.get(None, 0)
+    if free_minutes:
+        subjects.append(
+            SubjectStat(
+                exam_id=None,
+                subject="未指定科目",
+                minutes=free_minutes,
+                total_tasks=0,
+                done_tasks=0,
+                rate=0.0,
+            )
+        )
+    subjects.sort(key=lambda s: (s.minutes, s.rate), reverse=True)
+
+    # 每日序列：窗口内每天补一条，无记录补 0，保证图表 x 轴连续
+    daily: list[DayStat] = []
+    cur = start
+    while cur <= end:
+        key = cur.isoformat()
+        total = total_by_day.get(key, 0)
+        done = done_by_day.get(key, 0)
+        daily.append(
+            DayStat(
+                date=key,
+                minutes=minutes_by_day.get(key, 0),
+                total=total,
+                done=done,
+                rate=round(done / total, 3) if total else 0.0,
+            )
+        )
+        cur += timedelta(days=1)
+
+    total_all = sum(totals.values())
+    done_all = sum(dones.values())
+    return StatsOverviewOut(
+        range_days=days,
+        start_date=start.isoformat(),
+        end_date=end.isoformat(),
+        total_minutes=sum(minutes_by_exam.values()),
+        total_tasks=total_all,
+        done_tasks=done_all,
+        rate=round(done_all / total_all, 3) if total_all else 0.0,
+        subjects=subjects,
+        days=daily,
+    )
 
 
 @router.get("/stats/{exam_id}", response_model=StatsOut, summary="单科统计：完成率 + 每日情况 + 知识点权重")

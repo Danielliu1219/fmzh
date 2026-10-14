@@ -11,6 +11,7 @@ const routes = [
       { path: 'exams', name: 'exams', component: () => import('../views/Exams.vue'), meta: { title: '考试管理' } },
       { path: 'materials', name: 'materials', component: () => import('../views/Materials.vue'), meta: { title: '复习资料' } },
       { path: 'analysis', name: 'analysis', component: () => import('../views/Analysis.vue'), meta: { title: 'AI 复习分析' } },
+      { path: 'stats', name: 'stats', component: () => import('../views/Stats.vue'), meta: { title: '学习统计' } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
