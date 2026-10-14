@@ -45,12 +45,16 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-const navItems = [
-  { path: '/', label: '首页' },
-  { path: '/exams', label: '课程管理' },
-  { path: '/materials', label: '复习资料' },
-  { path: '/analysis', label: 'AI 复习分析' },
-]
+const navItems = computed(() => {
+  const items = [
+    { path: '/', label: '首页' },
+    { path: '/exams', label: '课程管理' },
+    { path: '/materials', label: '复习资料' },
+    { path: '/analysis', label: 'AI 复习分析' },
+  ]
+  if (userStore.isAdmin) items.push({ path: '/admin', label: '管理端' })
+  return items
+})
 
 const displayName = computed(() => userStore.displayName)
 const isActive = (path) => (path === '/' ? route.path === '/' : route.path.startsWith(path))

@@ -1,14 +1,25 @@
 """特色功能接口（模块7）：压力指数 / 情绪记录 / 救急模式等
 公式口径见 README 第 3.3、3.4 节，实现照抄，不要自行改动。
 """
-from datetime import date
+import json
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.models import Exam, Task, User
-from ..schemas.schemas import PressureOut
+from ..models.models import Analysis, Exam, MoodRecord, Task, User, UserProfile
+from ..schemas.schemas import (
+    EmergencyOut,
+    MoodResult,
+    MoodSubmit,
+    PressureOut,
+    ReliefApply,
+    ReliefPlan,
+    ReviewOut,
+    TimeSlotOut,
+    Top3Out,
+)
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -81,3 +92,486 @@ def compute_pressure(db: Session, user_id: int) -> dict:
 @router.get("/pressure", response_model=PressureOut, summary="期末压力指数")
 def pressure(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return compute_pressure(db, user.id)
+
+
+def _today_completion_rate(db: Session, user_id: int, today: date) -> float:
+    """当天的任务完成率（当天无任务取 0）"""
+    tasks = db.query(Task).filter(Task.user_id == user_id, Task.plan_date == today).all()
+    if not tasks:
+        return 0.0
+    return sum(1 for t in tasks if t.is_done) / len(tasks)
+
+
+def _streak_days(db: Session, user_id: int, today: date) -> int:
+    """连续达标天数：从今天往前，连续「当天有任务且全部完成」的天数"""
+    by_date: dict[date, list[Task]] = {}
+    for t in db.query(Task).filter(Task.user_id == user_id).all():
+        by_date.setdefault(t.plan_date, []).append(t)
+    streak = 0
+    cursor = today
+    while True:
+        day_tasks = by_date.get(cursor)
+        if not day_tasks or not all(t.is_done for t in day_tasks):
+            break
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+def _mood_suggestion(score: float) -> str:
+    """复习节奏建议（按综合评分分档）"""
+    if score >= 4:
+        return "状态很好，可以适当加量，挑战高权重难点"
+    if score >= 3:
+        return "状态不错，保持当前节奏即可"
+    if score >= 2.5:
+        return "状态一般，建议放慢节奏、穿插休息"
+    return "状态偏低，建议减轻今日任务或暂停半天"
+
+
+def compute_mood(db: Session, user: User, today: date) -> dict | None:
+    """情绪综合评分 = 0.4×情绪项 + 0.3×完成项 + 0.2×压力项 + 0.1×达标项；今天没记录返回 None"""
+    record = (
+        db.query(MoodRecord)
+        .filter(MoodRecord.user_id == user.id, MoodRecord.record_date == today)
+        .first()
+    )
+    if record is None:
+        return None
+
+    emotion_item = 5 * (record.mood_score - 1) / 4
+    completion_item = 5 * _today_completion_rate(db, user.id, today)
+    pressure_item = 5 - compute_pressure(db, user.id)["score"] / 20
+    streak_item = 5 * min(_streak_days(db, user.id, today), 7) / 7
+
+    composite = round(
+        0.4 * emotion_item + 0.3 * completion_item + 0.2 * pressure_item + 0.1 * streak_item,
+        2,
+    )
+    return {
+        "record_date": today,
+        "mood_score": record.mood_score,
+        "emotion_item": round(emotion_item, 2),
+        "completion_item": round(completion_item, 2),
+        "pressure_item": round(pressure_item, 2),
+        "streak_item": round(streak_item, 2),
+        "composite_score": composite,
+        "suggestion": _mood_suggestion(composite),
+        "need_relief": composite < 2.5,
+    }
+
+
+@router.post("/mood", response_model=MoodResult, summary="提交今日情绪自评（1~5）")
+def submit_mood(
+    payload: MoodSubmit,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    today = date.today()
+    record = (
+        db.query(MoodRecord)
+        .filter(MoodRecord.user_id == user.id, MoodRecord.record_date == today)
+        .first()
+    )
+    if record is None:
+        record = MoodRecord(
+            user_id=user.id, record_date=today, mood_score=payload.mood_score, note=payload.note
+        )
+        db.add(record)
+    else:
+        record.mood_score = payload.mood_score
+        record.note = payload.note
+    db.commit()
+    return compute_mood(db, user, today)
+
+
+@router.get("/mood/today", response_model=MoodResult | None, summary="查询今日情绪评分（未记录返回 null）")
+def today_mood(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return compute_mood(db, user, date.today())
+
+
+def _latest_analysis(db: Session, user_id: int, exam_id: int) -> Analysis | None:
+    """该用户该科目最新一次 AI 分析"""
+    return (
+        db.query(Analysis)
+        .filter(Analysis.user_id == user_id, Analysis.exam_id == exam_id)
+        .order_by(Analysis.id.desc())
+        .first()
+    )
+
+
+def _pick_exam(db: Session, user_id: int, exam_id: int | None, today: date) -> Exam | None:
+    """指定考试优先；否则取最近一场未开考的考试"""
+    query = db.query(Exam).filter(Exam.user_id == user_id, Exam.exam_date >= today)
+    if exam_id:
+        return query.filter(Exam.id == exam_id).first()
+    return query.order_by(Exam.exam_date).first()
+
+
+def compute_emergency(db: Session, user: User, exam_id: int | None = None) -> dict | None:
+    """临时救急模式：为最近一场考试（或指定考试）生成高频基础考点冲刺清单"""
+    today = date.today()
+    exam = _pick_exam(db, user.id, exam_id, today)
+    if exam is None:
+        return None
+
+    base = {
+        "exam_id": exam.id,
+        "subject": exam.subject,
+        "exam_date": exam.exam_date,
+        "days_left": (exam.exam_date - today).days,
+        "items": [],
+        "note": "",
+    }
+    analysis = _latest_analysis(db, user.id, exam.id)
+    if analysis is None:
+        base["note"] = "该科目还没有 AI 分析结果，先去「AI 复习分析」生成后才有冲刺清单"
+        return base
+
+    try:
+        result = json.loads(analysis.result_json)
+    except json.JSONDecodeError:
+        base["note"] = "分析结果解析失败"
+        return base
+
+    items: list[dict] = []
+    # 必考/常考考点，must 排在 common 前
+    for f in sorted(result.get("exam_focus", []), key=lambda x: 0 if x.get("level") == "must" else 1):
+        items.append({
+            "content": f.get("content", ""),
+            "kind": "考点",
+            "level": f.get("level", ""),
+            "weight": None,
+            "source": f.get("source", ""),
+            "basis": f.get("basis", ""),
+        })
+    # 高权重知识点，按权重从高到低
+    for k in sorted(result.get("knowledge_points", []), key=lambda x: x.get("weight", 0), reverse=True):
+        items.append({
+            "content": k.get("name", ""),
+            "kind": "知识点",
+            "level": k.get("importance", ""),
+            "weight": k.get("weight", 0),
+            "source": k.get("source", ""),
+            "basis": k.get("recommend_reason", ""),
+        })
+    base["items"] = items
+    if not items:
+        base["note"] = "该科目分析里没有可提取的考点"
+    return base
+
+
+@router.get("/emergency", response_model=EmergencyOut | None, summary="临时救急模式：考前冲刺清单")
+def emergency(
+    exam_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return compute_emergency(db, user, exam_id)
+
+
+def compute_review(db: Session, user: User, exam_id: int | None = None) -> dict | None:
+    """考前重点回顾列表：按权重从高到低列出该科目的必看知识点（考前几天通览用）"""
+    today = date.today()
+    exam = _pick_exam(db, user.id, exam_id, today)
+    if exam is None:
+        return None
+
+    base = {
+        "exam_id": exam.id,
+        "subject": exam.subject,
+        "exam_date": exam.exam_date,
+        "days_left": (exam.exam_date - today).days,
+        "items": [],
+        "note": "",
+    }
+    analysis = _latest_analysis(db, user.id, exam.id)
+    if analysis is None:
+        base["note"] = "该科目还没有 AI 分析结果，先去「AI 复习分析」生成后才有重点回顾清单"
+        return base
+
+    try:
+        result = json.loads(analysis.result_json)
+    except json.JSONDecodeError:
+        base["note"] = "分析结果解析失败"
+        return base
+
+    base["items"] = [
+        {
+            "name": k.get("name", ""),
+            "weight": k.get("weight", 0),
+            "importance": k.get("importance", "medium"),
+            "suggest_hours": k.get("suggest_hours", 0),
+            "source": k.get("source", ""),
+            "basis": k.get("recommend_reason", ""),
+        }
+        for k in sorted(
+            result.get("knowledge_points", []),
+            key=lambda x: x.get("weight", 0),
+            reverse=True,
+        )
+    ]
+    if not base["items"]:
+        base["note"] = "该科目分析里没有可回顾的知识点"
+    return base
+
+
+@router.get("/review", response_model=ReviewOut | None, summary="考前重点回顾列表：按权重列出必看清单")
+def review(
+    exam_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return compute_review(db, user, exam_id)
+
+
+# 任务优先级 → 权重（1 高 / 2 中 / 3 低）
+_PRIORITY_WEIGHT = {1: 1.0, 2: 0.6, 3: 0.3}
+
+
+def compute_top3(db: Session, user: User) -> dict:
+    """今日最重要的三件事：在今日（含逾期）未完成任务中按 权重+截止紧迫度+压力指数 打分取前三
+
+    打分 = 40×优先级权重 + 35×截止紧迫度 + 25×(压力指数/100)；
+    截止紧迫度：任务已逾期或考试当天取 1，否则 min(1, 7÷距考试天数)，无考试取 0。
+    """
+    today = date.today()
+    score_pressure = compute_pressure(db, user.id)["score"]
+    exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
+    tasks = (
+        db.query(Task)
+        .filter(Task.user_id == user.id, Task.is_done.is_(False), Task.plan_date <= today)
+        .all()
+    )
+
+    ranked = []
+    for t in tasks:
+        exam = exams.get(t.exam_id)
+        days_left = (exam.exam_date - today).days if exam else None
+        if t.plan_date < today or (days_left is not None and days_left <= 0):
+            urgency = 1.0
+        elif days_left is None:
+            urgency = 0.0
+        else:
+            urgency = min(1.0, 7 / days_left)
+
+        weight = _PRIORITY_WEIGHT.get(t.priority, 0.3)
+        score = round(40 * weight + 35 * urgency + 25 * (score_pressure / 100), 1)
+
+        bits = []
+        if t.priority == 1:
+            bits.append("优先级高")
+        if t.plan_date < today:
+            bits.append("已逾期")
+        elif days_left is not None:
+            bits.append(f"距{exam.subject}考试 {days_left} 天")
+
+        ranked.append((score, {
+            "task_id": t.id,
+            "title": t.title,
+            "subject": exam.subject if exam else "",
+            "plan_date": t.plan_date,
+            "priority": t.priority,
+            "estimated_minutes": t.estimated_minutes,
+            "score": score,
+            "reason": " · ".join(bits) if bits else "按当前压力排序",
+        }))
+
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    top = [item for _, item in ranked[:3]]
+    note = "" if top else "今天没有待完成任务，去「生成复习计划」安排一下吧"
+    return {"items": top, "pressure": score_pressure, "note": note}
+
+
+@router.get("/top3", response_model=Top3Out, summary="今日最重要的三件事（按权重+截止+压力置顶）")
+def top3(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return compute_top3(db, user)
+
+
+# 学习时段模板：(名称, 起, 止, 建议内容方向)；容量单位分钟
+_SLOT_TEMPLATE = [
+    ("早晨", "07:30", "09:00", "精力高峰，攻坚最薄弱章节"),
+    ("上午", "09:00", "11:30", "整块时间学新知识、啃重点"),
+    ("下午", "14:00", "16:30", "刷题练习，巩固当天所学"),
+    ("晚上", "19:00", "21:00", "回顾重点 + 整理错题"),
+]
+_SLOT_CAPACITY = [90, 150, 150, 120]
+_SLOT_RATIO = [0.3, 0.3, 0.2, 0.2]
+_DEFAULT_DAILY_HOURS = 3.0
+
+
+def compute_timeslots(db: Session, user: User) -> dict:
+    """学习时段推荐：按画像每日可用时长，把复习时间分配到早/上午/下午/晚上四个时段"""
+    profile = (
+        db.query(UserProfile)
+        .filter(UserProfile.user_id == user.id)
+        .order_by(UserProfile.id.desc())
+        .first()
+    )
+    note = ""
+    if profile and profile.daily_hours:
+        daily_hours = profile.daily_hours
+    else:
+        daily_hours = _DEFAULT_DAILY_HOURS
+        note = "还没有 AI 画像，先按默认每日 3 小时推荐；去「AI 复习分析」填写目标后更准确"
+
+    try:
+        weak = json.loads(profile.weak_chapters) if profile else []
+    except (json.JSONDecodeError, TypeError):
+        weak = []
+    weak_focus = weak[0] if weak else ""
+
+    # 目标总时长，不超过模板容量之和；比例分配到各时段，取整到 5 分钟
+    total = min(round(daily_hours * 60), sum(_SLOT_CAPACITY))
+    slots = []
+    for (name, start, end, tip), cap, ratio in zip(_SLOT_TEMPLATE, _SLOT_CAPACITY, _SLOT_RATIO):
+        minutes = min(round(total * ratio / 5) * 5, cap)
+        if minutes <= 0:
+            continue
+        focus = tip
+        if weak_focus and name == "早晨":
+            focus = f"攻坚薄弱环节：{weak_focus}"
+        elif weak_focus and name == "上午":
+            focus = f"主攻高频重点（{weak_focus} 等）"
+        slots.append({
+            "name": name,
+            "start": start,
+            "end": end,
+            "minutes": minutes,
+            "focus": focus,
+        })
+
+    return {
+        "daily_hours": daily_hours,
+        "learning_status": profile.learning_status if profile else None,
+        "slots": slots,
+        "note": note,
+    }
+
+
+@router.get("/timeslots", response_model=TimeSlotOut, summary="学习时段推荐：按画像分配每日复习时段")
+def timeslots(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return compute_timeslots(db, user)
+
+
+def compute_relief(db: Session, user: User, option: str) -> dict:
+    """低情绪减负：把今日（含逾期）未完成任务在约束下重排到后续日期
+
+    约束：① 不晚于该任务所属考试的日期；② 每日不超过画像的每日可用时长
+    （暂停半天时今日容量取 0，减轻当日取一半）；③ 按任务优先级从高到低优先安排。
+    排不下的任务进 conflicts 明确提示取舍，不硬塞到后续日期。
+    """
+    if option not in ("lighten", "halfday"):
+        option = "lighten"
+    today = date.today()
+
+    profile = (
+        db.query(UserProfile)
+        .filter(UserProfile.user_id == user.id)
+        .order_by(UserProfile.id.desc())
+        .first()
+    )
+    daily_hours = profile.daily_hours if profile and profile.daily_hours else _DEFAULT_DAILY_HOURS
+    daily_minutes = int(daily_hours * 60)
+    today_cap = 0 if option == "halfday" else daily_minutes // 2
+
+    tasks = db.query(Task).filter(Task.user_id == user.id, Task.is_done.is_(False)).all()
+    exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
+
+    movable = [t for t in tasks if t.plan_date <= today]
+    frozen = [t for t in tasks if t.plan_date > today]
+
+    # 未来各天已被未完成任务占用的分钟数
+    load: dict[date, int] = {}
+    for t in frozen:
+        load[t.plan_date] = load.get(t.plan_date, 0) + t.estimated_minutes
+
+    def sort_key(t: Task):
+        exam = exams.get(t.exam_id)
+        return (t.priority, exam.exam_date if exam else date.max, t.plan_date)
+
+    movable.sort(key=sort_key)
+
+    moves, conflicts = [], []
+    for t in movable:
+        exam = exams.get(t.exam_id)
+        deadline = exam.exam_date if exam else None
+        placed = None
+        d = today
+        while deadline is None or d <= deadline:
+            if d == today and today_cap == 0:
+                d += timedelta(days=1)
+                continue
+            cap = today_cap if d == today else daily_minutes
+            used = load.get(d, 0)
+            # 空的一天允许放单个超长任务，避免排不下时死循环
+            if used + t.estimated_minutes <= cap or (used == 0 and cap > 0):
+                placed = d
+                break
+            d += timedelta(days=1)
+
+        if placed is None:
+            conflicts.append({
+                "task_id": t.id,
+                "title": t.title,
+                "reason": (
+                    f"考前时间不足，无法在 {deadline.isoformat()} 前安排"
+                    if deadline
+                    else "每日可用时间不足，无法安排"
+                ),
+            })
+            continue
+
+        load[placed] = load.get(placed, 0) + t.estimated_minutes
+        if placed != t.plan_date:
+            moves.append({
+                "task_id": t.id,
+                "title": t.title,
+                "from_date": t.plan_date,
+                "to_date": placed,
+                "minutes": t.estimated_minutes,
+            })
+
+    if conflicts:
+        summary = f"将后移 {len(moves)} 个任务，另有 {len(conflicts)} 个任务考前排不下，需要取舍"
+    elif moves:
+        summary = f"将后移 {len(moves)} 个任务，今日负担相应减轻"
+    else:
+        summary = "当前安排已满足约束，无需调整"
+
+    return {
+        "option": option,
+        "daily_hours": daily_hours,
+        "today_capacity": today_cap,
+        "moves": moves,
+        "conflicts": conflicts,
+        "summary": summary,
+    }
+
+
+@router.get("/relief", response_model=ReliefPlan, summary="低情绪减负：重排方案预览（未生效）")
+def relief(
+    option: str = "lighten",
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return compute_relief(db, user, option)
+
+
+@router.post("/relief/apply", response_model=ReliefPlan, summary="确认减负：按预览方案重排并生效")
+def relief_apply(
+    payload: ReliefApply,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    plan = compute_relief(db, user, payload.option)
+    moves = {m["task_id"]: m["to_date"] for m in plan["moves"]}
+    if moves:
+        for t in (
+            db.query(Task)
+            .filter(Task.user_id == user.id, Task.id.in_(list(moves.keys())))
+            .all()
+        ):
+            t.plan_date = moves[t.id]
+        db.commit()
+    return plan

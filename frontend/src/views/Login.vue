@@ -124,7 +124,7 @@ const onLogin = async () => {
 // mock 模式下直接种一份本地会话，跳过真实登录
 const onDemoLogin = () => {
   localStorage.setItem('fmzh_token', 'demo-token')
-  localStorage.setItem('fmzh_user', JSON.stringify({ username: 'demo', nickname: '演示同学' }))
+  localStorage.setItem('fmzh_user', JSON.stringify({ username: 'demo', nickname: '演示同学', is_admin: true }))
   router.push('/')
 }
 

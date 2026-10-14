@@ -45,4 +45,24 @@ export const dashboardApi = {
 
 export const featureApi = {
   pressure: () => request.get('/features/pressure'),
+  moodToday: () => request.get('/features/mood/today'),
+  submitMood: (data) => request.post('/features/mood', data),
+  emergency: (params) => request.get('/features/emergency', { params }),
+  review: (params) => request.get('/features/review', { params }),
+  top3: () => request.get('/features/top3'),
+  timeslots: () => request.get('/features/timeslots'),
+  relief: (params) => request.get('/features/relief', { params }),
+  reliefApply: (data) => request.post('/features/relief/apply', data),
+}
+
+export const adminApi = {
+  courses: () => request.get('/admin/courses'),
+  createCourse: (data) => request.post('/admin/courses', data),
+  updateCourse: (id, data) => request.put(`/admin/courses/${id}`, data),
+  removeCourse: (id) => request.delete(`/admin/courses/${id}`),
+  users: () => request.get('/admin/users'),
+  banUser: (id) => request.post(`/admin/users/${id}/ban`),
+  unbanUser: (id) => request.post(`/admin/users/${id}/unban`),
+  materials: (params) => request.get('/admin/materials', { params }),
+  removeMaterial: (id) => request.delete(`/admin/materials/${id}`),
 }

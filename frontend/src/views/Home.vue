@@ -102,6 +102,28 @@
         </div>
       </section>
 
+      <!-- ===== 今日最重要的三件事（模块 7.4） ===== -->
+      <section v-if="top3" class="panel top3 rise" style="--d: 180ms">
+        <div class="panel-head">
+          <h2>今日最重要的三件事</h2>
+          <span class="panel-sub">按权重、截止时间与压力指数置顶</span>
+        </div>
+        <p v-if="top3.note" class="t3-note">{{ top3.note }}</p>
+        <ol v-else class="t3-list">
+          <li v-for="(it, i) in top3.items" :key="it.task_id" class="t3-item" :class="{ first: i === 0 }">
+            <span class="t3-rank">{{ i + 1 }}</span>
+            <div class="t3-body">
+              <div class="t3-title">{{ it.title }}</div>
+              <div class="t3-meta">
+                <span v-if="it.subject" class="t3-subject">{{ it.subject }}</span>
+                <span class="t3-reason">{{ it.reason }}</span>
+              </div>
+            </div>
+            <span class="t3-min">{{ it.estimated_minutes }} min</span>
+          </li>
+        </ol>
+      </section>
+
       <!-- ===== 压力指数（模块 7.1） ===== -->
 <section v-if="pressure" class="panel pressure rise" :class="{ alert: pressure.need_emergency }" style="--d: 200ms">
   <div class="pressure-main">
@@ -118,6 +140,134 @@
     开启临时救急模式
   </el-button>
 </section>
+
+<!-- ===== 临时救急模式 · 冲刺清单（模块 7.2） ===== -->
+<el-dialog
+  v-model="emergencyVisible"
+  title="临时救急模式 · 考前冲刺清单"
+  width="640px"
+  align-center
+>
+  <div v-if="emergency" class="emergency">
+    <div class="eg-head">
+      <span class="eg-subject">{{ emergency.subject }}</span>
+      <span class="eg-meta">距考试 {{ emergency.days_left }} 天 · {{ emergency.exam_date }}</span>
+    </div>
+    <p v-if="emergency.note" class="eg-note">{{ emergency.note }}</p>
+    <ul v-else class="eg-list">
+      <li v-for="(it, i) in emergency.items" :key="i" class="eg-item">
+        <span class="eg-idx">{{ i + 1 }}</span>
+        <div class="eg-body">
+          <div class="eg-line">
+            <span class="eg-kind" :class="it.kind === '考点' ? 'focus' : 'kp'">{{ it.kind }}</span>
+            <span class="eg-content">{{ it.content }}</span>
+          </div>
+          <div v-if="it.basis" class="eg-basis">{{ it.basis }}</div>
+        </div>
+        <span v-if="it.weight != null" class="eg-weight">权重 {{ it.weight }}</span>
+      </li>
+    </ul>
+  </div>
+  <div v-else class="eg-loading">加载中…</div>
+</el-dialog>
+
+<!-- ===== 低情绪减负与计划重排（模块 7.7） ===== -->
+<el-dialog
+  v-model="reliefVisible"
+  title="低情绪减负 · 计划重排"
+  width="620px"
+  align-center
+>
+  <div class="relief">
+    <div class="rf-opts">
+      <el-button :type="reliefOption === 'lighten' ? 'primary' : 'default'" round @click="pickRelief('lighten')">
+        减轻当日任务
+      </el-button>
+      <el-button :type="reliefOption === 'halfday' ? 'primary' : 'default'" round @click="pickRelief('halfday')">
+        暂停半天
+      </el-button>
+      <span class="rf-cap">重排后今日可用 {{ relief ? relief.today_capacity : '—' }} 分钟</span>
+    </div>
+    <div v-if="relief" class="rf-body">
+      <p class="rf-summary">{{ relief.summary }}</p>
+      <ul v-if="relief.moves.length" class="rf-list">
+        <li v-for="m in relief.moves" :key="m.task_id" class="rf-item">
+          <span class="rf-title">{{ m.title }}</span>
+          <span class="rf-dates">{{ m.from_date }} → {{ m.to_date }}</span>
+        </li>
+      </ul>
+      <div v-if="relief.conflicts.length" class="rf-conflicts">
+        <div class="rf-conf-head">以下任务考前排不下，需要取舍：</div>
+        <ul>
+          <li v-for="c in relief.conflicts" :key="c.task_id">{{ c.title }} —— {{ c.reason }}</li>
+        </ul>
+      </div>
+    </div>
+    <div v-else class="rf-loading">加载中…</div>
+  </div>
+  <template #footer>
+    <el-button @click="reliefVisible = false">取消</el-button>
+    <el-button type="primary" :disabled="!relief" @click="confirmRelief">确认调整</el-button>
+  </template>
+</el-dialog>
+
+      <!-- ===== 情绪记录（模块 7.6） ===== -->
+      <section class="panel mood rise" style="--d: 280ms">
+        <div class="panel-head">
+          <h2>今日情绪记录</h2>
+          <span class="panel-sub">给今天的心情打个分，帮你调整复习节奏</span>
+        </div>
+        <div class="mood-body">
+          <div class="mood-pick">
+            <el-rate v-model="moodScore" :max="5" size="large" @change="onMoodChange" />
+            <span class="mood-hint">{{ moodHint }}</span>
+          </div>
+          <div v-if="mood" class="mood-result" :class="{ low: mood.need_relief }">
+            <div class="mood-score">
+              <span class="ms-num">{{ mood.composite_score }}</span>
+              <span class="ms-label">情绪综合评分（满分 5）</span>
+            </div>
+            <p class="mood-tip">{{ mood.suggestion }}</p>
+            <el-button v-if="mood.need_relief" type="primary" round @click="onRelief">
+              减轻今日负担
+            </el-button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 考前重点回顾（模块 7.3） ===== -->
+      <section v-if="review && review.items.length" class="panel review rise" style="--d: 320ms">
+        <div class="panel-head">
+          <h2>考前重点回顾</h2>
+          <span class="panel-sub">{{ review.subject }} · 距考试 {{ review.days_left }} 天，按权重从高到低过一遍</span>
+        </div>
+        <ul class="rv-list">
+          <li v-for="(it, i) in review.items" :key="i" class="rv-item">
+            <span class="rv-idx">{{ i + 1 }}</span>
+            <span class="rv-name">{{ it.name }}</span>
+            <div class="rv-bar"><div class="rv-fill" :style="{ width: Math.round(it.weight * 100) + '%' }"></div></div>
+            <span class="rv-weight">{{ Math.round(it.weight * 100) }}%</span>
+            <span v-if="it.suggest_hours" class="rv-hours">建议 {{ it.suggest_hours }}h</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ===== 学习时段推荐（模块 7.5） ===== -->
+      <section v-if="timeslots" class="panel timeslots rise" style="--d: 360ms">
+        <div class="panel-head">
+          <h2>学习时段推荐</h2>
+          <span class="panel-sub">按每日可用 {{ timeslots.daily_hours }} 小时分配到时段</span>
+        </div>
+        <p v-if="timeslots.note" class="ts-note">{{ timeslots.note }}</p>
+        <div class="ts-grid">
+          <div v-for="s in timeslots.slots" :key="s.name" class="ts-card">
+            <div class="ts-name">{{ s.name }}</div>
+            <div class="ts-time">{{ s.start }}–{{ s.end }}</div>
+            <div class="ts-min">{{ s.minutes }} 分钟</div>
+            <div class="ts-focus">{{ s.focus }}</div>
+          </div>
+        </div>
+      </section>
 
       <!-- ===== 考表 · 考试倒计时（日程时间线） ===== -->
       <section class="panel rise" style="--d: 240ms">
@@ -249,7 +399,7 @@ import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { dashboardApi, featureApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
-import { USE_MOCK, getToday, mockOverview, mockPressure } from '../mock/dashboard'
+import { USE_MOCK, getToday, mockEmergency, mockMood, mockOverview, mockPressure, mockRelief, mockReview, mockTimeslots, mockTop3 } from '../mock/dashboard'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -261,6 +411,16 @@ const tasks = ref([])
 const overall = ref({ total: 0, done: 0, rate: 0 })
 const extras = ref({ streak: 0, focus_minutes: 0 })
 const pressure = ref(null)
+const mood = ref(null)
+const moodScore = ref(0)
+const emergencyVisible = ref(false)
+const emergency = ref(null)
+const review = ref(null)
+const top3 = ref(null)
+const timeslots = ref(null)
+const reliefVisible = ref(false)
+const reliefOption = ref('lighten')
+const relief = ref(null)
 
 const chartRef = ref(null)
 let chart = null
@@ -317,6 +477,11 @@ const sortedExams = computed(() =>
   [...exams.value].sort((a, b) => a.exam_date.localeCompare(b.exam_date)),
 )
 const weekDots = ['一', '二', '三', '四', '五', '六', '日']
+
+const moodHint = computed(() => {
+  const map = ['', '很差', '较差', '一般', '不错', '很好']
+  return moodScore.value ? map[moodScore.value] : '今天心情怎么样？'
+})
 
 const statTiles = computed(() => [
   {
@@ -377,10 +542,24 @@ const load = async () => {
       tasks.value = data.tasks
       extras.value = data.extras
       pressure.value = { ...mockPressure }
+      mood.value = { ...mockMood }
+      moodScore.value = mockMood.mood_score
+      review.value = structuredClone(mockReview)
+      top3.value = structuredClone(mockTop3)
+      timeslots.value = structuredClone(mockTimeslots)
       syncOverall()
     } else {
       // —— 真实接口 ——
-      const [overview, allTasks] = await Promise.all([dashboardApi.overview(), taskApi.list(), featureApi.pressure()])
+      const [overview, allTasks, pressureData, moodData, reviewData, top3Data, slotData] =
+        await Promise.all([
+          dashboardApi.overview(),
+          taskApi.list(),
+          featureApi.pressure(),
+          featureApi.moodToday(),
+          featureApi.review(),
+          featureApi.top3(),
+          featureApi.timeslots(),
+        ])
       exams.value = overview.exams
       overall.value = overview.overall
       const examMap = Object.fromEntries(overview.exams.map((e) => [e.id, e.subject]))
@@ -399,6 +578,11 @@ const load = async () => {
       }
       extras.value = { streak, focus_minutes: focus }
       pressure.value = pressureData
+      mood.value = moodData
+      moodScore.value = moodData?.mood_score || 0
+      review.value = reviewData
+      top3.value = top3Data
+      timeslots.value = slotData
     }
     renderRing()
   } catch (e) {
@@ -435,9 +619,74 @@ const renderRing = () => {
   })
 }
 
-const onEmergency = () => {
-    ElMessage.info('临时救急模式将在用例 7.2 接入')
+const onEmergency = async () => {
+  emergencyVisible.value = true
+  if (USE_MOCK) {
+    emergency.value = structuredClone(mockEmergency)
+    return
   }
+  emergency.value = null
+  try {
+    emergency.value = await featureApi.emergency()
+  } catch (e) {
+    // request.js 已统一提示错误
+  }
+}
+
+const onMoodChange = async (val) => {
+  if (!val) return
+  if (USE_MOCK) {
+    mood.value = { ...mockMood, mood_score: val }
+    return
+  }
+  try {
+    mood.value = await featureApi.submitMood({ mood_score: val })
+    ElMessage.success('已记录今日情绪')
+  } catch (e) {
+    // request.js 已统一提示错误
+  }
+}
+
+const loadRelief = async () => {
+  if (USE_MOCK) {
+    relief.value = structuredClone(mockRelief[reliefOption.value])
+    return
+  }
+  relief.value = null
+  try {
+    relief.value = await featureApi.relief({ option: reliefOption.value })
+  } catch (e) {
+    // request.js 已统一提示错误
+  }
+}
+
+const onRelief = () => {
+  reliefVisible.value = true
+  reliefOption.value = 'lighten'
+  loadRelief()
+}
+
+const pickRelief = (option) => {
+  if (reliefOption.value === option) return
+  reliefOption.value = option
+  loadRelief()
+}
+
+const confirmRelief = async () => {
+  if (USE_MOCK) {
+    ElMessage.success('已按演示方案重排（预览态不落库）')
+    reliefVisible.value = false
+    return
+  }
+  try {
+    await featureApi.reliefApply({ option: reliefOption.value })
+    ElMessage.success('计划已按确认方案重排')
+    reliefVisible.value = false
+    await load()
+  } catch (e) {
+    // request.js 已统一提示错误
+  }
+}
 const goStep = (to) => {
   if (to === '#board') {
     document.getElementById('board')?.scrollIntoView({ behavior: 'smooth' })
@@ -503,6 +752,415 @@ onBeforeUnmount(() => {
 
 .pressure.alert .pb-fill { background: var(--coral); }
 .pressure-tip { margin: 0; font-size: 13px; color: var(--ink-3); }
+
+/* -- 临时救急模式（模块 7.2） -- */
+.eg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1.5px solid var(--ink-1);
+}
+.eg-subject {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--ink-1);
+}
+.eg-meta { font-size: 12px; color: var(--ink-3); }
+.eg-note {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  background: var(--bg-soft);
+  border: 1.5px dashed var(--ink-1);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--ink-2);
+  text-align: center;
+}
+.eg-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.eg-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--bg-soft);
+}
+.eg-item:last-child { border-bottom: none; }
+.eg-idx {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ink-1);
+  color: var(--bg-card);
+  font-family: var(--font-num);
+  font-size: 12px;
+  font-weight: 700;
+}
+.eg-body { flex: 1; min-width: 0; }
+.eg-line { display: flex; align-items: baseline; gap: 8px; }
+.eg-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.eg-kind.focus { background: var(--coral-soft); color: var(--coral-deep); }
+.eg-kind.kp { background: var(--bg-soft); color: var(--ink-2); }
+.eg-content { font-size: 14px; font-weight: 600; color: var(--ink-1); }
+.eg-basis { margin-top: 3px; font-size: 12px; color: var(--ink-3); }
+.eg-weight {
+  flex: none;
+  font-family: var(--font-num);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.eg-loading { padding: 28px 0; text-align: center; color: var(--ink-3); font-size: 13px; }
+
+/* —— 情绪记录（模块 7.6） —— */
+.mood {
+  margin-top: 16px;
+}
+
+.mood-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.mood-pick {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mood-hint {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.mood-result {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: var(--bg-soft);
+  border: 1.5px solid var(--ink-1);
+  border-radius: var(--radius-md);
+  padding: 12px 18px;
+}
+
+.mood-result.low {
+  background: var(--red-soft);
+  border-color: var(--coral-deep);
+}
+
+.mood-score { display: flex; align-items: baseline; gap: 8px; }
+
+.ms-num {
+  font-family: var(--font-num);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.ms-label { font-size: 12px; color: var(--ink-3); }
+.mood-tip { margin: 0; font-size: 13px; color: var(--ink-2); }
+
+@media (max-width: 992px) {
+  .mood-body { flex-direction: column; align-items: stretch; }
+}
+
+/* -- 考前重点回顾（模块 7.3） -- */
+.review {
+  margin-top: 16px;
+}
+
+.rv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rv-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--bg-soft);
+}
+.rv-item:last-child { border-bottom: none; }
+
+.rv-idx {
+  flex: none;
+  width: 20px;
+  text-align: center;
+  font-family: var(--font-num);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-3);
+}
+
+.rv-name {
+  flex: none;
+  width: 38%;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.rv-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rv-fill {
+  height: 100%;
+  background: var(--coral);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.rv-weight {
+  flex: none;
+  width: 44px;
+  text-align: right;
+  font-family: var(--font-num);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.rv-hours {
+  flex: none;
+  width: 72px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* -- 今日最重要的三件事（模块 7.4） -- */
+.top3 {
+  margin-top: 16px;
+}
+
+.t3-note {
+  margin: 0;
+  padding: 12px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.t3-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.t3-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--bg-soft);
+  border: 1.5px solid var(--ink-1);
+  border-radius: var(--radius-md);
+}
+
+.t3-item.first {
+  background: var(--coral-soft);
+  box-shadow: 3px 3px 0 var(--coral);
+}
+
+.t3-rank {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ink-1);
+  color: var(--bg-card);
+  font-family: var(--font-num);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.t3-item.first .t3-rank { background: var(--coral); }
+
+.t3-body { flex: 1; min-width: 0; }
+.t3-title { font-size: 14px; font-weight: 700; color: var(--ink-1); }
+
+.t3-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.t3-subject {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--ink-1);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.t3-reason { font-size: 12px; color: var(--ink-3); }
+
+.t3-min {
+  flex: none;
+  font-family: var(--font-num);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+@media (max-width: 992px) {
+  .t3-item { flex-wrap: wrap; }
+}
+
+/* -- 学习时段推荐（模块 7.5） -- */
+.timeslots {
+  margin-top: 16px;
+}
+
+.ts-note {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: var(--bg-soft);
+  border: 1.5px dashed var(--ink-1);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--ink-3);
+  text-align: center;
+}
+
+.ts-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.ts-card {
+  padding: 14px 16px;
+  background: var(--bg-soft);
+  border: 1.5px solid var(--ink-1);
+  border-radius: var(--radius-md);
+}
+
+.ts-name {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--ink-1);
+}
+
+.ts-time {
+  margin-top: 2px;
+  font-family: var(--font-num);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.ts-min {
+  margin-top: 8px;
+  font-family: var(--font-num);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--coral-deep);
+}
+
+.ts-focus {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+@media (max-width: 992px) {
+  .ts-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* -- 低情绪减负（模块 7.7） -- */
+.rf-opts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rf-cap {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.rf-body { margin-top: 16px; }
+.rf-summary {
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--bg-soft);
+  border: 1.5px solid var(--ink-1);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.rf-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.rf-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--bg-soft);
+  font-size: 13px;
+}
+.rf-item:last-child { border-bottom: none; }
+.rf-title { color: var(--ink-1); font-weight: 600; }
+.rf-dates {
+  flex: none;
+  font-family: var(--font-num);
+  font-size: 12px;
+  color: var(--coral-deep);
+}
+.rf-conflicts {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--red-soft);
+  border: 1.5px solid var(--coral-deep);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.rf-conf-head { font-weight: 700; color: var(--coral-deep); margin-bottom: 4px; }
+.rf-conflicts ul { margin: 0; padding-left: 18px; }
+.rf-loading { padding: 28px 0; text-align: center; color: var(--ink-3); font-size: 13px; }
 
 /* —— 通用面板（纸片 + 墨线 + 硬阴影） —— */
 .panel {
