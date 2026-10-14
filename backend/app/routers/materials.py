@@ -17,6 +17,12 @@ from ..schemas.schemas import (
     MaterialUpdate,
 )
 from ..services.file_parser import parse_file
+from ..services.upload_guard import (
+    UploadRejected,
+    check_content_head,
+    check_extension,
+    check_size,
+)
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -78,29 +84,26 @@ async def upload_material(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # 校验扩展名
-    ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    if ext not in ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"仅支持 {', '.join(sorted(ALLOWED_TYPES))} 格式（MVP 阶段），收到：{ext or '未知'}",
-        )
+    # 统一上传校验（用例 9.5）：先按扩展名快速拒绝，避免白读一个超大文件
+    try:
+        ext = check_extension(file.filename or "", ALLOWED_TYPES)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     _check_source_type(source_type)
     if exam_id is not None:
         exam = db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user.id).first()
         if exam is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="考试不存在")
 
-    # 读取并校验大小
+    # 读取并做大小 + 内容头校验
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     content = await file.read(max_bytes + 1)
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"文件超过 {settings.MAX_UPLOAD_SIZE_MB}MB 上限",
-        )
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件为空")
+    try:
+        check_size(content, settings.MAX_UPLOAD_SIZE_MB)
+        check_content_head(content, ext)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     # 保存到 uploads/{user_id}/{随机名}.{ext}
     user_dir = UPLOAD_DIR / str(user.id)

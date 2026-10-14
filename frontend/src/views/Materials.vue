@@ -16,7 +16,9 @@
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到这里，或 <em>点击选择</em></div>
         <template #tip>
-          <div class="el-upload__tip">MVP 支持 TXT / PDF / Word（.docx），单个文件不超过 20MB</div>
+          <div class="el-upload__tip">
+            MVP 支持 TXT / PDF / Word（.docx），单个文件不超过 20MB；上传时会校验格式与文件内容
+          </div>
         </template>
       </el-upload>
       <div class="upload-form">
