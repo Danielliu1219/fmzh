@@ -242,3 +242,48 @@ class StatsOut(BaseModel):
     rate: float
     by_date: list[DailyStat]
     knowledge_points: list[dict[str, Any]]
+
+
+# ==================== 番茄钟（FMZH-SRS-2.10.0） ====================
+
+
+class FocusSessionCreate(BaseModel):
+    exam_id: Optional[int] = None  # 为空表示未指定科目的自由专注
+    duration_minutes: int = Field(default=25, ge=1, le=180)
+    start_time: Optional[datetime] = None  # 不传则按 end_time - duration 推算
+    end_time: Optional[datetime] = None  # 不传则取服务器当前时间
+
+
+class FocusSessionOut(BaseModel):
+    id: int
+    exam_id: Optional[int] = None
+    subject: str  # 由 exam_id 关联得到；无科目时为空串
+    duration_minutes: int
+    start_time: datetime
+    end_time: datetime
+    created_at: datetime
+
+
+class FocusExamStat(BaseModel):
+    exam_id: Optional[int] = None
+    subject: str
+    minutes: int
+
+
+class FocusTodayOut(BaseModel):
+    date: str
+    total_minutes: int
+    goal_minutes: int  # 0 表示当日未设定目标
+    achieved: bool
+    session_count: int
+    by_exam: list[FocusExamStat]
+
+
+class FocusGoalUpdate(BaseModel):
+    target_minutes: int = Field(ge=0, le=1440)
+    goal_date: Optional[date] = None  # 不传则默认今天
+
+
+class FocusGoalOut(BaseModel):
+    goal_date: date
+    target_minutes: int
