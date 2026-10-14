@@ -1,10 +1,13 @@
-"""数据库表模型（共 7 张表）
+"""数据库表模型（共 9 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
   │         └──< user_profiles ──< analyses
   │                                 │
-  └────────────< tasks ─────────────┘
+  ├────────────< tasks ─────────────┘
+  │
+  ├──< focus_sessions   番茄钟记录（学习时长统计唯一依据）
+  └──< focus_goals      每日学习时长目标
 """
 from datetime import datetime
 
@@ -18,6 +21,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 
 from ..database import Base
@@ -141,3 +145,34 @@ class Collection(Base):
     content = Column(Text, default="")  # 题目详情 JSON（选项/答案/解析/知识点）
     source = Column(String(16), default="manual")  # manual=学生手动收藏 / quiz=自测答错自动入本
     created_at = Column(DateTime, default=datetime.now)
+
+
+class FocusSession(Base):
+    """番茄钟记录：一次专注计时的结果，为学习时长统计的唯一依据（见 FMZH-SRS-2.10.0）
+
+    时长按 exam_id 归入对应科目；exam_id 为空表示未指定科目的自由专注。
+    """
+
+    __tablename__ = "focus_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    duration_minutes = Column(Integer, nullable=False)  # 1~180，单个默认 25
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class FocusGoal(Base):
+    """每日学习时长目标（当日目标，按天存；0~1440 分钟）"""
+
+    __tablename__ = "focus_goals"
+    __table_args__ = (UniqueConstraint("user_id", "goal_date", name="uq_focus_goal_user_date"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    goal_date = Column(Date, index=True, nullable=False)
+    target_minutes = Column(Integer, default=0)  # 0 表示未设定
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
