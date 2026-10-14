@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..config import UPLOAD_DIR, settings
 from ..database import get_db
-from ..models.models import Exam, Material, User
+from ..models.models import Collection, Exam, Material, User
 from ..schemas.schemas import MaterialDetailOut, MaterialOut, MaterialUpdate
 from ..services.file_parser import parse_file
 from ..utils.security import get_current_user
@@ -224,6 +224,10 @@ def delete_material(
         Path(material.file_path).unlink(missing_ok=True)
     except Exception:
         pass
+    # 连带清掉指向这份资料的收藏，避免收藏本里留下空壳（用例 3.5）
+    db.query(Collection).filter(
+        Collection.user_id == user.id, Collection.material_id == material_id
+    ).delete(synchronize_session=False)
     db.delete(material)
     db.commit()
     return {"ok": True}

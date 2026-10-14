@@ -112,6 +112,42 @@ class MaterialUpdate(BaseModel):
     tags: Optional[str] = None
 
 
+# ==================== 收藏与错题本（用例 3.5） ====================
+
+
+class CollectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    item_type: str  # material / question
+    material_id: Optional[int]
+    title: str
+    content: str
+    source: str  # manual / quiz
+    created_at: datetime
+
+
+class CollectionCreate(BaseModel):
+    """手动收藏：收藏一份资料（item_type=material），或收藏一道题目（item_type=question）"""
+
+    item_type: str
+    material_id: Optional[int] = None
+    title: str = ""
+    content: str = ""
+
+
+class MistakeItem(BaseModel):
+    """一道答错的题（由 4.6 自测判分写入错题本）"""
+
+    title: str  # 题干，同时用作错题本的展示标题与去重键
+    content: str = ""  # 题目详情 JSON（选项/正确答案/解析/知识点）
+    knowledge_point: str = ""
+
+
+class MistakeBatchIn(BaseModel):
+    mistakes: list[MistakeItem]
+
+
 # ==================== AI 画像（第一次调用） ====================
 
 

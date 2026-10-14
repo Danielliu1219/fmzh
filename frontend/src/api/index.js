@@ -24,6 +24,14 @@ export const materialApi = {
   remove: (id) => request.delete(`/materials/${id}`),
 }
 
+export const collectionApi = {
+  list: (params) => request.get('/collections', { params }),
+  add: (data) => request.post('/collections', data),
+  remove: (id) => request.delete(`/collections/${id}`),
+  // 自测判分（4.6）答错题批量入错题本
+  addMistakes: (mistakes) => request.post('/collections/mistakes', { mistakes }),
+}
+
 export const aiApi = {
   profile: (data) => request.post('/ai/profile', data),
   analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),

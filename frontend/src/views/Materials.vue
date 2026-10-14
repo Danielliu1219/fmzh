@@ -39,6 +39,7 @@
         <el-radio-group v-model="viewMode" size="small">
           <el-radio-button value="library">资料库</el-radio-button>
           <el-radio-button value="list">列表</el-radio-button>
+          <el-radio-button value="collection">收藏 · 错题本</el-radio-button>
         </el-radio-group>
         <el-select v-model="filter.exam_id" placeholder="按科目筛选" clearable @change="load">
           <el-option v-for="e in exams" :key="e.id" :label="e.subject" :value="e.id" />
@@ -112,7 +113,68 @@
               <div class="lib-ops">
                 <el-button link type="primary" @click="onPreview(row)">预览</el-button>
                 <el-button link type="primary" @click="onEdit(row)">编辑</el-button>
+                <el-button
+                  link
+                  :type="favMaterialIds.has(row.id) ? 'warning' : 'info'"
+                  title="收藏 / 取消收藏"
+                  @click="onToggleFavorite(row)"
+                >
+                  <el-icon><StarFilled v-if="favMaterialIds.has(row.id)" /><Star v-else /></el-icon>
+                </el-button>
                 <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+
+      <!-- 收藏与错题本视图（用例 3.5） -->
+      <div v-else-if="viewMode === 'collection'" v-loading="loading" class="library">
+        <el-empty v-if="!collections.length" description="收藏和错题本还是空的" />
+        <el-collapse v-else v-model="collectionOpen">
+          <el-collapse-item name="fav">
+            <template #title>
+              <span class="group-title">收藏的资料</span>
+              <el-tag size="small" effect="plain" class="group-count">{{ favMaterials.length }} 项</el-tag>
+            </template>
+            <el-empty
+              v-if="!favMaterials.length"
+              description="还没有收藏资料，可在列表里点星标"
+              :image-size="60"
+            />
+            <div v-for="c in favMaterials" :key="c.id" class="lib-row">
+              <div class="lib-main">
+                <div class="lib-line">
+                  <b class="lib-title">{{ c.title }}</b>
+                  <el-tag size="small" type="warning" effect="plain">收藏</el-tag>
+                </div>
+              </div>
+              <div class="lib-ops">
+                <el-button link type="danger" @click="onRemoveCollection(c)">移除</el-button>
+              </div>
+            </div>
+          </el-collapse-item>
+          <el-collapse-item name="wrong">
+            <template #title>
+              <span class="group-title">错题本</span>
+              <el-tag size="small" effect="plain" class="group-count">{{ wrongQuestions.length }} 题</el-tag>
+            </template>
+            <el-empty
+              v-if="!wrongQuestions.length"
+              description="还没有错题（自测答错的题会自动进来）"
+              :image-size="60"
+            />
+            <div v-for="c in wrongQuestions" :key="c.id" class="lib-row">
+              <div class="lib-main">
+                <div class="lib-line">
+                  <b class="lib-title">{{ c.title }}</b>
+                  <el-tag size="small" :type="c.source === 'quiz' ? 'danger' : 'info'" effect="plain">
+                    {{ c.source === 'quiz' ? '自测答错' : '手动收藏' }}
+                  </el-tag>
+                </div>
+              </div>
+              <div class="lib-ops">
+                <el-button link type="danger" @click="onRemoveCollection(c)">移除</el-button>
               </div>
             </div>
           </el-collapse-item>
@@ -150,10 +212,18 @@
         <el-table-column prop="description" label="说明" min-width="140">
           <template #default="{ row }">{{ row.description || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="onPreview(row)">预览</el-button>
             <el-button link type="primary" @click="onEdit(row)">编辑</el-button>
+            <el-button
+              link
+              :type="favMaterialIds.has(row.id) ? 'warning' : 'info'"
+              title="收藏 / 取消收藏"
+              @click="onToggleFavorite(row)"
+            >
+              <el-icon><StarFilled v-if="favMaterialIds.has(row.id)" /><Star v-else /></el-icon>
+            </el-button>
             <el-button link type="danger" @click="onDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -199,7 +269,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { examApi, materialApi } from '../api'
+import { collectionApi, examApi, materialApi } from '../api'
 import { USE_MOCK } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
 
@@ -225,6 +295,15 @@ const filter = reactive({
 const editVisible = ref(false)
 const editSaving = ref(false)
 const editForm = reactive({ id: null, title: '', exam_id: null, source_type: '其他', description: '', tags: '' })
+
+// 收藏与错题本（用例 3.5）
+const collections = ref([])
+const collectionOpen = ref(['fav', 'wrong'])
+// 静态演示模式（无后端）下用本地数组假装收藏本，真实模式走后端
+const mockCollections = ref([
+  { id: 1, item_type: 'material', material_id: 2, title: '极限与连续 老师标注重点', content: '', source: 'manual', created_at: '2026-10-12T10:00:00' },
+  { id: 2, item_type: 'question', material_id: null, title: '极限的四则运算与等价无穷小替换', content: '', source: 'quiz', created_at: '2026-10-13T20:00:00' },
+])
 
 const previewVisible = ref(false)
 const previewLoading = ref(false)
@@ -264,6 +343,17 @@ const hasFilter = computed(() =>
   ),
 )
 const emptyText = computed(() => (hasFilter.value ? '没有匹配的资料' : '还没有上传资料'))
+
+// 已收藏的资料 id 集合：给列表/资料库里的星标显示状态
+const favMaterialIds = computed(() => {
+  const ids = new Set()
+  for (const item of collections.value) {
+    if (item.item_type === 'material' && item.material_id) ids.add(item.material_id)
+  }
+  return ids
+})
+const favMaterials = computed(() => collections.value.filter((c) => c.item_type === 'material'))
+const wrongQuestions = computed(() => collections.value.filter((c) => c.item_type === 'question'))
 
 const loadExams = async () => {
   if (USE_MOCK) {
@@ -318,6 +408,14 @@ const load = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const loadCollections = async () => {
+  if (USE_MOCK) {
+    collections.value = mockCollections.value
+    return
+  }
+  collections.value = await collectionApi.list()
 }
 
 const onFileChange = (uploadFile) => {
@@ -430,9 +528,55 @@ const onEditSave = async () => {
   }
 }
 
+// 星标：收藏 / 取消收藏一份资料（用例 3.5）
+const onToggleFavorite = async (row) => {
+  const existing = collections.value.find(
+    (c) => c.item_type === 'material' && c.material_id === row.id,
+  )
+  if (USE_MOCK) {
+    if (existing) {
+      mockCollections.value = mockCollections.value.filter((c) => c.id !== existing.id)
+      ElMessage.success('已取消收藏')
+    } else {
+      mockCollections.value = [
+        {
+          id: Date.now(),
+          item_type: 'material',
+          material_id: row.id,
+          title: row.title,
+          content: '',
+          source: 'manual',
+          created_at: new Date().toISOString(),
+        },
+        ...mockCollections.value,
+      ]
+      ElMessage.success('已加入收藏')
+    }
+  } else if (existing) {
+    await collectionApi.remove(existing.id)
+    ElMessage.success('已取消收藏')
+  } else {
+    await collectionApi.add({ item_type: 'material', material_id: row.id })
+    ElMessage.success('已加入收藏')
+  }
+  loadCollections()
+}
+
+// 从收藏本里移除（收藏的资料或错题）
+const onRemoveCollection = async (item) => {
+  if (USE_MOCK) {
+    mockCollections.value = mockCollections.value.filter((c) => c.id !== item.id)
+  } else {
+    await collectionApi.remove(item.id)
+  }
+  ElMessage.success('已移除')
+  loadCollections()
+}
+
 onMounted(() => {
   loadExams()
   load()
+  loadCollections()
 })
 </script>
 
