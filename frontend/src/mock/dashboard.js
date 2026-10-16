@@ -45,13 +45,13 @@ export const mockDashboard = {
 export const mockOverview = () =>
   new Promise((resolve) => setTimeout(() => resolve(structuredClone(mockDashboard)), 800))
 
-// 压力指数（模块 7.1）演示数据：need_emergency=true 会高亮提示救急入口
+// 压力指数（模块 7.1）演示数据：52.0 = 30×0.25 + 30×0.4 + 20×(1−0.375) + 20×1，分档「适中」
 export const mockPressure = {
-  score: 63.5,
-  level: '偏压',
-  suggestion: '压力偏高，建议开启临时救急模式',
+  score: 52.0,
+  level: '适中',
+  suggestion: '压力适中，保持当前节奏',
   breakdown: { exam_density: 0.25, task_backlog: 0.4, task_done_rate: 0.375, exam_proximity: 1 },
-  need_emergency: true,
+  need_emergency: false,
 }
 
 // 临时救急模式（模块 7.2）演示数据：最近一场考试的高频基础考点冲刺清单
@@ -89,7 +89,7 @@ export const mockReview = {
 
 // 今日最重要的三件事（模块 7.4）演示数据：按权重+截止+压力打分置顶
 export const mockTop3 = {
-  pressure: 63.5,
+  pressure: 52.0,
   items: [
     { task_id: 1, title: '第3天：极限与连续', subject: '高等数学', plan_date: '2026-09-07', priority: 1, estimated_minutes: 120, score: 84.9, reason: '优先级高 · 距高等数学考试 5 天' },
     { task_id: 4, title: '第4天：导数应用专项', subject: '高等数学', plan_date: '2026-09-09', priority: 2, estimated_minutes: 90, score: 72.4, reason: '距高等数学考试 5 天' },

@@ -136,7 +136,7 @@
     </div>
     <p class="pressure-tip">{{ pressure.suggestion }}</p>
   </div>
-  <el-button v-if="pressure.need_emergency" type="primary" round @click="onEmergency">
+  <el-button type="primary" round @click="onEmergency">
     开启临时救急模式
   </el-button>
 </section>
