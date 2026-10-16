@@ -102,6 +102,10 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"账号或密码错误（连续错误 {user.failed_attempts}/{MAX_FAILED_ATTEMPTS} 次，再错 {remain_failures} 次将锁定账号）",
         )
+    if user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="账号已被封禁，请联系管理员"
+        )
 
     # 登录成功：清零失败计数与锁定状态
     user.failed_attempts = 0

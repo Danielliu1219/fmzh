@@ -11,6 +11,7 @@ const routes = [
       { path: 'exams', name: 'exams', component: () => import('../views/Exams.vue'), meta: { title: '考试管理' } },
       { path: 'materials', name: 'materials', component: () => import('../views/Materials.vue'), meta: { title: '复习资料' } },
       { path: 'analysis', name: 'analysis', component: () => import('../views/Analysis.vue'), meta: { title: 'AI 复习分析' } },
+      { path: 'admin', name: 'admin', component: () => import('../views/Admin.vue'), meta: { title: '管理端', admin: true } },
       { path: 'stats', name: 'stats', component: () => import('../views/Stats.vue'), meta: { title: '学习统计' } },
       { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue'), meta: { title: '个人资料' } },
     ],
@@ -24,11 +25,15 @@ const router = createRouter({
   routes,
 })
 
-// 登录守卫：未登录一律去登录页，已登录访问登录页则回首页
+// 登录守卫：未登录一律去登录页，已登录访问登录页则回首页；管理端仅管理员可进
 router.beforeEach((to) => {
   const token = localStorage.getItem('fmzh_token')
   if (to.path !== '/login' && !token) return '/login'
   if (to.path === '/login' && token) return '/'
+  if (to.meta.admin) {
+    const user = JSON.parse(localStorage.getItem('fmzh_user') || 'null')
+    if (!user?.is_admin) return '/'
+  }
 })
 
 export default router

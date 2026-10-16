@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import models  # noqa: F401  确保表模型注册到 Base
 from .config import UPLOAD_DIR
 from .database import Base, engine
-from .routers import ai, auth, collections, dashboard, exams, focus, materials, tasks
+from .routers import admin, ai, auth, collections, dashboard, exams, features, focus, materials, tasks
 
 # 启动时建表（SQLite 无迁移，MVP 阶段够用；改表结构删除 fmzh.db 重建即可）
 Base.metadata.create_all(bind=engine)
@@ -29,7 +29,8 @@ app.include_router(ai.router, prefix="/api/ai", tags=["AI 分析"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["任务"])
 app.include_router(focus.router, prefix="/api/focus", tags=["番茄钟"])
 app.include_router(dashboard.router, prefix="/api", tags=["首页与统计"])
-
+app.include_router(features.router, prefix="/api/features", tags=["特色功能"])
+app.include_router(admin.router, prefix="/api/admin", tags=["管理端"])
 
 @app.get("/health", summary="健康检查")
 def health():

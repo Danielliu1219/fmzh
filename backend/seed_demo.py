@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.config import UPLOAD_DIR
 from app.database import SessionLocal
-from app.models.models import Analysis, Exam, Material, Task, User, UserProfile
+from app.models.models import Analysis, Course, Exam, Material, Task, User, UserProfile
 from app.utils.security import hash_password
 
 today = date.today()
@@ -41,6 +41,13 @@ EXAMS = [
     {"subject": "高等数学", "offset": 5, "location": "教三 101", "duration_minutes": 120, "note": "闭卷"},
     {"subject": "大学英语", "offset": 11, "location": "外语楼 205", "duration_minutes": 120, "note": "闭卷"},
     {"subject": "数据结构", "offset": 14, "location": "信息楼 302", "duration_minutes": 90, "note": "开卷"},
+]
+
+# 课程/科目基础数据（管理端 8.1，全局数据）
+COURSES = [
+    {"name": "高等数学", "code": "MATH101", "teacher": "张老师", "credit": 5.0, "term": "2024秋", "note": "闭卷"},
+    {"name": "大学英语", "code": "ENG101", "teacher": "李老师", "credit": 4.0, "term": "2024秋", "note": "闭卷"},
+    {"name": "数据结构", "code": "CS201", "teacher": "王老师", "credit": 4.0, "term": "2024秋", "note": "开卷"},
 ]
 
 MATERIALS = [
@@ -213,13 +220,20 @@ def seed() -> None:
             student_no="20240000",
             major="计算机",
             grade="2024级",
+            is_admin=True,
         )
         db.add(demo)
         db.flush()
     else:
         demo.hashed_password = hash_password("demo123456")
         demo.nickname = demo.nickname or "演示同学"
+        demo.is_admin = True
     users = db.query(User).all()
+
+    # 课程/科目基础数据（全局，仅种一次）
+    if db.query(Course).count() == 0:
+        for c in COURSES:
+            db.add(Course(**c))
 
     # 演示资料文件落盘（保证删除资料时文件存在）
     demo_dir = UPLOAD_DIR / "demo"

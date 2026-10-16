@@ -1,4 +1,4 @@
-"""数据库表模型（共 9 张表）
+"""数据库表模型（共 11 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -8,6 +8,7 @@ users ──< exams ──< materials ──< collections
   │
   ├──< focus_sessions   番茄钟记录（学习时长统计唯一依据）
   └──< focus_goals      每日学习时长目标
+另含 mood_records（情绪记录，模块 7.6）与 courses（课程/科目基础数据，模块 8.1）。
 """
 from datetime import datetime
 
@@ -41,6 +42,8 @@ class User(Base):
     grade = Column(String(16), default="")
     class_name = Column(String(32), default="")  # 班级（FMZH-USR-0005）
     avatar = Column(String(16), default="")  # 头像色值（预设色板之一），空为默认墨色
+    is_admin = Column(Boolean, default=False)  # 管理端 8.x：管理员身份
+    is_banned = Column(Boolean, default=False)  # 管理端 8.2：异常账号封禁
     failed_attempts = Column(Integer, default=0)  # 连续登录失败次数（成功登录后清零）
     locked_until = Column(DateTime, nullable=True)  # 锁定截止时间；空表示未锁定
     created_at = Column(DateTime, default=datetime.now)
@@ -134,6 +137,34 @@ class Task(Base):
     is_done = Column(Boolean, default=False)
     done_at = Column(DateTime, nullable=True)
     source = Column(String(16), default="ai")  # ai / manual
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class MoodRecord(Base):
+    """每日情绪记录（模块 7.6）：每个用户每天一条，情绪自评 1~5"""
+
+    __tablename__ = "mood_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    record_date = Column(Date, index=True, nullable=False)  # 记录当天
+    mood_score = Column(Integer, nullable=False)  # 情绪自评 1~5
+    note = Column(String(256), default="")
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class Course(Base):
+    """课程/科目基础数据（管理端 8.1 维护，全站可参照）"""
+
+    __tablename__ = "courses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(64), nullable=False)  # 课程/科目名称
+    code = Column(String(32), default="")  # 课程代码
+    teacher = Column(String(64), default="")  # 任课教师
+    credit = Column(Float, default=0.0)  # 学分
+    term = Column(String(32), default="")  # 开课学期
+    note = Column(String(256), default="")
     created_at = Column(DateTime, default=datetime.now)
 
 

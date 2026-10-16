@@ -42,6 +42,7 @@ class UserOut(BaseModel):
     student_no: str
     major: str
     grade: str
+    is_admin: bool = False
     class_name: str = ""
     avatar: str = ""
     created_at: datetime
@@ -380,6 +381,184 @@ class StatsOut(BaseModel):
     rate: float
     by_date: list[DailyStat]
     knowledge_points: list[dict[str, Any]]
+
+
+# ===================== 特色功能（模块 7）=====================
+class PressureOut(BaseModel):
+    score: float        # 0~100
+    level: str          # 轻松 / 适中 / 偏压 / 高压
+    suggestion: str
+    breakdown: dict[str, float]
+    need_emergency: bool # score >= 60，前端据此提示救急模式
+
+
+class MoodSubmit(BaseModel):
+    mood_score: int = Field(ge=1, le=5)  # 情绪自评 1~5
+    note: str = ""
+
+
+class MoodResult(BaseModel):
+    record_date: date
+    mood_score: int
+    emotion_item: float     # 情绪项
+    completion_item: float  # 完成项
+    pressure_item: float    # 压力项
+    streak_item: float      # 达标项
+    composite_score: float  # 情绪综合评分 0~5
+    suggestion: str         # 复习节奏建议
+    need_relief: bool       # <2.5，前端显示减负入口（用例 7.7）
+
+
+class EmergencyItem(BaseModel):
+    content: str            # 考点 / 知识点内容
+    kind: str               # 考点 / 知识点
+    level: str = ""         # must / common / high / medium / low
+    weight: float | None = None  # 知识点权重，考点为 null
+    source: str = ""        # 依据来源
+    basis: str = ""         # 推荐依据说明
+
+
+class EmergencyOut(BaseModel):
+    exam_id: int
+    subject: str
+    exam_date: date
+    days_left: int
+    items: list[EmergencyItem] = []
+    note: str = ""          # 无分析等提示信息
+
+
+class ReviewItem(BaseModel):
+    name: str               # 知识点名称
+    weight: float           # 权重 0~1
+    importance: str = "medium"  # high / medium / low
+    suggest_hours: int = 0  # 建议复习时长（小时）
+    source: str = ""        # 依据来源
+    basis: str = ""         # 推荐依据说明
+
+
+class ReviewOut(BaseModel):
+    exam_id: int
+    subject: str
+    exam_date: date
+    days_left: int
+    items: list[ReviewItem] = []
+    note: str = ""
+
+
+class Top3Item(BaseModel):
+    task_id: int
+    title: str
+    subject: str = ""
+    plan_date: date
+    priority: int
+    estimated_minutes: int
+    score: float            # 综合打分，用于排序
+    reason: str = ""        # 为什么置顶（优先级 / 逾期 / 考试临近）
+
+
+class Top3Out(BaseModel):
+    items: list[Top3Item] = []
+    pressure: float = 0.0   # 当前压力指数，打分的一项
+    note: str = ""
+
+
+class TimeSlot(BaseModel):
+    name: str               # 早晨 / 上午 / 下午 / 晚上
+    start: str              # HH:MM
+    end: str                # HH:MM
+    minutes: int            # 该时段建议复习分钟数
+    focus: str = ""         # 建议内容方向
+
+
+class TimeSlotOut(BaseModel):
+    daily_hours: float              # 画像里的每日可用时长
+    learning_status: str | None = None  # weak / medium / good
+    slots: list[TimeSlot] = []
+    note: str = ""
+
+
+class ReliefMove(BaseModel):
+    task_id: int
+    title: str
+    from_date: date
+    to_date: date
+    minutes: int
+
+
+class ReliefConflict(BaseModel):
+    task_id: int
+    title: str
+    reason: str = ""
+
+
+class ReliefPlan(BaseModel):
+    option: str             # lighten 减轻当日 / halfday 暂停半天
+    daily_hours: float
+    today_capacity: int     # 重排后今日可用分钟数
+    moves: list[ReliefMove] = []
+    conflicts: list[ReliefConflict] = []
+    summary: str = ""
+
+
+class ReliefApply(BaseModel):
+    option: str = "lighten"  # lighten / halfday
+
+
+# ===================== 管理端（模块 8）=====================
+class CourseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    code: str = ""
+    teacher: str = ""
+    credit: float = 0.0
+    term: str = ""
+    note: str = ""
+
+
+class CourseUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    teacher: Optional[str] = None
+    credit: Optional[float] = None
+    term: Optional[str] = None
+    note: Optional[str] = None
+
+
+class CourseOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    code: str
+    teacher: str
+    credit: float
+    term: str
+    note: str
+    created_at: datetime
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    nickname: str
+    student_no: str
+    major: str
+    grade: str
+    is_admin: bool
+    is_banned: bool
+    exam_count: int = 0
+    material_count: int = 0
+    created_at: datetime
+
+
+class AdminMaterialOut(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    title: str
+    source_type: str
+    file_type: str
+    parse_status: str
+    created_at: datetime
 
 
 # ==================== 学习统计总览（FMZH-SRS-5.2.0，张诗琦） ====================

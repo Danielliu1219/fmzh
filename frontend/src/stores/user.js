@@ -9,6 +9,7 @@ export const useUserStore = defineStore('user', {
   getters: {
     isLoggedIn: (state) => !!state.token,
     displayName: (state) => state.user?.nickname || state.user?.username || '同学',
+    isAdmin: (state) => !!state.user?.is_admin,
   },
   actions: {
     _setSession(data) {
