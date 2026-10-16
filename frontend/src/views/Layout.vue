@@ -20,8 +20,10 @@
         </router-link>
       </nav>
       <div class="user-area">
-        <el-avatar :size="32" class="avatar">{{ displayName.charAt(0) }}</el-avatar>
-        <span class="name">{{ displayName }}</span>
+        <el-avatar :size="32" class="avatar" :style="userStore.user?.avatar ? { background: userStore.user.avatar } : {}">
+          {{ displayName.charAt(0) }}
+        </el-avatar>
+        <span class="name" @click="$router.push('/profile')" title="个人资料">{{ displayName }}</span>
         <el-divider direction="vertical" class="divider" />
         <el-button text class="logout" @click="onLogout">
           <el-icon><SwitchButton /></el-icon>
@@ -51,6 +53,7 @@ const navItems = computed(() => {
     { path: '/exams', label: '课程管理' },
     { path: '/materials', label: '复习资料' },
     { path: '/analysis', label: 'AI 复习分析' },
+    { path: '/stats', label: '学习统计' },
   ]
   if (userStore.isAdmin) items.push({ path: '/admin', label: '管理端' })
   return items
@@ -158,6 +161,10 @@ const onLogout = () => {
   font-size: 14px;
   color: var(--ink-1);
   font-weight: 700;
+  cursor: pointer;
+}
+.name:hover {
+  color: var(--coral-deep);
 }
 .divider {
   height: 16px;

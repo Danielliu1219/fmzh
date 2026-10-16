@@ -292,7 +292,7 @@
               <span class="tl-week">{{ weekOf(e.exam_date) }}</span>
             </div>
             <div class="tl-body">
-              <div class="tl-subject">{{ e.subject }}</div>
+              <div class="tl-subject"><span class="tl-dot" :style="{ background: subjectColor(e.subject).color }" />{{ e.subject }}</div>
               <div class="tl-meta">{{ e.location || '地点未填' }} · {{ e.duration_minutes }} 分钟</div>
               <el-progress
                 v-if="e.total_tasks"
@@ -328,7 +328,13 @@
                   <span class="col-count" :style="{ background: col.soft, color: col.color }">{{ col.items.length }}</span>
                 </div>
                 <div class="col-body">
-                  <div v-for="task in col.items" :key="task.id" class="task-card" :class="{ done: task.is_done }">
+                  <div
+                    v-for="task in col.items"
+                    :key="task.id"
+                    class="task-card"
+                    :class="{ done: task.is_done }"
+                    :style="{ borderLeft: `4px solid ${subjectColor(task.exam).color}` }"
+                  >
                     <el-checkbox v-if="!task.is_done" :model-value="false" @change="onToggle(task)" />
                     <span v-else class="task-check"><el-icon :size="10"><Check /></el-icon></span>
                     <div class="task-body">
@@ -386,6 +392,52 @@
               </div>
             </div>
           </section>
+
+          <!-- ===== 番茄钟 · 每日学习目标（FMZH-SRS-2.10.0） ===== -->
+          <section class="panel focus-panel">
+            <div class="panel-head">
+              <h2>专注 · 番茄钟</h2>
+              <span class="panel-sub">时长是学习统计依据</span>
+            </div>
+
+            <div class="focus-setup">
+              <el-select v-model="focusExamId" size="default" placeholder="选择科目" :disabled="focusRunning">
+                <el-option v-for="e in sortedExams" :key="e.id" :label="e.subject" :value="e.id" />
+              </el-select>
+              <el-select v-model="focusMinutes" size="default" :disabled="focusRunning" @change="onDurationChange">
+                <el-option v-for="m in FOCUS_PRESETS" :key="m" :label="`${m} 分钟`" :value="m" />
+              </el-select>
+            </div>
+
+            <div class="focus-clock" :class="{ running: focusRunning }">{{ clockText }}</div>
+
+            <div v-if="!sortedExams.length" class="focus-tip">
+              还没有科目，先<router-link to="/exams">录入考试</router-link>才能开始专注
+            </div>
+
+            <div class="focus-actions">
+              <el-button type="primary" round :disabled="!focusExamId" @click="toggleFocus">
+                <el-icon><component :is="focusRunning ? 'VideoPause' : 'VideoPlay'" /></el-icon>&nbsp;{{ focusRunning ? '暂停' : (focusStarted ? '继续' : '开始专注') }}
+              </el-button>
+              <el-button round class="ghost-btn" @click="resetFocus">重置</el-button>
+            </div>
+
+            <div class="focus-goal">
+              <div class="fg-row">
+                <span class="fg-label">今日专注</span>
+                <span class="fg-num">
+                  {{ focusData.total_minutes }}<em> / {{ focusData.goal_minutes || '—' }} 分钟</em>
+                </span>
+                <span v-if="focusData.achieved" class="fg-badge">已达标</span>
+              </div>
+              <el-progress :percentage="goalPct" :stroke-width="6" :show-text="false" color="#e66348" />
+              <div class="fg-set">
+                <span class="fg-hint">每日目标</span>
+                <el-input-number v-model="goalInput" :min="0" :max="1440" :step="15" size="small" controls-position="right" />
+                <el-button link type="primary" @click="saveGoal">保存</el-button>
+              </div>
+            </div>
+          </section>
         </el-col>
       </el-row>
     </template>
@@ -397,9 +449,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { dashboardApi, featureApi, taskApi } from '../api'
+import { dashboardApi, featureApi, focusApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
 import { USE_MOCK, getToday, mockEmergency, mockMood, mockOverview, mockPressure, mockRelief, mockReview, mockTimeslots, mockTop3 } from '../mock/dashboard'
+import { subjectColor } from '../utils/subjectColor'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -421,6 +474,30 @@ const timeslots = ref(null)
 const reliefVisible = ref(false)
 const reliefOption = ref('lighten')
 const relief = ref(null)
+
+// —— 番茄钟（FMZH-SRS-2.10.0）：计时结束时长计入对应科目，作为学习统计唯一依据 ——
+const FOCUS_PRESETS = [25, 15, 45]
+const focusData = ref({ total_minutes: 0, goal_minutes: 0, achieved: false, session_count: 0, by_exam: [] })
+const focusExamId = ref(null)
+const focusMinutes = ref(25)
+const remainSec = ref(25 * 60)
+const focusRunning = ref(false)
+const focusStarted = ref(false)
+const recordedMin = ref(0) // 本轮已写入统计的分钟数（防止重复计）
+const goalInput = ref(60)
+const weekFocus = ref(0)
+let focusTimerId = null
+
+const clockText = computed(() => {
+  const m = String(Math.floor(remainSec.value / 60)).padStart(2, '0')
+  const s = String(remainSec.value % 60).padStart(2, '0')
+  return `${m}:${s}`
+})
+const goalPct = computed(() => {
+  const g = focusData.value.goal_minutes
+  if (!g) return 0
+  return Math.min(100, Math.round((focusData.value.total_minutes / g) * 100))
+})
 
 const chartRef = ref(null)
 let chart = null
@@ -547,6 +624,10 @@ const load = async () => {
       review.value = structuredClone(mockReview)
       top3.value = structuredClone(mockTop3)
       timeslots.value = structuredClone(mockTimeslots)
+      // 预览态：番茄钟用本地假数据
+      focusData.value = { total_minutes: 75, goal_minutes: 120, achieved: false, session_count: 3, by_exam: [] }
+      goalInput.value = 120
+      weekFocus.value = data.extras.focus_minutes
       syncOverall()
     } else {
       // —— 真实接口 ——
@@ -564,9 +645,8 @@ const load = async () => {
       overall.value = overview.overall
       const examMap = Object.fromEntries(overview.exams.map((e) => [e.id, e.subject]))
       tasks.value = allTasks.map((t) => ({ ...t, exam: examMap[t.exam_id] || '未归类' }))
-      // 连续打卡：截至今天连续有打卡任务的天数；专注时长：已完成任务预计时长合计
+      // 连续打卡：截至今天连续有打卡任务的天数
       const doneTasks = tasks.value.filter((t) => t.is_done)
-      const focus = doneTasks.reduce((s, t) => s + (t.estimated_minutes || 0), 0)
       const doneDays = new Set(doneTasks.map((t) => t.plan_date))
       const toLocal = (dt) =>
         `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
@@ -576,7 +656,9 @@ const load = async () => {
         streak += 1
         cursor.setDate(cursor.getDate() - 1)
       }
-      extras.value = { streak, focus_minutes: focus }
+      // 专注时长：取自番茄钟记录（学习时长统计的唯一依据）
+      await loadFocus()
+      extras.value = { streak, focus_minutes: weekFocus.value }
       pressure.value = pressureData
       mood.value = moodData
       moodScore.value = moodData?.mood_score || 0
@@ -687,6 +769,109 @@ const confirmRelief = async () => {
     // request.js 已统一提示错误
   }
 }
+
+// —— 番茄钟逻辑 ——
+const loadFocus = async () => {
+  const [today, sessions] = await Promise.all([focusApi.today(), focusApi.sessions()])
+  focusData.value = today
+  goalInput.value = today.goal_minutes || 60
+  const cutoff = new Date()
+  cutoff.setHours(0, 0, 0, 0)
+  cutoff.setDate(cutoff.getDate() - 6)
+  weekFocus.value = sessions
+    .filter((s) => new Date(s.start_time) >= cutoff)
+    .reduce((sum, s) => sum + s.duration_minutes, 0)
+}
+
+const onDurationChange = () => {
+  if (!focusRunning.value) {
+    focusStarted.value = false
+    recordedMin.value = 0
+    remainSec.value = focusMinutes.value * 60
+  }
+}
+
+const tickFocus = () => {
+  remainSec.value -= 1
+  if (remainSec.value <= 0) finishFocus()
+}
+
+// 把本轮"自上次落盘以来"已专注的整分钟写入统计；不足 1 分钟不计。
+// 暂停 / 重置 / 倒计时结束都走这里，靠 recordedMin 保证不重复计。
+const flushFocus = async () => {
+  const elapsedMin = Math.floor((focusMinutes.value * 60 - Math.max(remainSec.value, 0)) / 60)
+  const pending = elapsedMin - recordedMin.value
+  if (pending < 1) return 0
+  recordedMin.value = elapsedMin
+
+  if (USE_MOCK) {
+    focusData.value.total_minutes += pending
+    focusData.value.achieved =
+      focusData.value.goal_minutes > 0 && focusData.value.total_minutes >= focusData.value.goal_minutes
+    weekFocus.value += pending
+    extras.value = { ...extras.value, focus_minutes: weekFocus.value }
+    return pending
+  }
+  await focusApi.createSession({ exam_id: focusExamId.value, duration_minutes: pending })
+  await loadFocus()
+  extras.value = { ...extras.value, focus_minutes: weekFocus.value }
+  return pending
+}
+
+const toggleFocus = async () => {
+  if (focusRunning.value) {
+    // 暂停：先把已专注的整分钟落盘
+    focusRunning.value = false
+    clearInterval(focusTimerId)
+    focusTimerId = null
+    const n = await flushFocus()
+    ElMessage.info(n ? `已暂停，记录 ${n} 分钟专注` : '已暂停（不足 1 分钟，未计入）')
+    return
+  }
+  if (!focusExamId.value) {
+    ElMessage.warning('请先选择科目')
+    return
+  }
+  focusRunning.value = true
+  focusStarted.value = true
+  focusTimerId = setInterval(tickFocus, 1000)
+}
+
+const resetFocus = async () => {
+  focusRunning.value = false
+  clearInterval(focusTimerId)
+  focusTimerId = null
+  const n = await flushFocus() // 已消耗 ≥1 分钟则记上
+  focusStarted.value = false
+  recordedMin.value = 0
+  remainSec.value = focusMinutes.value * 60
+  ElMessage.info(n ? `已重置，记录 ${n} 分钟专注` : '已重置')
+}
+
+const finishFocus = async () => {
+  clearInterval(focusTimerId)
+  focusTimerId = null
+  focusRunning.value = false
+  remainSec.value = 0 // 确保 elapsed 按整轮计算
+  await flushFocus()
+  focusStarted.value = false
+  recordedMin.value = 0
+  remainSec.value = focusMinutes.value * 60
+  const tip = focusData.value.achieved ? '，今日目标已达成！' : '，继续加油！'
+  ElMessage.success(`本轮专注结束，时长已计入统计${tip}`)
+}
+
+const saveGoal = async () => {
+  if (USE_MOCK) {
+    focusData.value.goal_minutes = goalInput.value
+    ElMessage.success('目标已保存')
+    return
+  }
+  await focusApi.setGoal({ target_minutes: goalInput.value })
+  focusData.value = await focusApi.today()
+  ElMessage.success('目标已保存')
+}
+
 const goStep = (to) => {
   if (to === '#board') {
     document.getElementById('board')?.scrollIntoView({ behavior: 'smooth' })
@@ -703,6 +888,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  clearInterval(focusTimerId)
   chart?.dispose()
   chart = null
 })
@@ -1515,6 +1701,15 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--ink-1);
 }
+.tl-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-1);
+  margin-right: 7px;
+  vertical-align: 1px;
+}
 .tl-meta {
   margin-top: 3px;
   font-size: 12px;
@@ -1815,6 +2010,97 @@ onBeforeUnmount(() => {
 .dot-label {
   font-size: 11px;
   color: var(--ink-3);
+}
+
+/* —— 番茄钟 —— */
+.focus-panel {
+  margin-top: 16px;
+}
+.focus-setup {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.focus-setup .el-select {
+  flex: 1;
+}
+.focus-clock {
+  font-family: var(--font-num);
+  font-size: 52px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--ink-1);
+  line-height: 1;
+  padding: 8px 0 14px;
+}
+.focus-clock.running {
+  color: var(--coral-deep);
+}
+.focus-tip {
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-3);
+  margin: -6px 0 12px;
+}
+.focus-tip a {
+  color: var(--coral-deep);
+  font-weight: 700;
+}
+.focus-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.focus-goal {
+  border-top: 1.5px dashed var(--line);
+  padding-top: 14px;
+}
+.fg-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.fg-label {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.fg-num {
+  font-family: var(--font-num);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink-1);
+}
+.fg-num em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.fg-badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--green);
+  border-radius: 10px;
+  padding: 2px 9px;
+}
+.fg-set {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.fg-hint {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.fg-set .el-input-number {
+  width: 110px;
 }
 
 /* —— 空状态 / 错误 —— */

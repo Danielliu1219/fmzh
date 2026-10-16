@@ -31,6 +31,27 @@ def create_access_token(user_id: int) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
 
+# 密码找回令牌（1.4）：10 分钟有效，仅可用于重置密码
+RESET_TOKEN_EXPIRE_MINUTES = 10
+
+
+def create_reset_token(user_id: int) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": str(user_id), "typ": "reset", "exp": expire}
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+
+
+def decode_reset_token(token: str) -> int:
+    """校验找回令牌，返回 user_id；无效/过期/类型不符时抛 400"""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="找回链接已失效，请重新验证")
+    if payload.get("typ") != "reset":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="找回链接已失效，请重新验证")
+    return int(payload["sub"])
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),

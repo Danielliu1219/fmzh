@@ -24,6 +24,11 @@ export const useUserStore = defineStore('user', {
     async register(payload) {
       this._setSession(await authApi.register(payload))
     },
+    // 1.6 编辑资料 / 1.5 修改密码后，用最新用户信息刷新本地会话
+    applyUser(user) {
+      this.user = user
+      localStorage.setItem('fmzh_user', JSON.stringify(user))
+    },
     logout() {
       this.token = ''
       this.user = null
