@@ -125,7 +125,7 @@
               <span class="tl-week">{{ weekOf(e.exam_date) }}</span>
             </div>
             <div class="tl-body">
-              <div class="tl-subject">{{ e.subject }}</div>
+              <div class="tl-subject"><span class="tl-dot" :style="{ background: subjectColor(e.subject).color }" />{{ e.subject }}</div>
               <div class="tl-meta">{{ e.location || '地点未填' }} · {{ e.duration_minutes }} 分钟</div>
               <el-progress
                 v-if="e.total_tasks"
@@ -161,7 +161,13 @@
                   <span class="col-count" :style="{ background: col.soft, color: col.color }">{{ col.items.length }}</span>
                 </div>
                 <div class="col-body">
-                  <div v-for="task in col.items" :key="task.id" class="task-card" :class="{ done: task.is_done }">
+                  <div
+                    v-for="task in col.items"
+                    :key="task.id"
+                    class="task-card"
+                    :class="{ done: task.is_done }"
+                    :style="{ borderLeft: `4px solid ${subjectColor(task.exam).color}` }"
+                  >
                     <el-checkbox v-if="!task.is_done" :model-value="false" @change="onToggle(task)" />
                     <span v-else class="task-check"><el-icon :size="10"><Check /></el-icon></span>
                     <div class="task-body">
@@ -279,6 +285,7 @@ import { ElMessage } from 'element-plus'
 import { dashboardApi, focusApi, taskApi } from '../api'
 import { useUserStore } from '../stores/user'
 import { USE_MOCK, getToday, mockOverview } from '../mock/dashboard'
+import { subjectColor } from '../utils/subjectColor'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -967,6 +974,15 @@ onBeforeUnmount(() => {
   font-size: 15px;
   font-weight: 700;
   color: var(--ink-1);
+}
+.tl-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-1);
+  margin-right: 7px;
+  vertical-align: 1px;
 }
 .tl-meta {
   margin-top: 3px;

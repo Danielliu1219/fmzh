@@ -6,13 +6,27 @@ export const authApi = {
   login: (data) => request.post('/auth/login', data),
   me: () => request.get('/auth/me'),
   updateMe: (data) => request.put('/auth/me', data),
+  // 1.5 修改密码（登录态）
+  changePassword: (data) => request.post('/auth/change-password', data),
+  // 1.4 密码找回：先验证身份拿 reset_token，再重置密码（同时解锁）
+  resetVerify: (data) => request.post('/auth/reset-password/verify', data),
+  resetConfirm: (data) => request.post('/auth/reset-password/confirm', data),
+  // 1.7 注销账号（二次确认由页面负责）
+  deactivate: () => request.delete('/auth/me'),
 }
 
 export const examApi = {
-  list: () => request.get('/exams'),
+  list: (params) => request.get('/exams', { params }), // 2.4 支持 subject / date_from / date_to
   create: (data) => request.post('/exams', data),
   update: (id, data) => request.put(`/exams/${id}`, data),
   remove: (id) => request.delete(`/exams/${id}`),
+  // 2.7 倒推生成备考时间表
+  generateSchedule: (id, data) => request.post(`/exams/${id}/generate-schedule`, data),
+  // 2.12 ICS 导入（multipart：file + exam_id）
+  importIcs: (formData) =>
+    request.post('/exams/import-ics', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  // 2.13 ICS 导出（返回文件流，由调用方触发下载）
+  exportIcs: () => request.get('/exams/export-ics', { responseType: 'blob' }),
 }
 
 export const materialApi = {
@@ -33,9 +47,12 @@ export const taskApi = {
   today: () => request.get('/tasks/today'),
   list: (params) => request.get('/tasks', { params }),
   create: (data) => request.post('/tasks', data),
+  update: (id, data) => request.put(`/tasks/${id}`, data), // 2.6 编辑任务
   checkin: (id) => request.post(`/tasks/${id}/checkin`),
   uncheckin: (id) => request.delete(`/tasks/${id}/checkin`),
   remove: (id) => request.delete(`/tasks/${id}`),
+  // 2.8 冲突检测：保存前预检当天总时长是否超上限
+  checkConflict: (data) => request.post('/tasks/check-conflict', data),
 }
 
 export const dashboardApi = {

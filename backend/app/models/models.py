@@ -39,6 +39,10 @@ class User(Base):
     student_no = Column(String(32), default="")
     major = Column(String(64), default="")
     grade = Column(String(16), default="")
+    class_name = Column(String(32), default="")  # 班级（FMZH-USR-0005）
+    avatar = Column(String(16), default="")  # 头像色值（预设色板之一），空为默认墨色
+    failed_attempts = Column(Integer, default=0)  # 连续登录失败次数（成功登录后清零）
+    locked_until = Column(DateTime, nullable=True)  # 锁定截止时间；空表示未锁定
     created_at = Column(DateTime, default=datetime.now)
 
 
@@ -54,6 +58,7 @@ class Exam(Base):
     location = Column(String(128), default="")
     duration_minutes = Column(Integer, default=120)
     note = Column(String(256), default="")
+    color = Column(String(16), default="")  # 科目颜色标签（2.11，全站统一），空则按科目名取默认色
     created_at = Column(DateTime, default=datetime.now)
 
 
