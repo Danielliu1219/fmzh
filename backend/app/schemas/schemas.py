@@ -80,6 +80,7 @@ class ExamCreate(BaseModel):
     location: str = ""
     duration_minutes: int = 120
     note: str = ""
+    color: str = ""  # 科目颜色标签（2.11）
 
 
 class ExamUpdate(BaseModel):
