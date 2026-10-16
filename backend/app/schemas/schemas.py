@@ -120,10 +120,72 @@ class MaterialOut(BaseModel):
     description: str
     tags: str
     created_at: datetime
+    snippet: str = ""  # 全文搜索命中片段（用例 3.4），仅带 keyword 查询时返回
 
 
 class MaterialDetailOut(MaterialOut):
     text_preview: str = ""  # 解析文本前 1000 字
+
+
+class MaterialUpdate(BaseModel):
+    """资料编辑 / 移动分类（用例 3.3）：字段均可选，只更新请求里出现的字段"""
+
+    title: Optional[str] = None
+    exam_id: Optional[int] = None  # 传 null 表示移出科目（回到「未归类」）
+    source_type: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[str] = None
+
+
+class MaterialMergeIn(BaseModel):
+    """合并导出复习笔记（用例 3.6）：勾选多份资料合并为一份"""
+
+    material_ids: list[int] = Field(min_length=1)
+    title: str = ""
+
+
+class MaterialMergeOut(BaseModel):
+    title: str
+    markdown: str
+    material_count: int
+    total_chars: int
+    warnings: list[str] = []  # 例如某份资料解析失败没有正文
+
+
+# ==================== 收藏与错题本（用例 3.5） ====================
+
+
+class CollectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    item_type: str  # material / question
+    material_id: Optional[int]
+    title: str
+    content: str
+    source: str  # manual / quiz
+    created_at: datetime
+
+
+class CollectionCreate(BaseModel):
+    """手动收藏：收藏一份资料（item_type=material），或收藏一道题目（item_type=question）"""
+
+    item_type: str
+    material_id: Optional[int] = None
+    title: str = ""
+    content: str = ""
+
+
+class MistakeItem(BaseModel):
+    """一道答错的题（由 4.6 自测判分写入错题本）"""
+
+    title: str  # 题干，同时用作错题本的展示标题与去重键
+    content: str = ""  # 题目详情 JSON（选项/正确答案/解析/知识点）
+    knowledge_point: str = ""
+
+
+class MistakeBatchIn(BaseModel):
+    mistakes: list[MistakeItem]
 
 
 # ==================== AI 画像（第一次调用） ====================

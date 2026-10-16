@@ -1,6 +1,6 @@
-"""数据库表模型（共 8 张表）
+"""数据库表模型（共 9 张表）
 
-users ──< exams ──< materials
+users ──< exams ──< materials ──< collections
   │         │
   │         └──< user_profiles ──< analyses
   │                                 │
@@ -71,7 +71,7 @@ class Material(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=True)
     title = Column(String(128), nullable=False)
-    source_type = Column(String(32), default="其他")  # 历年题/老师重点/课堂笔记/作业/练习题/其他
+    source_type = Column(String(32), default="其他")  # 历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(16), nullable=False)  # txt / pdf / docx
     text_content = Column(Text, default="")  # 解析出的纯文本，AI 分析的数据源
@@ -134,6 +134,21 @@ class Task(Base):
     is_done = Column(Boolean, default=False)
     done_at = Column(DateTime, nullable=True)
     source = Column(String(16), default="ai")  # ai / manual
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class Collection(Base):
+    """收藏与错题本（用例 3.5）：收藏资料、收藏题目、自测答错的题目共用一个本子"""
+
+    __tablename__ = "collections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    item_type = Column(String(16), nullable=False)  # material=资料 / question=题目
+    material_id = Column(Integer, ForeignKey("materials.id"), nullable=True)  # 收藏资料时指向资料
+    title = Column(String(256), default="")  # 展示用：资料标题或题干
+    content = Column(Text, default="")  # 题目详情 JSON（选项/答案/解析/知识点）
+    source = Column(String(16), default="manual")  # manual=学生手动收藏 / quiz=自测答错自动入本
     created_at = Column(DateTime, default=datetime.now)
 
 

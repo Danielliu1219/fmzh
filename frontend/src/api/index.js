@@ -34,7 +34,17 @@ export const materialApi = {
   upload: (formData) =>
     request.post('/materials', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   detail: (id) => request.get(`/materials/${id}`),
+  update: (id, data) => request.put(`/materials/${id}`, data),
+  merge: (data) => request.post('/materials/merge', data),
   remove: (id) => request.delete(`/materials/${id}`),
+}
+
+export const collectionApi = {
+  list: (params) => request.get('/collections', { params }),
+  add: (data) => request.post('/collections', data),
+  remove: (id) => request.delete(`/collections/${id}`),
+  // 自测判分（4.6）答错题批量入错题本
+  addMistakes: (mistakes) => request.post('/collections/mistakes', { mistakes }),
 }
 
 export const aiApi = {
