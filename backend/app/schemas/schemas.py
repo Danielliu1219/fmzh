@@ -29,6 +29,8 @@ class UserUpdate(BaseModel):
     student_no: Optional[str] = None
     major: Optional[str] = None
     grade: Optional[str] = None
+    class_name: Optional[str] = None  # 班级（FMZH-USR-0005）
+    avatar: Optional[str] = None  # 头像色值（预设色板），空串恢复默认
 
 
 class UserOut(BaseModel):
@@ -40,6 +42,8 @@ class UserOut(BaseModel):
     student_no: str
     major: str
     grade: str
+    class_name: str = ""
+    avatar: str = ""
     created_at: datetime
 
 
@@ -47,6 +51,24 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+
+
+# ==================== 账号安全（1.5 修改密码 / 1.4 密码找回 / 1.7 注销） ====================
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6, max_length=32)
+
+
+class ResetVerifyRequest(BaseModel):
+    username: str
+    student_no: str = Field(min_length=1, description="学号，用于身份验证")
+
+
+class ResetConfirmRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(min_length=6, max_length=32)
 
 
 # ==================== 考试 ====================
@@ -58,6 +80,7 @@ class ExamCreate(BaseModel):
     location: str = ""
     duration_minutes: int = 120
     note: str = ""
+    color: str = ""  # 科目颜色标签（2.11）
 
 
 class ExamUpdate(BaseModel):
@@ -66,6 +89,7 @@ class ExamUpdate(BaseModel):
     location: Optional[str] = None
     duration_minutes: Optional[int] = None
     note: Optional[str] = None
+    color: Optional[str] = None  # 科目颜色标签（2.11）
 
 
 class ExamOut(BaseModel):
@@ -77,6 +101,7 @@ class ExamOut(BaseModel):
     location: str
     duration_minutes: int
     note: str
+    color: str = ""
     created_at: datetime
 
 
@@ -253,6 +278,16 @@ class TaskCreate(BaseModel):
     priority: int = Field(default=2, ge=1, le=3)
 
 
+class TaskUpdate(BaseModel):
+    """编辑任务（2.6）：字段均可选，仅更新传入的字段"""
+
+    exam_id: Optional[int] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    plan_date: Optional[date] = None
+    estimated_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
+    priority: Optional[int] = Field(default=None, ge=1, le=3)
+
+
 class TaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -266,6 +301,47 @@ class TaskOut(BaseModel):
     is_done: bool
     done_at: Optional[datetime] = None
     source: str
+
+
+# ==================== 日程服务（2.7 倒推 / 2.8 冲突检测 / 2.12 ICS 导入） ====================
+
+
+class ScheduleGenerateRequest(BaseModel):
+    """倒推生成备考时间表（2.7）"""
+
+    daily_minutes: int = Field(default=180, ge=30, le=720, description="每日可用于该科的时间上限")
+    start_date: Optional[date] = None  # 不传则从明天开始（考试日早于明天时取考试日前一天）
+
+
+class ScheduleGenerateOut(BaseModel):
+    created: int  # 新建任务数
+    total_minutes: int  # 估算的该科总复习时长
+    start_date: str
+    end_date: str
+    conflicts: list[dict[str, Any]] = []  # 与现有日程冲突的日期（当天总时长超上限）
+
+
+class ConflictCheckRequest(BaseModel):
+    """任务冲突检测（2.8）：保存前预检，前端超限时弹提醒"""
+
+    plan_date: date
+    estimated_minutes: int = Field(ge=1, le=1440)
+    exclude_task_id: Optional[int] = None  # 编辑场景排除自身
+    daily_limit_minutes: int = Field(default=480, ge=30, le=1440)
+
+
+class ConflictCheckOut(BaseModel):
+    conflict: bool
+    date: str
+    existing_minutes: int  # 当天已有任务总时长
+    planned_minutes: int  # 当天已有 + 新增
+    limit_minutes: int
+
+
+class IcsImportResult(BaseModel):
+    imported: int  # 成功导入任务数
+    skipped: int  # 跳过数（无标题/结束早于开始等）
+    conflicts: list[dict[str, Any]] = []  # 合并前冲突检测：当天超上限的日期
 
 
 # ==================== 首页 / 统计 ====================
@@ -306,7 +382,7 @@ class StatsOut(BaseModel):
     knowledge_points: list[dict[str, Any]]
 
 
-# ==================== 学习统计总览（FMZH-SRS-5.2.0） ====================
+# ==================== 学习统计总览（FMZH-SRS-5.2.0，张诗琦） ====================
 
 
 class SubjectStat(BaseModel):

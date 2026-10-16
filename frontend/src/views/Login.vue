@@ -23,6 +23,9 @@
             <el-button type="primary" size="large" class="submit" :loading="loading" @click="onLogin">
               开始冲刺 →
             </el-button>
+            <div class="forgot-row">
+              <el-link type="info" :underline="false" @click="openForgot">忘记密码 / 账号被锁？</el-link>
+            </div>
           </el-form>
         </el-tab-pane>
         <el-tab-pane label="注册" name="register">
@@ -51,13 +54,49 @@
           </el-form>
         </el-tab-pane>
       </el-tabs>
-      <!-- 仅 mock 模式出现：不启动后端也能进首页看效果（USE_MOCK=false 时自动消失） -->
-      <template v-if="USE_MOCK">
-        <el-divider><span class="demo-tip">演示模式</span></el-divider>
-        <el-button size="large" class="demo-btn" @click="onDemoLogin">
-          <el-icon><VideoPlay /></el-icon>&nbsp;免登录预览（无后端）
-        </el-button>
-      </template>
+      <!-- 免登录预览：mock 模式进本地演示数据；联调模式用演示账号 demo 真实登录 -->
+      <el-divider><span class="demo-tip">演示模式</span></el-divider>
+      <el-button size="large" class="demo-btn" :loading="loading" @click="onDemoLogin">
+        <el-icon><VideoPlay /></el-icon>&nbsp;{{ USE_MOCK ? '免登录预览（无后端）' : '演示账号一键登录（demo）' }}
+      </el-button>
+
+      <!-- 找回密码（1.4）：账号+学号验证身份 → 重置密码（并立即解锁） -->
+      <el-dialog v-model="forgotVisible" title="找回密码" width="400px" append-to-body>
+        <template v-if="forgotStep === 1">
+          <p class="forgot-tip">输入账号与注册时填写的学号完成身份验证。</p>
+          <el-form ref="forgotFormRef" :model="forgotForm" :rules="forgotRules" label-width="80px">
+            <el-form-item label="账号" prop="username">
+              <el-input v-model="forgotForm.username" placeholder="注册时的账号" />
+            </el-form-item>
+            <el-form-item label="学号" prop="student_no">
+              <el-input v-model="forgotForm.student_no" placeholder="注册/资料里填写的学号" />
+            </el-form-item>
+          </el-form>
+        </template>
+        <template v-else>
+          <el-alert
+            :title="`身份验证通过（${forgotNickname}），请设置新密码，重置后账号将立即解锁。`"
+            type="success"
+            :closable="false"
+            class="forgot-tip"
+          />
+          <el-form ref="resetFormRef" :model="resetForm" :rules="resetRules" label-width="80px">
+            <el-form-item label="新密码" prop="new_password">
+              <el-input v-model="resetForm.new_password" type="password" show-password placeholder="6-32 位" />
+            </el-form-item>
+            <el-form-item label="确认密码" prop="confirm">
+              <el-input v-model="resetForm.confirm" type="password" show-password />
+            </el-form-item>
+          </el-form>
+        </template>
+        <template #footer>
+          <el-button @click="forgotVisible = false">取消</el-button>
+          <el-button v-if="forgotStep === 1" type="primary" :loading="loading" @click="onVerifyIdentity">
+            验证身份
+          </el-button>
+          <el-button v-else type="primary" :loading="loading" @click="onResetPassword">重置密码</el-button>
+        </template>
+      </el-dialog>
     </div>
   </div>
 </template>
@@ -66,6 +105,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { authApi } from '../api'
 import { useUserStore } from '../stores/user'
 import { USE_MOCK } from '../mock/dashboard'
 
@@ -121,11 +161,22 @@ const onLogin = async () => {
   }
 }
 
-// mock 模式下直接种一份本地会话，跳过真实登录
-const onDemoLogin = () => {
-  localStorage.setItem('fmzh_token', 'demo-token')
-  localStorage.setItem('fmzh_user', JSON.stringify({ username: 'demo', nickname: '演示同学' }))
-  router.push('/')
+// mock 模式种本地会话跳过登录；联调模式用演示账号真实登录，数据与功能全部真实
+const onDemoLogin = async () => {
+  if (USE_MOCK) {
+    localStorage.setItem('fmzh_token', 'demo-token')
+    localStorage.setItem('fmzh_user', JSON.stringify({ username: 'demo', nickname: '演示同学' }))
+    router.push('/')
+    return
+  }
+  loading.value = true
+  try {
+    await userStore.login('demo', 'demo123456')
+    ElMessage.success('已用演示账号 demo 登录（数据来自 seed_demo.py）')
+    router.push('/')
+  } finally {
+    loading.value = false
+  }
 }
 
 const onRegister = async () => {
@@ -141,6 +192,71 @@ const onRegister = async () => {
     })
     ElMessage.success('注册成功，已自动登录')
     router.push('/')
+  } finally {
+    loading.value = false
+  }
+}
+
+// ============ 找回密码（1.4）：账号+学号验证身份 → 重置密码并解锁 ============
+const forgotVisible = ref(false)
+const forgotStep = ref(1) // 1 验证身份 / 2 重置密码
+const forgotNickname = ref('')
+const forgotFormRef = ref()
+const resetFormRef = ref()
+let resetToken = ''
+
+const forgotForm = reactive({ username: '', student_no: '' })
+const forgotRules = {
+  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+  student_no: [{ required: true, message: '请输入学号', trigger: 'blur' }],
+}
+const resetForm = reactive({ new_password: '', confirm: '' })
+const resetRules = {
+  new_password: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    { min: 6, max: 32, message: '密码长度 6-32 位', trigger: 'blur' },
+  ],
+  confirm: [
+    {
+      validator: (rule, value, callback) =>
+        value === resetForm.new_password ? callback() : callback(new Error('两次输入的密码不一致')),
+      trigger: 'blur',
+    },
+  ],
+}
+
+const openForgot = () => {
+  forgotForm.username = loginForm.username
+  forgotForm.student_no = ''
+  resetForm.new_password = resetForm.confirm = ''
+  forgotStep.value = 1
+  forgotVisible.value = true
+}
+
+const onVerifyIdentity = async () => {
+  await forgotFormRef.value.validate()
+  loading.value = true
+  try {
+    const res = await authApi.resetVerify({
+      username: forgotForm.username,
+      student_no: forgotForm.student_no,
+    })
+    resetToken = res.reset_token
+    forgotNickname.value = res.nickname || forgotForm.username
+    forgotStep.value = 2
+  } finally {
+    loading.value = false
+  }
+}
+
+const onResetPassword = async () => {
+  await resetFormRef.value.validate()
+  loading.value = true
+  try {
+    await authApi.resetConfirm({ reset_token: resetToken, new_password: resetForm.new_password })
+    ElMessage.success('密码重置成功，账号已解锁，请用新密码登录')
+    forgotVisible.value = false
+    tab.value = 'login'
   } finally {
     loading.value = false
   }
@@ -230,6 +346,15 @@ const onRegister = async () => {
   width: 100%;
   letter-spacing: 0.3em;
   font-size: 15px;
+}
+.forgot-row {
+  margin-top: 12px;
+  text-align: center;
+}
+.forgot-tip {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--text-low);
 }
 .demo-tip {
   font-size: 12px;
