@@ -117,7 +117,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
   "course": "课程名",
   "summary": "一段话总评，说明总体策略（例如：基础薄弱求及格，优先高频基础内容）",
   "knowledge_points": [
-    {"name": "知识点名", "weight": 0.9, "importance": "high", "recommend_reason": "推荐理由", "source": "历年题/老师重点/课堂笔记/作业/其他", "suggest_hours": 6}
+    {"name": "知识点名", "weight": 0.9, "importance": "high", "recommend_reason": "推荐理由", "source": "历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他", "suggest_hours": 6}
   ],
   "exam_focus": [
     {"content": "必考/常考内容描述", "level": "must", "basis": "判断依据", "source": "历年题"}
@@ -154,7 +154,7 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
     kp_templates = [
         ("核心概念与定义", 0.95, "high", "历年题多次出现，属于必得分内容", "历年题"),
         ("高频计算与解题方法", 0.9, "high", "老师课堂上反复强调", "老师重点"),
-        ("重点公式与定理", 0.8, "medium", "作业和练习题覆盖率高", "作业"),
+        ("重点公式与定理", 0.8, "medium", "平时作业和练习题覆盖率高", "平时作业"),
         ("综合应用题", 0.6, "medium", "历年题最后一道大题常考", "历年题"),
         ("拓展与易错点", 0.4, "low", "课堂笔记中标注的易错内容", "课堂笔记"),
     ]
@@ -168,7 +168,7 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
     focus_templates = [
         ("核心概念的定义与辨析", "must", "近三年历年题每年必考", "历年题"),
         ("高频题型的基本解法", "must", "老师划的重点内容", "老师重点"),
-        ("作业中出现过的同类题", "common", "作业与练习册高频出现", "作业"),
+        ("平时作业中出现过的同类题", "common", "平时作业与练习册高频出现", "平时作业"),
     ]
     quiz_templates = [
         {
