@@ -19,6 +19,7 @@ from ..schemas.schemas import (
     FocusTodayOut,
 )
 from ..utils.security import get_current_user
+from ..services.study_planner import daily_budget
 
 router = APIRouter()
 
@@ -105,7 +106,7 @@ def today_summary(user: User = Depends(get_current_user), db: Session = Depends(
         .filter(FocusGoal.user_id == user.id, FocusGoal.goal_date == today)
         .first()
     )
-    goal_minutes = goal.target_minutes if goal else 0
+    goal_minutes = goal.target_minutes if goal else daily_budget(db, user.id)
 
     # 按科目聚合
     minutes_by_exam: dict[int | None, int] = {}

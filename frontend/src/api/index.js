@@ -101,3 +101,10 @@ export const adminApi = {
   materials: (params) => request.get('/admin/materials', { params }),
   removeMaterial: (id) => request.delete(`/admin/materials/${id}`),
 }
+
+export const studyApi = {
+  settings: () => request.get('/study/settings'),
+  saveSettings: (data) => request.put('/study/settings', data),
+  preview: () => request.get('/study/plan/preview'),
+  confirm: (data) => request.post('/study/plan/confirm', data),
+}

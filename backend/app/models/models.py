@@ -1,4 +1,4 @@
-"""数据库表模型（共 11 张表）
+"""数据库表模型（共 12 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -212,3 +212,11 @@ class FocusGoal(Base):
     target_minutes = Column(Integer, default=0)  # 0 表示未设定
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class StudySetting(Base):
+    """全科共享的每日时间预算；科目画像仍保存各科目标和基础。"""
+
+    __tablename__ = "study_settings"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    daily_minutes = Column(Integer, nullable=False, default=240)

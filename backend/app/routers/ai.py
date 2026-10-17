@@ -6,6 +6,8 @@
 LLM_MOCK=true 时使用 prompts.py 中的 Mock 实现，无需 API Key。
 """
 import json
+from datetime import date
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
@@ -24,6 +26,7 @@ from ..schemas.schemas import (
 from ..services import prompts
 from ..services.llm_client import LLMError, chat_json
 from ..services.plan_service import create_tasks_from_plan
+from ..services.study_planner import daily_budget
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -213,17 +216,29 @@ def analyze(
             detail="该科目还没有可用的复习资料，请先上传 TXT/PDF/Word 资料",
         )
 
+    # 先看所有考试再估算本科份额，避免每一科都占满同一份全科预算。
+    all_exams = db.query(Exam).filter(Exam.user_id == user.id, Exam.exam_date >= date.today()).all()
+    weights = {e.id: 1 / max(1, (e.exam_date - date.today()).days) for e in all_exams}
+    budget = daily_budget(db, user.id)
+    share = max(1, int(budget * weights.get(exam.id, 1) / max(sum(weights.values()), 1e-6)))
+    remaining_days = max(1, (exam.exam_date - date.today()).days)
+    planning_profile = SimpleNamespace(
+        available_days=min(profile.available_days, remaining_days), daily_hours=share / 60,
+        target=profile.target, learning_status=profile.learning_status,
+    )
+    context = _profile_to_text(profile) + f"\n注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
+
     # 最多尝试两次（大模型偶尔返回格式不对）
     last_err = None
     result = None
     for _ in range(2):
         try:
             if settings.LLM_MOCK:
-                data = prompts.mock_generate_analysis(exam.subject, profile)
+                data = prompts.mock_generate_analysis(exam.subject, planning_profile)
             else:
                 data = chat_json(
                     prompts.ANALYZE_SYSTEM_PROMPT,
-                    prompts.build_analyze_user_prompt(_profile_to_text(profile), materials_text),
+                    prompts.build_analyze_user_prompt(context, materials_text),
                     max_tokens=4000,
                 )
             result = AnalysisResult.model_validate(data)  # 校验大模型输出格式
@@ -247,7 +262,7 @@ def analyze(
     db.refresh(analysis)
 
     # 复习计划 -> 每日任务（自动替换该科目旧的 AI 任务）
-    create_tasks_from_plan(db, user.id, exam.id, analysis.id, result.review_plan)
+    scheduling = create_tasks_from_plan(db, user.id, exam.id, analysis.id, result.review_plan)
 
     return AnalysisOut(
         id=analysis.id,
@@ -255,6 +270,7 @@ def analyze(
         status=analysis.status,
         result=result,
         created_at=analysis.created_at,
+        scheduling=scheduling,
     )
 
 

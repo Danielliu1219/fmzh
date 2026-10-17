@@ -80,7 +80,7 @@
               aria-label="可用复习天数"
             /><span class="unit">天</span></el-form-item
           >
-          <el-form-item label="每天可用时间"
+          <el-form-item label="每天可用总时间（所有科目合计）"
             ><el-input-number
               v-model="brief.daily_hours"
               :min="0.5"
@@ -96,6 +96,10 @@
               maxlength="300"
           /></el-form-item>
         </el-form>
+        <p class="choice-hint">
+          各科保留各自的目标与基础，共享这份每日时间预算。生成后会统筹所有考试的未完成
+          AI 任务，任务日期以首页与课程管理为准。
+        </p>
         <label for="study-notes" class="notes-label">再补充一点（可选）</label>
         <el-input
           id="study-notes"
@@ -132,8 +136,8 @@
           <el-descriptions-item label="剩余天数">
             {{ profile.available_days ?? '（未提取到）' }} 天
           </el-descriptions-item>
-          <el-descriptions-item label="每天可投入">
-            {{ profile.daily_hours ?? '（未提取到）' }} 小时
+          <el-descriptions-item label="全科每日总预算">
+            {{ brief.daily_hours }} 小时
           </el-descriptions-item>
           <el-descriptions-item label="薄弱章节" :span="2">
             {{
@@ -386,9 +390,16 @@
             ><span class="hint">{{
               USE_MOCK
                 ? '以下为示例计划，演示操作不保存'
-                : '每日任务已生成，去首页逐项完成'
+                : '本科内容建议；全科统筹后的实际日期见首页与课程管理'
             }}</span></template
           >
+          <el-alert
+            v-if="schedulingNote"
+            :title="schedulingNote"
+            type="warning"
+            :closable="false"
+            show-icon
+          />
           <el-table :data="result.review_plan">
             <el-table-column prop="day" label="第几天" width="80">
               <template #default="{ row }">第 {{ row.day }} 天</template>
@@ -485,8 +496,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
-import { aiApi, examApi } from '../api'
-import { USE_MOCK, getToday } from '../mock/dashboard'
+import { aiApi, examApi, studyApi } from '../api'
+import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
+import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
 import { mockExams, mockProfile, mockAnalysis } from '../mock/pages'
 
@@ -528,6 +540,7 @@ const result = ref(null)
 const profileLoading = ref(false)
 const analyzing = ref(false)
 const analyzeError = ref('')
+const schedulingNote = ref('')
 
 const completeForm = reactive({
   target: 'pass',
@@ -576,6 +589,8 @@ const onExtractProfile = async () => {
   profileLoading.value = true
   try {
     if (USE_MOCK) {
+      mockStudySession.daily_minutes = Math.round(brief.daily_hours * 60)
+      mockStudySession.focus.goal_minutes = mockStudySession.daily_minutes
       // mock 模式下返回本地演示画像
       await new Promise((r) => setTimeout(r, 600))
       profile.value = {
@@ -590,6 +605,9 @@ const onExtractProfile = async () => {
           .filter(Boolean),
       }
     } else {
+      await studyApi.saveSettings({
+        daily_minutes: Math.round(brief.daily_hours * 60),
+      })
       const basis = {
         weak: '我基础差',
         medium: '我的基础一般',
@@ -627,25 +645,150 @@ const onCompleteProfile = async () => {
   }
 }
 
+const previewAnalysis = () => {
+  const subject =
+    exams.value.find((e) => e.id === examId.value)?.subject || '当前科目'
+  const names = subject.includes('英语')
+    ? ['核心词汇', '长难句与语法', '阅读理解', '听力与精听', '写作与翻译']
+    : subject.includes('数据')
+      ? ['线性表', '树与二叉树', '图的遍历', '查找与排序', '算法复杂度']
+      : subject.includes('数学')
+        ? mockAnalysis.knowledge_points.map((p) => p.name)
+        : ['核心概念', '重点原理', '典型题型', '综合练习', '错题复盘']
+  const copy = structuredClone(mockAnalysis)
+  copy.course = subject
+  copy.summary = `${subject}的示例复习方案。全科每日共享 ${brief.daily_hours} 小时，实际日期与各科分配统一在首页确认；以下考点权重用于演示。`
+  copy.knowledge_points = copy.knowledge_points.map((p, i) => ({
+    ...p,
+    name: names[i],
+    source: '示例资料',
+    recommend_reason: '演示建议：结合本课程资料与当前基础安排优先级',
+  }))
+  copy.exam_focus = copy.exam_focus.map((p, i) => ({
+    ...p,
+    content: `${names[i]}的基础题与常见考法`,
+    basis: '演示内容，请以实际课程要求为准',
+    source: '示例资料',
+  }))
+  copy.review_plan = copy.review_plan.map((p, i) => ({
+    ...p,
+    title: names[i],
+    detail: `复习${names[i]}并整理练习中的易错点`,
+    estimated_minutes: Math.max(
+      15,
+      Math.round(
+        (brief.daily_hours * 60) / Math.max(1, exams.value.length) / 5,
+      ) * 5,
+    ),
+  }))
+  if (subject.includes('英语'))
+    copy.quiz = [
+      {
+        question: '请选择正确的词形：She ___ to the library every day.',
+        options: ['go', 'goes', 'going', 'gone'],
+        answer: 'B',
+        analysis: '一般现在时的主语为第三人称单数，动词用 goes。',
+        knowledge_point: '长难句与语法',
+      },
+    ]
+  else if (subject.includes('数据'))
+    copy.quiz = [
+      {
+        question: '采用先进先出规则的数据结构是？',
+        options: ['栈', '队列', '二叉搜索树', '堆'],
+        answer: 'B',
+        analysis: '队列遵循先进先出，栈遵循后进先出。',
+        knowledge_point: '线性表',
+      },
+    ]
+  else if (!subject.includes('数学'))
+    copy.quiz = [
+      {
+        question: '复习后发现某类题反复出错，下一步更合适的做法是？',
+        options: [
+          '跳过这个知识点',
+          '整理错因并补充针对性练习',
+          '只增加背诵时间',
+          '等到考前再看',
+        ],
+        answer: 'B',
+        analysis: '先识别错因，再通过针对性练习检查是否掌握。',
+        knowledge_point: '错题复盘',
+      },
+    ]
+  return copy
+}
+
 const onAnalyze = async () => {
   analyzing.value = true
   analyzeError.value = ''
+  schedulingNote.value = ''
   result.value = null
   step.value = 2
   try {
     if (USE_MOCK) {
       // mock 模式下返回本地演示分析结果（模拟分析耗时）
       await new Promise((r) => setTimeout(r, 1500))
-      result.value = structuredClone(mockAnalysis)
+      result.value = previewAnalysis()
+      const retained = mockStudySession.tasks.filter(
+        (t) => t.exam_id !== examId.value || t.is_done || t.source !== 'ai',
+      )
+      const completed = new Map()
+      retained
+        .filter(
+          (t) => t.exam_id === examId.value && t.is_done && t.source === 'ai',
+        )
+        .forEach((t) => {
+          const name = t.title.replace(/（分段 \d+\/\d+）$/, '')
+          completed.set(name, (completed.get(name) || 0) + t.estimated_minutes)
+        })
+      let nextId = Math.max(0, ...mockStudySession.tasks.map((t) => t.id)) + 1
+      const generated = result.value.review_plan
+        .map((p) => ({
+          id: nextId++,
+          exam_id: examId.value,
+          exam: result.value.course,
+          title: `${result.value.course} · ${p.title}`,
+          plan_date: p.date,
+          estimated_minutes: p.estimated_minutes,
+          priority: p.priority,
+          is_done: false,
+          done_at: null,
+          source: 'ai',
+        }))
+        .map((t) => ({
+          ...t,
+          estimated_minutes: Math.max(
+            0,
+            t.estimated_minutes - (completed.get(t.title) || 0),
+          ),
+        }))
+        .filter((t) => t.estimated_minutes > 0)
+      const candidate = [...retained, ...generated]
+      const plan = buildStudyPlan(
+        candidate,
+        mockStudySession.exams,
+        mockStudySession.daily_minutes,
+        getToday(),
+      )
+      if (plan.conflicts.length)
+        schedulingNote.value =
+          '示例分析已完成，但全科容量不足，新任务未覆盖原计划。请先调整时间或任务。'
+      else mockStudySession.tasks = applyStudyPlan(candidate, plan)
     } else {
       const resp = await aiApi.analyze(examId.value)
       result.value = resp.result
+      if (resp.scheduling && !resp.scheduling.applied)
+        schedulingNote.value =
+          '分析已完成，但新任务无法在全科预算内排完，因此没有写入或覆盖现有任务。请调整预算、复习范围或目标后重新生成。'
     }
-    ElMessage.success(
-      USE_MOCK
-        ? '已展示示例分析；真实模式下会生成每日任务'
-        : '分析完成，复习计划已生成每日任务',
-    )
+    if (schedulingNote.value) ElMessage.warning(schedulingNote.value)
+    else
+      ElMessage.success(
+        USE_MOCK
+          ? '示例分析与全科计划已更新，本次演示内有效'
+          : '分析完成，复习计划已生成每日任务',
+      )
   } catch (e) {
     // 失败时展示原因和出口，避免页面空白
     analyzeError.value =
@@ -689,9 +832,11 @@ const onExamChange = async () => {
 
 onMounted(async () => {
   if (USE_MOCK) {
-    exams.value = mockExams
+    exams.value = structuredClone(mockStudySession.exams)
+    brief.daily_hours = mockStudySession.daily_minutes / 60
   } else {
     exams.value = await examApi.list()
+    brief.daily_hours = (await studyApi.settings()).daily_minutes / 60
   }
   const requested = Number(route.query.exam)
   if (exams.value.some((e) => e.id === requested)) {

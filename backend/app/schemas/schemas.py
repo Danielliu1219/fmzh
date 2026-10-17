@@ -266,6 +266,7 @@ class AnalysisOut(BaseModel):
     status: str
     result: AnalysisResult
     created_at: datetime
+    scheduling: Optional[dict] = None
 
 
 # ==================== 任务 ====================

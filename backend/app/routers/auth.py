@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, Task, User, UserProfile
+from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, StudySetting, Task, User, UserProfile
 from ..schemas.schemas import (
     ChangePasswordRequest,
     ResetConfirmRequest,
@@ -187,7 +187,7 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
         user_dir.rmdir()
 
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
-    for model in (FocusSession, FocusGoal, Task, Analysis, UserProfile):
+    for model in (StudySetting, FocusSession, FocusGoal, Task, Analysis, UserProfile):
         db.query(model).filter(model.user_id == user.id).delete()
     db.query(Material).filter(Material.user_id == user.id).delete()
     db.query(Exam).filter(Exam.user_id == user.id).delete()

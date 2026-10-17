@@ -10,9 +10,24 @@
           <span v-if="USE_MOCK">· 演示日期 {{ getToday() }}</span>
         </p>
       </div>
-      <el-button :loading="refreshing" :disabled="loading" text @click="load"
-        ><el-icon><Refresh /></el-icon>&nbsp;刷新数据</el-button
-      >
+      <div class="desk-utilities">
+        <el-select
+          v-if="USE_MOCK"
+          v-model="mockScenario"
+          aria-label="演示场景"
+          @change="changeScenario"
+          size="small"
+          class="scenario-picker"
+          ><el-option label="日常复习" value="normal" /><el-option
+            label="多任务 · 40 项"
+            value="busy" /><el-option label="新用户" value="new" /></el-select
+        ><el-button text @click="guideVisible = !guideVisible"
+          >使用指南</el-button
+        >
+        <el-button :loading="refreshing" :disabled="loading" text @click="load"
+          ><el-icon><Refresh /></el-icon>&nbsp;刷新数据</el-button
+        >
+      </div>
     </div>
     <div v-if="loading" class="loading-desk" aria-label="正在加载学习进度">
       <el-skeleton :rows="8" animated />
@@ -27,6 +42,37 @@
       >
     </div>
     <template v-else>
+      <section
+        v-if="guideVisible"
+        class="getting-started"
+        aria-label="新用户使用指南"
+      >
+        <div class="guide-title">
+          <h2>准备好，再开始今天的复习</h2>
+          <button @click="dismissGuide" aria-label="收起使用指南">
+            已了解 ×
+          </button>
+        </div>
+        <div class="guide-steps">
+          <router-link to="/exams"
+            ><b>01</b
+            ><span>录入全部考试<small>先把每一科的截止日期放在一起</small></span
+            >↗</router-link
+          ><button @click="openPlanning">
+            <b>02</b
+            ><span
+              >设定每天总时间<small>所有科目共用，不会每科各算一遍</small></span
+            >↗</button
+          ><router-link to="/analysis"
+            ><b>03</b
+            ><span
+              >上传资料，生成计划<small
+                >按科分析内容，再统筹每天的任务</small
+              ></span
+            >↗</router-link
+          >
+        </div>
+      </section>
       <section class="hero rise">
         <div class="hero-copy">
           <p class="hero-kicker">
@@ -48,9 +94,18 @@
               >上传复习资料 <el-icon><TopRight /></el-icon
             ></router-link>
           </div>
-          <div class="hero-footnote">
-            <span>资料有依据</span><i></i><span>计划按天走</span><i></i
-            ><span>每一步都算数</span>
+          <div class="cover-progress">
+            <ProgressRing :value="overall.rate * 100" label="全部科目复习总进度"
+              ><strong
+                >{{ Math.round(overall.rate * 100) }}<small>%</small></strong
+              ></ProgressRing
+            ><span
+              ><b>所有科目，一起向前</b
+              ><small
+                >已完成 {{ overall.done }} /
+                {{ overall.total }} 个复习任务</small
+              ></span
+            >
           </div>
         </div>
         <div class="exam-ticket">
@@ -117,185 +172,29 @@
         {{ featureWarning
         }}<el-button text size="small" @click="refreshFeatures">重试</el-button>
       </p>
-      <div class="work-grid">
-        <div class="work-main">
-          <section
-            v-if="top3"
-            class="priority-panel rise"
-            aria-labelledby="priority-title"
-          >
+      <StudyWorkspace
+        :style="{ '--workspace-offset': workspaceOffset + 'px' }"
+        :tasks="tasks"
+        :exams="exams"
+        :priorities="top3?.items || []"
+        :today="getToday()"
+        :history="history"
+        :focus="focusData"
+        :budget="dailyBudget"
+        :selected="selectedTask"
+        :pending-ids="pendingIds"
+        :running="focusRunning"
+        :clock="clockText"
+        @select="selectTask"
+        @start="startTask"
+        @toggle="onToggle"
+        @budget="openPlanning"
+        @enter="goStep('#board')"
+      >
+        <template #focus>
+          <section class="panel focus-panel workspace-focus">
             <div class="section-head">
-              <div>
-                <p class="eyebrow">先做好这几件事</p>
-                <h2 id="priority-title">今日优先</h2>
-              </div>
-              <span class="section-note">按考点权重与考试临近程度推荐</span>
-            </div>
-            <p v-if="!priorityItems.length" class="quiet-empty">
-              {{ top3.note || '优先任务已完成，按自己的节奏继续。' }}
-            </p>
-            <ol v-else class="priority-list">
-              <li v-for="(item, i) in priorityItems" :key="item.task_id">
-                <span class="priority-number">0{{ i + 1 }}</span>
-                <div class="priority-copy">
-                  <b>{{ item.title }}</b>
-                  <p>
-                    {{ item.subject }} <span>· {{ item.reason }}</span>
-                  </p>
-                  <small v-if="item.plan_date > getToday()"
-                    >计划 {{ fmtMd(item.plan_date) }} · 可提前复习</small
-                  >
-                </div>
-                <span class="duration"
-                  >{{ item.estimated_minutes }}<small>min</small></span
-                >
-                <el-button
-                  circle
-                  class="priority-check"
-                  :loading="pendingIds.has(item.task_id)"
-                  :disabled="pendingIds.has(item.task_id)"
-                  :aria-label="`完成${item.title}`"
-                  @click="toggleById(item.task_id)"
-                  ><el-icon><Check /></el-icon
-                ></el-button>
-              </li>
-            </ol>
-          </section>
-          <section
-            id="board"
-            class="panel task-panel rise"
-            aria-labelledby="board-title"
-          >
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">把计划变成行动</p>
-                <h2 id="board-title">我的任务清单</h2>
-              </div>
-              <router-link to="/exams" class="text-link"
-                >管理任务 ↗</router-link
-              >
-            </div>
-            <div class="task-toolbar">
-              <div class="task-tabs" role="group" aria-label="筛选学习任务">
-                <button
-                  v-for="tab in taskTabs"
-                  :key="tab.key"
-                  type="button"
-                  :class="{ active: taskFilter === tab.key }"
-                  :aria-pressed="taskFilter === tab.key"
-                  @click="taskFilter = tab.key"
-                >
-                  {{ tab.label }}<span>{{ tab.count }}</span>
-                </button>
-              </div>
-            </div>
-            <div v-if="!visibleTasks.length" class="task-empty">
-              <el-icon :size="28"><CircleCheck /></el-icon
-              ><b>{{ emptyTaskTitle }}</b>
-              <p>
-                {{
-                  overall.total
-                    ? '换个筛选看看，或去课程管理调整计划。'
-                    : '录入考试并上传资料，让 AI 帮你安排每天的复习。'
-                }}
-              </p>
-              <router-link
-                v-if="!overall.total"
-                to="/analysis"
-                class="text-link"
-                >生成复习计划 →</router-link
-              >
-            </div>
-            <ul v-else class="task-list">
-              <li
-                v-for="task in visibleTasks"
-                :key="task.id"
-                :class="{ done: task.is_done }"
-              >
-                <el-checkbox
-                  :model-value="task.is_done"
-                  :disabled="pendingIds.has(task.id)"
-                  :aria-label="`${task.is_done ? '撤销' : '完成'}${task.title}`"
-                  @change="onToggle(task)"
-                />
-                <div class="task-copy">
-                  <b>{{ task.title }}</b>
-                  <div class="task-meta">
-                    <span class="subject-label"
-                      ><i
-                        :style="{ background: colorFor(task.exam_id).color }"
-                      ></i
-                      >{{ task.exam }}</span
-                    ><span>{{ task.estimated_minutes }} 分钟</span
-                    ><span
-                      :class="{
-                        overdue: !task.is_done && task.plan_date < getToday(),
-                      }"
-                      >{{ dateChip(task) }}</span
-                    ><span
-                      v-if="task.priority === 1 && !task.is_done"
-                      class="high-priority"
-                      >优先完成</span
-                    >
-                  </div>
-                </div>
-                <span v-if="pendingIds.has(task.id)" class="task-state"
-                  >保存中</span
-                ><span v-else-if="task.is_done" class="task-state">已完成</span>
-              </li>
-            </ul>
-            <div class="task-footer">
-              <span>今日已完成 {{ todayDone }} / {{ todayTotal }} 项</span
-              ><span>剩余预计 {{ todayMinutes }} 分钟</span>
-            </div>
-          </section>
-        </div>
-        <aside class="work-aside">
-          <section class="panel progress-panel rise">
-            <div class="section-head">
-              <h2>复习总进度</h2>
-              <router-link
-                to="/stats"
-                class="text-link"
-                aria-label="查看学习统计"
-                ><el-icon><TopRight /></el-icon
-              ></router-link>
-            </div>
-            <div class="overall-ring">
-              <ProgressRing :value="overall.rate * 100" label="复习总进度"
-                ><strong class="progress-number"
-                  >{{ Math.round(overall.rate * 100) }}<small>%</small></strong
-                ><span class="ring-caption">{{
-                  overall.total ? '每次打卡，都在向前' : '从第一个任务开始'
-                }}</span></ProgressRing
-              >
-            </div>
-            <p class="progress-tally">
-              <b>{{ overall.done }}</b> 已完成
-              <span>/ {{ overall.total }} 个任务</span>
-            </p>
-            <div
-              class="subject-progress"
-              v-for="e in examProgress.filter((e) => e.total_tasks)"
-              :key="e.id"
-            >
-              <div>
-                <span
-                  ><i :style="{ background: colorFor(e.id).color }"></i
-                  >{{ e.subject }}</span
-                ><b>{{ e.done_tasks }}/{{ e.total_tasks }}</b>
-              </div>
-              <el-progress
-                :percentage="Math.round(e.progress * 100)"
-                :show-text="false"
-                :stroke-width="4"
-                :color="colorFor(e.id).color"
-              />
-            </div>
-          </section>
-          <section class="panel focus-panel rise">
-            <div class="section-head">
-              <h2>留一段专注时间</h2>
+              <h2>番茄钟</h2>
               <span class="focus-status">{{
                 focusRunning ? '专注中' : focusStarted ? '已暂停' : '准备开始'
               }}</span>
@@ -304,6 +203,7 @@
               <el-select
                 v-model="focusExamId"
                 aria-label="专注科目"
+                @change="onFocusExamChange"
                 placeholder="选择科目"
                 :disabled="focusStarted"
                 ><el-option
@@ -343,7 +243,7 @@
                   focusRunning ? '暂停' : focusStarted ? '继续专注' : '开始专注'
                 }}</el-button
               ><el-button :disabled="focusSaving" @click="resetFocus"
-                >重置</el-button
+                >结束本轮</el-button
               >
             </div>
             <div class="focus-goal">
@@ -362,118 +262,93 @@
                 :stroke-width="5"
                 color="#35554c"
               />
-              <details class="goal-settings">
-                <summary>调整每日目标</summary>
-                <div>
-                  <el-input-number
-                    v-model="goalInput"
-                    :min="0"
-                    :max="1440"
-                    :step="15"
-                    size="small"
-                    aria-label="每日专注目标分钟数"
-                  /><el-button text type="primary" @click="saveGoal"
-                    >保存</el-button
-                  >
-                </div>
-                <small>0 表示暂不设置目标</small>
-              </details>
             </div>
           </section>
-          <section class="streak-panel">
-            <div>
-              <b
-                >连续打卡 <span class="num">{{ history.streak }}</span> 天</b
-              ><span>本周 · 按实际完成日期记录</span>
-            </div>
-            <div class="week-dots">
-              <div
-                v-for="d in history.week"
-                :key="d.date"
-                class="week-day"
-                :class="{ on: d.done, today: d.today, future: d.future }"
-                :title="`${d.date} ${d.done ? '已打卡' : d.future ? '未到日期' : '无打卡记录'}`"
-              >
-                <span>{{ d.label }}</span
-                ><i
-                  ><el-icon v-if="d.done"><Check /></el-icon
-                  ><span v-else>·</span></i
-                >
-              </div>
-            </div>
-          </section>
-        </aside>
-      </div>
-      <div class="care-grid">
-        <section
-          v-if="pressure"
-          class="panel pressure"
-          :class="{ alert: pressure.need_emergency }"
-        >
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">节奏比焦虑更重要</p>
-              <h2>备考压力观察</h2>
-            </div>
-            <span class="pressure-level">{{ pressure.level }}</span>
-          </div>
-          <div class="pressure-reading">
-            <strong>{{ pressure.score }}<small>/ 100</small></strong
-            ><span>{{ pressure.suggestion }}</span>
-          </div>
-          <div
-            class="pressure-scale"
-            role="meter"
-            aria-label="备考压力指数"
-            :aria-valuenow="pressure.score"
-            aria-valuemin="0"
-            aria-valuemax="100"
+        </template>
+      </StudyWorkspace>
+      <details class="care-drawer">
+        <summary>
+          <span>调整复习节奏</span
+          ><small>{{
+            pressure
+              ? `当前压力 ${pressure.score} · ${pressure.level}`
+              : '状态记录、救急与减负'
+          }}</small
+          ><span>情绪记录与减负 ↓</span>
+        </summary>
+        <div class="care-grid">
+          <section
+            v-if="pressure"
+            class="panel pressure"
+            :class="{ alert: pressure.need_emergency }"
           >
-            <i :style="{ width: pressure.score + '%' }"></i>
-          </div>
-          <div class="pressure-labels">
-            <span>轻松</span><span>适中</span><span>偏压</span><span>高压</span>
-          </div>
-          <el-button text type="primary" @click="onEmergency"
-            >时间紧张？查看救急清单 <el-icon><Right /></el-icon
-          ></el-button>
-        </section>
-        <section class="panel mood">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">也照顾一下自己</p>
-              <h2>今天的状态怎么样？</h2>
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">节奏比焦虑更重要</p>
+                <h2>备考压力观察</h2>
+              </div>
+              <span class="pressure-level">{{ pressure.level }}</span>
             </div>
-            <span class="mood-word">{{ moodHint }}</span>
-          </div>
-          <el-rate
-            v-model="moodScore"
-            :max="5"
-            size="large"
-            :disabled="moodSaving"
-            aria-label="今日心情，1 到 5 分"
-            @change="onMoodChange"
-          />
-          <p class="mood-explain">
-            {{
-              mood?.suggestion ||
-              '记录 1～5 分的心情，结合复习情况获得节奏建议。'
-            }}
-          </p>
-          <div class="mood-bottom">
-            <span v-if="mood"
-              >综合评分 <b class="num">{{ mood.composite_score }}</b> / 5</span
-            ><el-button
-              v-if="mood?.need_relief"
-              type="primary"
-              plain
-              size="small"
-              @click="onRelief"
-              >减轻今日负担</el-button
+            <div class="pressure-reading">
+              <strong>{{ pressure.score }}<small>/ 100</small></strong
+              ><span>{{ pressure.suggestion }}</span>
+            </div>
+            <div
+              class="pressure-scale"
+              role="meter"
+              aria-label="备考压力指数"
+              :aria-valuenow="pressure.score"
+              aria-valuemin="0"
+              aria-valuemax="100"
             >
-          </div>
-        </section>
-      </div>
+              <i :style="{ width: pressure.score + '%' }"></i>
+            </div>
+            <div class="pressure-labels">
+              <span>轻松</span><span>适中</span><span>偏压</span
+              ><span>高压</span>
+            </div>
+            <el-button text type="primary" @click="onEmergency"
+              >时间紧张？查看救急清单 <el-icon><Right /></el-icon
+            ></el-button>
+          </section>
+          <section class="panel mood">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">也照顾一下自己</p>
+                <h2>今天的状态怎么样？</h2>
+              </div>
+              <span class="mood-word">{{ moodHint }}</span>
+            </div>
+            <el-rate
+              v-model="moodScore"
+              :max="5"
+              size="large"
+              :disabled="moodSaving"
+              aria-label="今日心情，1 到 5 分"
+              @change="onMoodChange"
+            />
+            <p class="mood-explain">
+              {{
+                mood?.suggestion ||
+                '记录 1～5 分的心情，结合复习情况获得节奏建议。'
+              }}
+            </p>
+            <div class="mood-bottom">
+              <span v-if="mood"
+                >综合评分 <b class="num">{{ mood.composite_score }}</b> /
+                5</span
+              ><el-button
+                v-if="mood?.need_relief"
+                type="primary"
+                plain
+                size="small"
+                @click="onRelief"
+                >减轻今日负担</el-button
+              >
+            </div>
+          </section>
+        </div>
+      </details>
       <section class="panel exam-panel">
         <div class="section-head">
           <div>
@@ -528,83 +403,96 @@
           </article>
         </div>
       </section>
-      <div class="resources-grid">
-        <section v-if="review?.items?.length" class="panel review">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">{{ review.subject }} · 权重优先</p>
-              <h2>考前再看一遍</h2>
-            </div>
-            <router-link
-              :to="{ path: '/analysis', query: { exam: review.exam_id } }"
-              class="text-link"
-              >完整分析 ↗</router-link
-            >
-          </div>
-          <ol class="review-list">
-            <li v-for="(item, i) in review.items" :key="i">
-              <span class="review-order">{{
-                String(i + 1).padStart(2, '0')
-              }}</span>
-              <div>
-                <b>{{ item.name }}</b>
-                <p>{{ item.basis || item.source || '依据最近一次复习分析' }}</p>
-                <div class="review-bar">
-                  <i
-                    :style="{
-                      width:
-                        Math.min(100, Math.max(0, item.weight * 100)) + '%',
-                    }"
-                  ></i>
-                </div>
-              </div>
-              <strong class="num"
-                >{{ Math.round(item.weight * 100) }}<small>%</small></strong
-              >
-            </li>
-          </ol>
-          <p class="reference-note">
-            AI 生成内容仅供复习参考，请结合课程要求核对。
-          </p>
-        </section>
-        <section v-if="timeslots" class="panel timeslots">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">每日可用 {{ timeslots.daily_hours }} 小时</p>
-              <h2>给复习留好时间</h2>
-            </div>
-          </div>
-          <p v-if="timeslots.note" class="quiet-empty">{{ timeslots.note }}</p>
-          <ol class="slots-list">
-            <li v-for="slot in timeslots.slots" :key="slot.name">
-              <div class="slot-time">
-                <b>{{ slot.name }}</b
-                ><span>{{ slot.start }}–{{ slot.end }}</span>
-              </div>
-              <div>
-                <b>{{ slot.focus }}</b
-                ><span>建议投入 {{ slot.minutes }} 分钟</span>
-              </div>
-            </li>
-          </ol>
-          <p class="reference-note">推荐时段仅作参考，按你的作息灵活安排。</p>
-        </section>
-      </div>
-      <nav class="study-path" aria-label="复习流程">
-        <router-link
-          v-for="(s, i) in flowSteps"
-          :key="s.name"
-          :to="s.to === '#board' ? '/#board' : s.to"
-          @click="s.to === '#board' && goStep(s.to)"
-          ><span class="num">0{{ i + 1 }}</span
-          ><span
-            >{{ s.name }}<small>{{ s.desc }}</small></span
-          ><el-icon><Right /></el-icon
-        ></router-link>
-      </nav>
       <p v-if="USE_MOCK" class="demo-note">
         当前为交互演示 · 数据不会保存到服务器，刷新后恢复示例。
       </p>
+      <el-dialog
+        v-model="planningVisible"
+        title="全科时间与排程"
+        width="660px"
+        align-center
+        class="planning-dialog"
+      >
+        <p class="planning-intro">
+          每天的可用时间由所有科目共享。先保存预算，再预览如何安排未完成的 AI
+          任务；手动任务与完成记录会保留。
+        </p>
+        <div class="budget-editor">
+          <label for="daily-budget">每天可用</label
+          ><el-input-number
+            id="daily-budget"
+            v-model="budgetHours"
+            :min="0.5"
+            :max="16"
+            :step="0.5"
+            aria-label="全科每日可用小时数"
+          /><span>小时</span
+          ><el-button :loading="planningBusy" @click="saveBudget"
+            >保存预算</el-button
+          >
+        </div>
+        <p class="budget-note">
+          保存后，今日专注目标也设为这个时长；任务日期需确认重排后才会改变。
+        </p>
+        <el-button type="primary" :loading="planningBusy" @click="previewPlan"
+          >预览全科排程</el-button
+        >
+        <div v-if="planPreview" class="plan-preview">
+          <div
+            v-if="planPreview.conflicts.length"
+            class="plan-conflicts"
+            role="alert"
+          >
+            <b>还有任务排不下，暂不能确认</b>
+            <ul>
+              <li v-for="(issue, i) in planPreview.conflicts" :key="i">
+                {{ issue.title || issue.date }}：{{ issue.reason }}（{{
+                  issue.minutes
+                }}
+                分钟）
+              </li>
+            </ul>
+          </div>
+          <p v-else>
+            全部任务可以在考试前安排，每天合计不超过
+            {{ planPreview.daily_minutes }} 分钟。
+          </p>
+          <div class="preview-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>全科计划</th>
+                  <th>各科分配</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="day in planPreview.days" :key="day.date">
+                  <td>{{ day.date }}</td>
+                  <td>{{ day.minutes }} 分钟</td>
+                  <td>{{ planDaySubjects(day.date) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <router-link
+            v-if="planPreview.conflicts.length"
+            to="/exams"
+            @click="planningVisible = false"
+            >去课程管理调整任务 ↗</router-link
+          >
+        </div>
+        <template #footer
+          ><el-button @click="planningVisible = false">取消</el-button
+          ><el-button
+            type="primary"
+            :loading="planningBusy"
+            :disabled="!planPreview || !!planPreview.conflicts.length"
+            @click="confirmPlan"
+            >确认全科重排</el-button
+          ></template
+        >
+      </el-dialog>
       <!-- ===== 临时救急模式 · 冲刺清单（模块 7.2） ===== -->
       <el-dialog
         v-model="emergencyVisible"
@@ -695,7 +583,10 @@
         </div>
         <template #footer>
           <el-button @click="reliefVisible = false">取消</el-button>
-          <el-button type="primary" :disabled="!relief" @click="confirmRelief"
+          <el-button
+            type="primary"
+            :disabled="!relief || !!relief.conflicts.length"
+            @click="confirmRelief"
             >确认调整</el-button
           >
         </template>
@@ -708,9 +599,22 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import ProgressRing from '../components/ProgressRing.vue'
+import StudyWorkspace from '../components/StudyWorkspace.vue'
+import {
+  buildStudyPlan,
+  applyStudyPlan,
+  buildReliefPreview,
+} from '../utils/studyPlan'
 import { checkinHistory, daysUntil, taskProgress } from '../utils/studyProgress'
 import { ElMessage } from 'element-plus'
-import { dashboardApi, examApi, featureApi, focusApi, taskApi } from '../api'
+import {
+  dashboardApi,
+  examApi,
+  featureApi,
+  focusApi,
+  studyApi,
+  taskApi,
+} from '../api'
 import { useUserStore } from '../stores/user'
 import {
   USE_MOCK,
@@ -719,10 +623,9 @@ import {
   mockMood,
   mockOverview,
   mockPressure,
-  mockRelief,
-  mockReview,
-  mockTimeslots,
   mockTop3,
+  mockStudySession,
+  setMockScenario,
 } from '../mock/dashboard'
 import { examColor } from '../utils/subjectColor'
 
@@ -747,9 +650,7 @@ const mood = ref(null)
 const moodScore = ref(0)
 const emergencyVisible = ref(false)
 const emergency = ref(null)
-const review = ref(null)
 const top3 = ref(null)
-const timeslots = ref(null)
 const reliefVisible = ref(false)
 const reliefOption = ref('lighten')
 const relief = ref(null)
@@ -786,32 +687,186 @@ const goalPct = computed(() => {
   return Math.min(100, Math.round((focusData.value.total_minutes / g) * 100))
 })
 
-const flowSteps = [
-  {
-    icon: 'Upload',
-    name: '上传资料',
-    desc: '历年题、笔记、老师重点',
-    to: '/materials',
+const dailyBudget = ref(240)
+const workspaceOffset = ref(100)
+let headerObserver
+const selectedTaskId = ref(null)
+const selectedTask = computed(
+  () => tasks.value.find((t) => t.id === selectedTaskId.value) || null,
+)
+const guideVisible = ref(false)
+const guideKey = () => 'fmzh_guide_' + (userStore.user?.id || 'preview')
+const guideDismissed = () => {
+  try {
+    return localStorage.getItem(guideKey()) === 'dismissed'
+  } catch {
+    return false
+  }
+}
+const dismissGuide = () => {
+  guideVisible.value = false
+  try {
+    localStorage.setItem(guideKey(), 'dismissed')
+  } catch {}
+}
+const mockScenario = ref('normal')
+const planningVisible = ref(false),
+  planningBusy = ref(false),
+  budgetHours = ref(4),
+  planPreview = ref(null)
+const selectTask = (task) => {
+  if (focusStarted.value && task?.id !== selectedTaskId.value) {
+    ElMessage.info('先结束当前这轮专注，再切换任务')
+    return
+  }
+  selectedTaskId.value = task?.id || null
+  if (!focusStarted.value) focusExamId.value = task?.exam_id || null
+}
+const onFocusExamChange = (id) => {
+  selectedTaskId.value =
+    tasks.value.find(
+      (t) => t.exam_id === id && !t.is_done && t.plan_date <= getToday(),
+    )?.id || null
+}
+const startTask = async (task) => {
+  if (
+    focusStarted.value &&
+    (selectedTaskId.value !== task.id || focusRunning.value)
+  ) {
+    ElMessage.info('当前已有一轮专注，请先结束本轮')
+    return
+  }
+  selectTask(task)
+  if (!focusRunning.value) await toggleFocus()
+}
+const changeScenario = async (key) => {
+  if (focusStarted.value) {
+    ElMessage.info('请先结束本轮专注')
+    mockScenario.value = mockStudySession.scenario
+    return
+  }
+  setMockScenario(key)
+  selectedTaskId.value = null
+  guideVisible.value = key === 'new'
+  await load()
+}
+const openPlanning = () => {
+  if (focusStarted.value) {
+    ElMessage.info('先结束本轮专注，再调整全科排程')
+    return
+  }
+  budgetHours.value = dailyBudget.value / 60
+  planPreview.value = null
+  planningVisible.value = true
+}
+const saveBudget = async () => {
+  if (
+    !Number.isFinite(Number(budgetHours.value)) ||
+    budgetHours.value < 0.5 ||
+    budgetHours.value > 16
+  ) {
+    ElMessage.warning('请输入 0.5 至 16 小时的每日总时间')
+    return
+  }
+  planningBusy.value = true
+  try {
+    const minutes = Math.round(budgetHours.value * 60)
+    if (USE_MOCK) {
+      dailyBudget.value = minutes
+      focusData.value.goal_minutes = minutes
+      mockStudySession.daily_minutes = minutes
+      focusData.value.achieved = focusData.value.total_minutes >= minutes
+    } else {
+      const setting = await studyApi.saveSettings({ daily_minutes: minutes })
+      dailyBudget.value = setting.daily_minutes
+      await loadFocus()
+    }
+    goalInput.value = minutes
+    planPreview.value = null
+    ElMessage.success('全科预算与今日专注目标已保存')
+  } catch {
+  } finally {
+    planningBusy.value = false
+  }
+}
+const previewPlan = async () => {
+  if (Math.round(budgetHours.value * 60) !== dailyBudget.value) {
+    ElMessage.info('先保存新的每日时间，再预览')
+    return
+  }
+  planningBusy.value = true
+  try {
+    planPreview.value = USE_MOCK
+      ? buildStudyPlan(tasks.value, exams.value, dailyBudget.value, getToday())
+      : await studyApi.preview()
+  } catch {
+  } finally {
+    planningBusy.value = false
+  }
+}
+watch(budgetHours, () => {
+  planPreview.value = null
+})
+const planDaySubjects = (day) => {
+  const totals = new Map()
+  for (const part of planPreview.value?.assignments || [])
+    if (part.date === day)
+      totals.set(part.exam_id, (totals.get(part.exam_id) || 0) + part.minutes)
+  for (const task of tasks.value)
+    if (task.plan_date === day && (task.is_done || task.source !== 'ai'))
+      totals.set(
+        task.exam_id,
+        (totals.get(task.exam_id) || 0) + task.estimated_minutes,
+      )
+  return [...totals]
+    .map(
+      ([id, minutes]) =>
+        `${exams.value.find((e) => e.id === id)?.subject || '未归类'} ${minutes}分`,
+    )
+    .join(' · ')
+}
+const confirmPlan = async () => {
+  if (!planPreview.value || planPreview.value.conflicts.length) return
+  planningBusy.value = true
+  try {
+    if (USE_MOCK) {
+      tasks.value = applyStudyPlan(tasks.value, planPreview.value)
+    } else {
+      await studyApi.confirm({ fingerprint: planPreview.value.fingerprint })
+      await load()
+    }
+    planningVisible.value = false
+    ElMessage.success('全科计划已更新，回到清单开始复习')
+  } catch {
+    planPreview.value = null
+  } finally {
+    planningBusy.value = false
+  }
+}
+watch(
+  tasks,
+  (value) => {
+    if (USE_MOCK) mockStudySession.tasks = JSON.parse(JSON.stringify(value))
   },
-  {
-    icon: 'EditPen',
-    name: '填写目标',
-    desc: '一句话说清你的情况',
-    to: '/analysis',
+  { deep: true },
+)
+watch(
+  focusData,
+  (value) => {
+    if (USE_MOCK) mockStudySession.focus = JSON.parse(JSON.stringify(value))
   },
-  {
-    icon: 'MagicStick',
-    name: '生成计划',
-    desc: 'AI 拆出每天的任务',
-    to: '/analysis',
+  { deep: true },
+)
+watch(
+  () => tasks.value.find((t) => t.id === selectedTaskId.value)?.is_done,
+  (value) => {
+    if (value && !focusStarted.value)
+      selectTask(
+        tasks.value.find((t) => !t.is_done && t.plan_date <= getToday()) ||
+          null,
+      )
   },
-  {
-    icon: 'CircleCheck',
-    name: '每日打卡',
-    desc: '跟着计划稳步推进',
-    to: '#board',
-  },
-]
+)
 
 const todayText = computed(() => {
   const now = new Date()
@@ -868,54 +923,6 @@ const heroMessage = computed(() => {
     return '今天的待办已经处理好了。回顾一下收获，也给自己留一点休息时间。'
   return `今天还有 ${tasks.value.filter((t) => t.plan_date <= getToday() && !t.is_done).length} 项待办，预计 ${todayMinutes.value} 分钟。先做最重要的一件，慢慢把计划变成进度。`
 })
-const priorityItems = computed(() =>
-  (top3.value?.items || []).filter((item) =>
-    tasks.value.some((t) => t.id === item.task_id && !t.is_done),
-  ),
-)
-const taskTabs = computed(() => [
-  {
-    key: 'today',
-    label: '今日待办',
-    count: tasks.value.filter((t) => !t.is_done && t.plan_date <= getToday())
-      .length,
-  },
-  {
-    key: 'next',
-    label: '接下来',
-    count: tasks.value.filter((t) => !t.is_done && t.plan_date > getToday())
-      .length,
-  },
-  { key: 'done', label: '已完成', count: overall.value.done },
-  { key: 'all', label: '全部', count: overall.value.total },
-])
-const visibleTasks = computed(() =>
-  tasks.value
-    .filter(
-      (t) =>
-        taskFilter.value === 'all' ||
-        (taskFilter.value === 'done'
-          ? t.is_done
-          : !t.is_done &&
-            (taskFilter.value === 'next'
-              ? t.plan_date > getToday()
-              : t.plan_date <= getToday())),
-    )
-    .sort(
-      (a, b) =>
-        a.plan_date.localeCompare(b.plan_date) || a.priority - b.priority,
-    ),
-)
-const emptyTaskTitle = computed(
-  () =>
-    ({
-      today: '今日待办已清空，做得不错',
-      next: '还没有后续任务',
-      done: '你的第一次打卡，从这里开始',
-      all: '还没有复习任务',
-    })[taskFilter.value],
-)
-
 const moodHint = computed(() => {
   const map = ['', '很差', '较差', '一般', '不错', '很好']
   return moodScore.value ? map[moodScore.value] : '今天心情怎么样？'
@@ -970,6 +977,10 @@ const toggleById = (id) => {
 
 const onToggle = async (task) => {
   if (pendingIds.value.has(task.id)) return
+  if (!task.is_done && selectedTaskId.value === task.id && focusStarted.value) {
+    await resetFocus()
+    if (focusStarted.value) return
+  }
   pendingIds.value.add(task.id)
   try {
     if (USE_MOCK) {
@@ -1006,7 +1017,7 @@ const onToggle = async (task) => {
 }
 
 const applyFeatures = (results) => {
-  const targets = [pressure, mood, review, top3, timeslots]
+  const targets = [pressure, mood, top3]
   results.forEach((result, i) => {
     if (result.status === 'fulfilled') targets[i].value = result.value
   })
@@ -1022,9 +1033,7 @@ const refreshFeatures = async () => {
   const results = await Promise.allSettled([
     featureApi.pressure(),
     featureApi.moodToday(),
-    featureApi.review(),
     featureApi.top3(),
-    featureApi.timeslots(),
   ])
   if (request === featureRequest) applyFeatures(results)
 }
@@ -1043,26 +1052,21 @@ const load = async () => {
       pressure.value = { ...mockPressure }
       mood.value = { ...mockMood }
       moodScore.value = mockMood.mood_score
-      review.value = structuredClone(mockReview)
       top3.value = structuredClone(mockTop3)
-      timeslots.value = structuredClone(mockTimeslots)
       // 预览态：番茄钟用本地假数据
-      focusData.value = {
-        total_minutes: 75,
-        goal_minutes: 120,
-        achieved: false,
-        session_count: 3,
-        by_exam: [],
-      }
-      goalInput.value = 120
+      focusData.value = structuredClone(mockStudySession.focus)
+      dailyBudget.value = mockStudySession.daily_minutes
+      goalInput.value = focusData.value.goal_minutes
       weekFocus.value = data.extras.focus_minutes
     } else {
       // —— 真实接口 ——
-      const [overview, allTasks, examDetails] = await Promise.all([
+      const [overview, allTasks, examDetails, setting] = await Promise.all([
         dashboardApi.overview(),
         taskApi.list(),
         examApi.list(),
+        studyApi.settings(),
       ])
+      dailyBudget.value = setting.daily_minutes
       exams.value = overview.exams.map((e) => ({
         ...e,
         color: examDetails.find((detail) => detail.id === e.id)?.color || '',
@@ -1092,6 +1096,11 @@ const load = async () => {
     refreshing.value = false
   }
   await nextTick()
+  if (!selectedTask.value)
+    selectTask(
+      tasks.value.find((t) => !t.is_done && t.plan_date <= getToday()) || null,
+    )
+  if (!exams.value.length && !guideDismissed()) guideVisible.value = true
   if (route.hash === '#board') goStep('#board')
 }
 
@@ -1148,7 +1157,13 @@ const onMoodChange = async (val) => {
 
 const loadRelief = async () => {
   if (USE_MOCK) {
-    relief.value = structuredClone(mockRelief[reliefOption.value])
+    relief.value = buildReliefPreview(
+      tasks.value,
+      exams.value,
+      dailyBudget.value,
+      getToday(),
+      reliefOption.value,
+    )
     return
   }
   relief.value = null
@@ -1173,7 +1188,11 @@ const pickRelief = (option) => {
 
 const confirmRelief = async () => {
   if (USE_MOCK) {
-    ElMessage.success('已按演示方案重排（预览态不落库）')
+    const moves = new Map(relief.value.moves.map((m) => [m.task_id, m.to_date]))
+    tasks.value = tasks.value.map((t) =>
+      moves.has(t.id) ? { ...t, plan_date: moves.get(t.id) } : t,
+    )
+    ElMessage.success('已按方案减轻今日任务（本次演示内有效）')
     reliefVisible.value = false
     return
   }
@@ -1320,28 +1339,18 @@ const finishFocus = async () => {
   }
 }
 
-const saveGoal = async () => {
-  if (USE_MOCK) {
-    focusData.value.goal_minutes = goalInput.value
-    focusData.value.achieved =
-      goalInput.value > 0 && focusData.value.total_minutes >= goalInput.value
-    ElMessage.success('目标已保存')
-    return
-  }
-  await focusApi.setGoal({ target_minutes: goalInput.value })
-  focusData.value = await focusApi.today()
-  ElMessage.success('目标已保存')
-}
-
 const goStep = (to) => {
   if (to === '#board') {
-    document
-      .getElementById('board')
-      ?.scrollIntoView({
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-          ? 'instant'
-          : 'smooth',
-      })
+    const board = document.getElementById('board')
+    board?.focus({ preventScroll: true })
+    window.scrollTo({
+      top: board
+        ? board.getBoundingClientRect().top +
+          window.scrollY -
+          workspaceOffset.value
+        : 0,
+      behavior: 'instant',
+    })
     return
   }
   router.push(to)
@@ -1355,6 +1364,17 @@ watch(
   },
 )
 onMounted(load)
+onMounted(() => {
+  const header = document.querySelector('.header')
+  if (header) {
+    headerObserver = new ResizeObserver(() => {
+      workspaceOffset.value = Math.ceil(
+        header.getBoundingClientRect().height + 16,
+      )
+    })
+    headerObserver.observe(header)
+  }
+})
 onBeforeRouteLeave(async () => {
   // Logout and expired sessions have already removed the token; do not trap navigation.
   if (!localStorage.getItem('fmzh_token')) return true
@@ -1372,6 +1392,7 @@ onBeforeRouteLeave(async () => {
   }
 })
 onBeforeUnmount(() => {
+  headerObserver?.disconnect()
   clearInterval(focusTimerId)
 })
 </script>
@@ -1506,20 +1527,6 @@ onBeforeUnmount(() => {
 }
 .hero-link:hover {
   color: var(--coral-bright);
-}
-.hero-footnote {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  color: #aab5a5;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-}
-.hero-footnote i {
-  width: 3px;
-  height: 3px;
-  background: #728172;
-  border-radius: 50%;
 }
 .exam-ticket {
   position: relative;
@@ -1664,18 +1671,6 @@ onBeforeUnmount(() => {
   font-size: 10px;
   line-height: 1.5;
 }
-.work-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 310px;
-  gap: 24px;
-  align-items: start;
-}
-.work-main,
-.work-aside {
-  min-width: 0;
-  display: grid;
-  gap: 24px;
-}
 .panel {
   min-width: 0;
   border: 1px solid var(--line);
@@ -1700,13 +1695,6 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 500;
 }
-.section-note {
-  max-width: 120px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.7;
-  text-align: right;
-}
 .text-link {
   color: var(--ink-2);
   font-size: 11px;
@@ -1715,64 +1703,6 @@ onBeforeUnmount(() => {
 }
 .text-link:hover {
   color: var(--coral-deep);
-}
-.priority-panel {
-  border-bottom: 1px solid var(--line);
-  padding: 0 0 22px;
-}
-.priority-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 10px;
-}
-.priority-list li {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 18px 16px;
-  background: #e8e5d8;
-  border: 1px solid transparent;
-  border-radius: 8px;
-}
-.priority-list li:first-child {
-  border-color: #dfb9a5;
-  background: #f3e0d3;
-}
-.priority-number {
-  align-self: flex-start;
-  font: 500 22px/1.3 var(--font-num);
-  color: var(--coral-deep);
-}
-.priority-copy {
-  flex: 1;
-  min-width: 0;
-}
-.priority-copy b {
-  font-size: 13px;
-  line-height: 1.7;
-}
-.priority-copy p {
-  margin: 5px 0 0;
-  font-size: 10px;
-  color: var(--ink-2);
-  line-height: 1.7;
-}
-.priority-copy p span,
-.priority-copy small {
-  font-size: 10px;
-  color: var(--muted);
-}
-.duration {
-  display: grid;
-  gap: 2px;
-  text-align: right;
-  font: 500 20px var(--font-num);
-}
-.duration small {
-  font: 400 10px var(--font-sans);
-  color: var(--muted);
 }
 .priority-check.el-button {
   width: 28px;
@@ -1785,84 +1715,9 @@ onBeforeUnmount(() => {
   background: var(--green-soft);
   border-color: var(--green);
 }
-.task-toolbar {
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 8px;
-}
-.task-tabs {
-  display: flex;
-  gap: 20px;
-  overflow-x: auto;
-}
-.task-tabs button {
-  padding: 0 0 13px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
-  background: transparent;
-  font: 500 12px var(--font-sans);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.task-tabs button span {
-  margin-left: 5px;
-  font: 500 10px var(--font-num);
-}
-.task-tabs button.active {
-  color: var(--ink-1);
-  border-bottom-color: var(--coral);
-  font-weight: 700;
-}
-.task-list {
-  padding: 0;
-  margin: 0;
-  list-style: none;
-  max-height: 590px;
-  overflow-y: auto;
-}
-.task-list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 19px 0;
-  border-bottom: 1px dashed var(--line);
-}
-.task-list li:last-child {
-  border-bottom: 0;
-}
 .task-list .el-checkbox {
   height: 24px;
 }
-.task-copy {
-  flex: 1;
-  min-width: 0;
-}
-.task-copy b {
-  font-size: 13px;
-  line-height: 1.8;
-  font-weight: 600;
-}
-.task-list .done .task-copy b {
-  text-decoration: line-through;
-  color: var(--muted);
-}
-.task-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-top: 5px;
-  font-size: 10px;
-  line-height: 1.7;
-  color: var(--muted);
-}
-.subject-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink-2);
-}
-.subject-label i,
-.subject-progress i,
 .exam-info i {
   display: inline-block;
   width: 6px;
@@ -1870,104 +1725,14 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   flex-shrink: 0;
 }
-.task-meta .overdue,
-.task-meta .high-priority {
-  color: var(--coral-deep);
-}
-.high-priority {
-  padding: 0 4px;
-  background: var(--coral-soft);
-  border-radius: 2px;
-}
-.task-state {
-  flex-shrink: 0;
-  font-size: 10px;
-  color: var(--green);
-  padding-top: 6px;
-}
-.task-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  border-top: 1px solid var(--line);
-  padding-top: 15px;
-  margin-top: 5px;
-  font-size: 10px;
-  color: var(--muted);
-}
-.quiet-empty,
-.task-empty {
+.quiet-empty {
   padding: 20px 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.8;
 }
-.task-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 10px;
-  padding: 34px 10px;
-}
-.task-empty b {
-  color: var(--ink-2);
-}
-.task-empty p {
-  margin: 0;
-  max-width: 280px;
-}
 #board {
   scroll-margin-top: 150px;
-}
-.overall-ring {
-  width: 180px;
-  margin: 0 auto;
-}
-.progress-number {
-  font: 700 46px/1 var(--font-num);
-  letter-spacing: -0.06em;
-  font-variant-numeric: tabular-nums;
-}
-.progress-number small {
-  font-size: 19px;
-  margin-left: 4px;
-}
-.ring-caption {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 10px;
-}
-.progress-tally {
-  text-align: center;
-  font-size: 11px;
-  color: var(--ink-2);
-  margin: 6px 0 22px;
-}
-.progress-tally b {
-  font: 700 15px var(--font-num);
-}
-.progress-tally span {
-  color: var(--muted);
-}
-.subject-progress + .subject-progress {
-  margin-top: 14px;
-}
-.subject-progress > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 10px;
-  margin-bottom: 6px;
-}
-.subject-progress span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.subject-progress b {
-  font: 500 10px var(--font-num);
-  color: var(--muted);
 }
 .focus-panel {
   background: #e8e9dd;
@@ -2027,84 +1792,11 @@ onBeforeUnmount(() => {
   color: var(--green);
   font-size: 10px;
 }
-.goal-settings {
-  margin-top: 14px;
-  color: var(--muted);
-  font-size: 10px;
-}
-.goal-settings summary {
-  cursor: pointer;
-}
-.goal-settings > div {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-.goal-settings > small {
-  display: block;
-  margin-top: 5px;
-}
 .focus-hint {
   font-size: 11px;
   color: var(--muted);
 }
-.streak-panel {
-  padding: 0 4px;
-}
-.streak-panel > div:first-child {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.streak-panel b {
-  font-size: 12px;
-}
-.streak-panel b .num {
-  font-size: 18px;
-  color: var(--coral-deep);
-}
-.streak-panel > div:first-child > span {
-  font-size: 10px;
-  color: var(--muted);
-}
-.week-dots {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
-  margin-top: 18px;
-}
-.week-day {
-  display: grid;
-  gap: 9px;
-  text-align: center;
-  font-size: 10px;
-  color: var(--muted);
-}
-.week-day i {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 1;
-  max-width: 30px;
-  width: 100%;
-  margin: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-style: normal;
-}
-.week-day.on i {
-  color: var(--bg-card);
-  background: var(--green);
-  border-color: var(--green);
-}
-.week-day.today i {
-  outline: 1px solid var(--coral);
-  outline-offset: 3px;
-}
-.week-day.future {
-  opacity: 0.6;
-}
-.care-grid,
-.resources-grid {
+.care-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 24px;
@@ -2283,116 +1975,9 @@ onBeforeUnmount(() => {
   font: 500 13px var(--font-sans);
   color: var(--muted);
 }
-.review-list,
-.slots-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.review-list li {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
-}
-.review-list li:last-child,
-.slots-list li:last-child {
-  border: 0;
-}
-.review-order {
-  font: 500 12px var(--font-num);
-  color: var(--muted);
-}
-.review-list li > div {
-  flex: 1;
-  min-width: 0;
-}
-.review-list b {
-  font-size: 12px;
-}
-.review-list p {
-  margin: 4px 0 9px;
-  font-size: 10px;
-  line-height: 1.6;
-  color: var(--muted);
-}
-.review-list strong {
-  font-size: 20px;
-}
-.review-list small {
-  font-size: 10px;
-}
-.review-bar {
-  height: 3px;
-  background: var(--bg-soft);
-}
-.review-bar i {
-  display: block;
-  height: 100%;
-  background: var(--coral);
-}
-.reference-note {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.8;
-  margin: 18px 0 0;
-}
-.slots-list li {
-  display: grid;
-  grid-template-columns: 100px 1fr;
-  gap: 20px;
-  border-bottom: 1px solid var(--line);
-  padding: 18px 0;
-}
-.slots-list b {
-  display: block;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.7;
-}
-.slots-list span {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-  line-height: 1.7;
-  margin-top: 5px;
-}
-.slot-time span {
-  font-family: var(--font-num);
-}
-.study-path {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: 1px solid var(--line);
-  padding-top: 22px;
-  gap: 22px;
-}
-.study-path a {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--ink-2);
-  font-size: 12px;
-  text-decoration: none;
-}
-.study-path a > .num {
-  font-size: 23px;
-  color: #a9ad9e;
-}
-.study-path small {
-  display: block;
-  font-size: 9px;
-  color: var(--muted);
-  margin-top: 4px;
-  line-height: 1.6;
-}
 .study-path .el-icon {
   margin-left: auto;
   color: var(--muted);
-}
-.study-path a:hover {
-  color: var(--coral-deep);
 }
 .demo-note {
   margin: 0;
@@ -2537,10 +2122,6 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr) 225px;
     gap: 24px;
   }
-  .work-grid {
-    grid-template-columns: minmax(0, 1fr) 280px;
-    gap: 20px;
-  }
   .panel {
     padding: 20px;
   }
@@ -2550,28 +2131,8 @@ onBeforeUnmount(() => {
   .metric strong {
     font-size: 28px;
   }
-  .priority-list li {
-    gap: 10px;
-    padding: 14px 12px;
-  }
-  .task-tabs {
-    gap: 12px;
-  }
 }
 @media (max-width: 800px) {
-  .work-grid {
-    grid-template-columns: 1fr;
-  }
-  .work-aside {
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-  }
-  .streak-panel {
-    grid-column: 1 / -1;
-  }
-  .week-dots {
-    max-width: 360px;
-  }
   .hero {
     grid-template-columns: minmax(0, 1fr) 200px;
     padding: 28px;
@@ -2588,10 +2149,6 @@ onBeforeUnmount(() => {
   .hero-link {
     font-size: 11px;
   }
-  .hero-footnote {
-    font-size: 9px;
-    gap: 8px;
-  }
   .hero-sub {
     font-size: 12px;
   }
@@ -2604,8 +2161,7 @@ onBeforeUnmount(() => {
   .metric-index {
     display: none;
   }
-  .care-grid,
-  .resources-grid {
+  .care-grid {
     gap: 20px;
   }
   .exam-timeline {
@@ -2628,9 +2184,6 @@ onBeforeUnmount(() => {
   }
   .exam-days {
     align-self: center;
-  }
-  .study-path {
-    grid-template-columns: 1fr 1fr;
   }
 }
 @media (max-width: 560px) {
@@ -2675,9 +2228,6 @@ onBeforeUnmount(() => {
   .hero-actions {
     gap: 20px;
     margin: 20px 0;
-  }
-  .hero-footnote {
-    font-size: 9px;
   }
   .exam-ticket {
     transform: rotate(0);
@@ -2753,14 +2303,8 @@ onBeforeUnmount(() => {
   .metric-sub {
     font-size: 10px;
   }
-  .work-aside,
-  .care-grid,
-  .resources-grid {
+  .care-grid {
     grid-template-columns: 1fr;
-  }
-  .streak-panel {
-    grid-column: auto;
-    padding: 6px 2px;
   }
   .panel {
     padding: 20px 18px;
@@ -2769,65 +2313,13 @@ onBeforeUnmount(() => {
   .section-head h2 {
     font-size: 17px;
   }
-  .section-note {
-    max-width: 100px;
-    font-size: 9px;
-  }
-  .priority-copy p span {
-    display: block;
-  }
-  .priority-copy b {
-    font-size: 12px;
-  }
-  .priority-number {
-    font-size: 20px;
-  }
-  .duration {
-    font-size: 18px;
-  }
   .priority-check.el-button {
     width: 26px;
     height: 26px;
   }
-  .priority-list li {
-    gap: 10px;
-    padding: 15px 12px;
-  }
-  .task-tabs {
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .task-tabs button {
-    font-size: 11px;
-  }
-  .task-copy b {
-    font-size: 12px;
-  }
-  .task-state {
-    display: none;
-  }
-  .task-meta {
-    gap: 5px 10px;
-  }
-  .task-footer {
-    font-size: 9px;
-  }
   .focus-clock {
     margin: 24px 0;
     font-size: 60px;
-  }
-  .overall-ring {
-    width: 190px;
-  }
-  .study-path {
-    gap: 24px 16px;
-  }
-  .study-path a {
-    gap: 8px;
-    font-size: 11px;
-  }
-  .study-path a > .num {
-    font-size: 20px;
   }
   .study-path .el-icon {
     display: none;
@@ -2848,10 +2340,6 @@ onBeforeUnmount(() => {
   .pressure-reading {
     gap: 15px;
   }
-  .slots-list li {
-    grid-template-columns: 85px 1fr;
-    gap: 12px;
-  }
   .demo-note {
     font-size: 9px;
   }
@@ -2862,6 +2350,270 @@ onBeforeUnmount(() => {
   }
   .pressure-scale i {
     transition: none;
+  }
+}
+
+/* 本轮：首页封面 → 今日复习工作区 → 可展开的节奏调整。 */
+.desk-utilities {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scenario-picker {
+  width: 140px;
+}
+.cover-progress {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 22px;
+}
+.cover-progress :deep(.progress-ring) {
+  width: 66px;
+  height: 66px;
+}
+.cover-progress strong {
+  font-family: 'Space Grotesk';
+  font-size: 19px;
+  line-height: 1;
+}
+.cover-progress strong small {
+  font-size: 10px;
+}
+.cover-progress > span {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cover-progress > span b {
+  font-size: 12px;
+}
+.cover-progress > span small {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.getting-started {
+  padding: 20px;
+  margin-bottom: 22px;
+  background: #e6ebdf;
+  border: 1px solid #bac5af;
+  border-radius: 12px;
+}
+.guide-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: center;
+}
+.guide-title h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.guide-title button {
+  background: none;
+  border: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  cursor: pointer;
+}
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+  margin-top: 20px;
+}
+.guide-steps > a,
+.guide-steps > button {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font: inherit;
+  color: var(--ink-1);
+  text-decoration: none;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+}
+.guide-steps b {
+  font-family: 'Space Grotesk';
+  font-size: 25px;
+  color: #35554c;
+}
+.guide-steps span {
+  flex: 1;
+}
+.guide-steps small {
+  display: block;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--ink-3);
+  margin-top: 4px;
+}
+.workspace-focus {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.workspace-focus .section-head {
+  margin-bottom: 9px;
+}
+.workspace-focus .section-head h2 {
+  font-family: inherit;
+  font-size: 12px;
+}
+.workspace-focus .focus-setup {
+  gap: 8px;
+}
+.workspace-focus .focus-clock {
+  font-size: 57px;
+  margin: 12px 0;
+  line-height: 1.1;
+}
+.workspace-focus .focus-actions {
+  gap: 8px;
+}
+.workspace-focus .focus-actions .el-button {
+  font-size: 11px;
+  padding: 8px 10px;
+  height: 33px;
+}
+.workspace-focus .focus-goal {
+  margin-top: 17px;
+  padding-top: 14px;
+}
+.workspace-focus .goal-line {
+  font-size: 10px;
+}
+.workspace-focus .focus-status {
+  font-size: 9px;
+}
+.care-drawer {
+  margin: 24px 0;
+}
+.care-drawer > summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  cursor: pointer;
+  padding: 17px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  list-style: none;
+}
+.care-drawer > summary small {
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.care-drawer > summary > span:last-child {
+  font-size: 10px;
+  color: var(--coral-deep);
+}
+.care-drawer .care-grid {
+  margin-top: 18px;
+}
+.planning-intro {
+  font-size: 12px;
+  line-height: 1.9;
+  margin: 0 0 20px;
+  color: var(--ink-3);
+}
+.budget-editor {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.budget-note {
+  font-size: 10px;
+  color: var(--ink-3);
+  margin: 12px 0 20px;
+  line-height: 1.8;
+}
+.plan-preview {
+  margin-top: 20px;
+  font-size: 12px;
+}
+.preview-scroll {
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 12px;
+}
+.preview-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.preview-scroll th,
+.preview-scroll td {
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.plan-conflicts {
+  padding: 12px;
+  background: #f4e5dc;
+  color: var(--coral-deep);
+  line-height: 1.8;
+}
+.plan-conflicts ul {
+  padding-left: 18px;
+}
+.plan-preview a {
+  display: block;
+  margin-top: 12px;
+  color: var(--coral-deep);
+}
+@media (max-width: 760px) {
+  .desk-heading {
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .desk-utilities {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .desk-date {
+    font-size: 10px;
+  }
+  .guide-steps {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .guide-title h2 {
+    font-size: 16px;
+  }
+  .care-drawer > summary {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .care-drawer > summary small {
+    width: 100%;
+    order: 3;
+  }
+  .cover-progress :deep(.progress-ring) {
+    width: 58px;
+    height: 58px;
+  }
+  .workspace-focus .focus-clock {
+    font-size: 50px;
+    margin: 10px 0;
+  }
+  .workspace-focus .focus-goal {
+    margin-top: 12px;
+  }
+  .hero {
+    margin-bottom: 20px;
+  }
+  .metrics {
+    margin-bottom: 22px;
   }
 }
 </style>
