@@ -1,14 +1,17 @@
 <template>
   <el-container class="layout">
+    <a class="skip-link" href="#main-content">跳转到主要内容</a>
     <el-header class="header">
-      <div class="brand" @click="$router.push('/')">
-        <span class="logo"><el-icon :size="19"><Reading /></el-icon></span>
+      <router-link class="brand" to="/" aria-label="期末周别慌，返回首页">
+        <span class="logo"
+          ><el-icon :size="19"><Reading /></el-icon
+        ></span>
         <div class="brand-text">
           <span class="title">期末周别慌！</span>
           <span class="subtitle">AI 备考助手</span>
         </div>
-      </div>
-      <nav class="nav">
+      </router-link>
+      <nav class="nav" aria-label="主导航">
         <router-link
           v-for="item in navItems"
           :key="item.path"
@@ -20,19 +23,30 @@
         </router-link>
       </nav>
       <div class="user-area">
-        <el-avatar :size="32" class="avatar" :style="userStore.user?.avatar ? { background: userStore.user.avatar } : {}">
+        <el-avatar
+          :size="32"
+          class="avatar"
+          :style="
+            userStore.user?.avatar ? { background: userStore.user.avatar } : {}
+          "
+        >
           {{ displayName.charAt(0) }}
         </el-avatar>
-        <span class="name" @click="$router.push('/profile')" title="个人资料">{{ displayName }}</span>
+        <span class="name" @click="$router.push('/profile')" title="个人资料">{{
+          displayName
+        }}</span>
         <el-divider direction="vertical" class="divider" />
-        <el-button text class="logout" @click="onLogout">
+        <el-button text class="logout" aria-label="退出登录" @click="onLogout">
           <el-icon><SwitchButton /></el-icon>
           <span>退出</span>
         </el-button>
       </div>
     </el-header>
-    <el-main class="main">
+    <el-main id="main-content" class="main" tabindex="-1">
       <router-view />
+      <footer class="site-footer">
+        <span>期末周别慌！</span><span>把复习拆小，把每一步走好。</span>
+      </footer>
     </el-main>
   </el-container>
 </template>
@@ -60,7 +74,8 @@ const navItems = computed(() => {
 })
 
 const displayName = computed(() => userStore.displayName)
-const isActive = (path) => (path === '/' ? route.path === '/' : route.path.startsWith(path))
+const isActive = (path) =>
+  path === '/' ? route.path === '/' : route.path.startsWith(path)
 
 const onLogout = () => {
   userStore.logout()
@@ -71,19 +86,23 @@ const onLogout = () => {
 
 <style scoped>
 .layout {
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 .header {
   position: sticky;
   top: 0;
-  z-index: 100;
+  z-index: 20;
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 24px;
+  height: auto;
+  min-height: 76px;
+  padding: 14px max(24px, calc((100% - 1152px) / 2));
   background: var(--bg-page);
-  border-bottom: 2px solid var(--ink-1);
+  border-bottom: 1px solid var(--line);
 }
 .brand {
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -126,9 +145,10 @@ const onLogout = () => {
   gap: 6px;
 }
 .nav-link {
-  padding: 8px 18px;
-  border-radius: 8px;
-  font-size: 14.5px;
+  padding: 8px 12px;
+  white-space: nowrap;
+  border-radius: 6px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink-2);
   text-decoration: none;
@@ -184,5 +204,92 @@ const onLogout = () => {
   width: 100%;
   margin: 0 auto;
   padding: 28px 24px 56px;
+}
+.site-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 40px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 10px;
+}
+.site-footer > span:first-child {
+  font-family: var(--font-serif);
+  font-weight: 700;
+}
+@media (max-width: 1100px) {
+  .header {
+    flex-wrap: wrap;
+    gap: 14px 20px;
+    padding: 14px 24px 10px;
+  }
+  .user-area {
+    margin-left: auto;
+  }
+  .nav {
+    order: 3;
+    flex-basis: 100%;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .nav-link {
+    flex-shrink: 0;
+  }
+}
+@media (max-width: 560px) {
+  .header {
+    padding: 12px 18px 8px;
+    gap: 12px;
+  }
+  .logo {
+    width: 32px;
+    height: 32px;
+  }
+  .brand {
+    gap: 8px;
+  }
+  .title {
+    font-size: 16px;
+  }
+  .subtitle {
+    font-size: 8px;
+    letter-spacing: 2px;
+  }
+  .nav {
+    gap: 4px;
+    margin-inline: -3px;
+  }
+  .nav-link {
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+  .user-area {
+    gap: 8px;
+  }
+  .user-area .name {
+    max-width: 64px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+  }
+  .avatar {
+    width: 26px;
+    height: 26px;
+  }
+  .divider,
+  .logout span {
+    display: none;
+  }
+  .logout {
+    padding: 5px;
+  }
+  .main {
+    padding: 22px 18px 32px;
+  }
+  .site-footer {
+    font-size: 9px;
+  }
 }
 </style>

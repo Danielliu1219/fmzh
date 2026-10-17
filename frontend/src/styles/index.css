@@ -15,7 +15,7 @@
   /* —— 文字层级（绿灰墨色） —— */
   --ink-1: #0c1614;        /* 墨绿黑主文字 */
   --ink-2: #454e48;        /* 次级文字 */
-  --ink-3: #8b9084;        /* 弱化文字 / 占位 */
+  --ink-3: #687168;        /* 次要文字保持纸面可读性 */
 
   /* —— 珊瑚朱红 —— */
   --coral: #e66348;        /* 主色 */
@@ -69,7 +69,7 @@
   --el-border-radius-base: 8px;
   --el-text-color-primary: #0c1614;
   --el-text-color-regular: #454e48;
-  --el-text-color-secondary: #8b9084;
+  --el-text-color-secondary: #687168;
   --el-border-color: #d9d4c3;
   --el-border-color-light: #e2ddcd;
   --el-border-color-lighter: #eae6d9;
@@ -87,6 +87,24 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+html { scroll-behavior: smooth; scroll-padding-top: 140px; }
+body { margin: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+:focus-visible { outline: 2px solid var(--coral-deep); outline-offset: 4px; }
+.skip-link { position: fixed; top: -60px; left: 16px; z-index: 30; padding: 12px; background: var(--bg-card); color: var(--ink-1); border: 1px solid var(--ink-1); border-radius: 6px; }
+.skip-link:focus { top: 10px; }
+.el-dialog { max-width: calc(100% - 28px); }
+@media (max-width: 680px) {
+  .page-head { flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+  .page-head h2 { margin: 0; font-size: 22px; }
+  .el-descriptions { overflow-x: auto; }
+  .el-table { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
 
 /* 标题默认走宋体大标题（编辑风） */

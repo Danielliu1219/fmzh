@@ -1,11 +1,12 @@
 // ============================================================
 // USE_MOCK = true：纯前端预览态（GitHub Pages 在线预览 / 本机不起后端）。
 // 首页用下方的 mock 数据，考试 / 资料 / AI 分析三页用 src/mock/pages.js，
-// 登录页会显示"免登录预览"按钮。联调真实后端时改回 false，
+// 登录页会显示"免登录预览"按钮。VITE_USE_MOCK=false 时联调真实后端，
 // 全部页面自动切回真实接口（真实数据由 backend/seed_demo.py 种入：
 // 8 任务 / 3 完成 = 38%、今日 3 任务、考试 +5/+11/+14 天）。
 // ============================================================
-export const USE_MOCK = true
+// Default stays in preview mode; local integration can opt in without editing source.
+export const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
 
 // 真实接口下用本地日期（toISOString 是 UTC，中国凌晨会差一天）
 const localDate = () => {
@@ -27,6 +28,11 @@ export const mockTasks = [
   { id: 7, exam_id: 1, exam: '高等数学', title: '第2天：高频题型刷题', plan_date: '2026-09-06', estimated_minutes: 120, priority: 1, is_done: true, source: 'ai' },
   { id: 8, exam_id: 2, exam: '大学英语', title: '听力精听 30 分钟', plan_date: '2026-09-06', estimated_minutes: 30, priority: 3, is_done: true, source: 'manual' },
 ]
+
+// Preview check-in history uses completion timestamps, like the real TaskOut API.
+mockTasks.forEach((task) => {
+  task.done_at = task.is_done ? `${task.plan_date}T18:00:00` : null
+})
 
 // 总览：与 DashboardOut 同构（extras 为演示补充字段，真实接口下由前端自行推导）
 export const mockDashboard = {

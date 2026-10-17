@@ -26,7 +26,8 @@ request.interceptors.response.use(
       localStorage.removeItem('fmzh_user')
       if (router.currentRoute.value.path !== '/login') router.push('/login')
     }
-    ElMessage.error(msg)
+    // No saved analysis is an expected empty state when first selecting a subject.
+    if (!(error.config?.quietNotFound && error.response?.status === 404)) ElMessage.error(msg)
     return Promise.reject(error)
   },
 )

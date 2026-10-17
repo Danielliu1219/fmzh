@@ -50,7 +50,7 @@ export const collectionApi = {
 export const aiApi = {
   profile: (data) => request.post('/ai/profile', data),
   analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),
-  latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`),
+  latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
 }
 
 export const taskApi = {
