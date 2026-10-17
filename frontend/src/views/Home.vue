@@ -29,6 +29,11 @@
         >
       </div>
     </div>
+    <aside v-if="notices.unread || notices.error" class="home-notices" aria-label="站内提醒">
+      <div><strong>{{ notices.error || `${notices.unread} 条未读提醒` }}</strong><p v-if="!notices.error">{{ notices.preview.map(n => n.title).join('；') }}</p></div>
+      <el-button v-if="notices.error" text @click="notices.refresh()">重试</el-button>
+      <router-link to="/notifications">查看通知 ↗</router-link>
+    </aside>
     <div v-if="loading" class="loading-desk" aria-label="正在加载学习进度">
       <el-skeleton :rows="8" animated />
     </div>
@@ -616,6 +621,7 @@ import {
   taskApi,
 } from '../api'
 import { useUserStore } from '../stores/user'
+import { useNotificationStore } from '../stores/notifications'
 import {
   USE_MOCK,
   getToday,
@@ -630,6 +636,7 @@ import {
 import { examColor } from '../utils/subjectColor'
 
 const userStore = useUserStore()
+const notices = useNotificationStore()
 const router = useRouter()
 const route = useRoute()
 
@@ -1040,6 +1047,7 @@ const refreshFeatures = async () => {
 
 const load = async () => {
   if (refreshing.value) return
+  notices.refresh()
   if (!tasks.value.length && !exams.value.length) loading.value = true
   refreshing.value = true
   error.value = ''
@@ -1398,6 +1406,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.home-notices { display:flex; align-items:center; gap:16px; padding:14px 18px; margin-bottom:22px; background:var(--bg-soft); border-left:3px solid var(--coral); font-size:12px; }
+.home-notices div { min-width:0; flex:1; }
+.home-notices p { margin-top:5px; color:var(--ink-2); overflow-wrap:anywhere; line-height:1.7; }
+.home-notices a { flex-shrink:0; color:var(--coral-deep); font-weight:700; text-decoration:none; }
 /* A daily study desk: paper, ink, coral. Keep the established brand. */
 .dash {
   --muted: #687168;

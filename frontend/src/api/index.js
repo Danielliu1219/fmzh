@@ -108,3 +108,15 @@ export const studyApi = {
   preview: () => request.get('/study/plan/preview'),
   confirm: (data) => request.post('/study/plan/confirm', data),
 }
+
+export const notificationApi = {
+  check: () => request.post('/notifications/check'),
+  list: (params) => request.get('/notifications', { params }),
+  preferences: () => request.get('/notifications/preferences'),
+  savePreferences: (data) => request.put('/notifications/preferences', data),
+  reminder: (kind, id) => request.get(`/notifications/reminders/${kind}/${id}`),
+  saveReminder: (kind, id, data) => request.put(`/notifications/reminders/${kind}/${id}`, data),
+  mark: (id, is_read) => request.patch(`/notifications/${id}`, { is_read }),
+  readAll: () => request.post('/notifications/read-all'),
+  remove: (id) => request.delete(`/notifications/${id}`),
+}

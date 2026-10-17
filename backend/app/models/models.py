@@ -1,4 +1,4 @@
-"""数据库表模型（共 12 张表）
+"""数据库表模型（共 15 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -220,3 +220,42 @@ class StudySetting(Base):
     __tablename__ = "study_settings"
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     daily_minutes = Column(Integer, nullable=False, default=240)
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    exam_enabled = Column(Boolean, nullable=False, default=True)
+    task_enabled = Column(Boolean, nullable=False, default=True)
+
+
+class Reminder(Base):
+    """按事项当前日期 + 时刻 - 提前量计算提醒，任务改期后自动跟随。"""
+    __tablename__ = "reminders"
+    __table_args__ = (UniqueConstraint("user_id", "target_type", "target_id", name="uq_reminder_target"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    target_type = Column(String(8), nullable=False)
+    target_id = Column(Integer, nullable=False)
+    target_created_at = Column(DateTime, nullable=False)  # 防止删除后的事项 ID 重用继承设置
+    enabled = Column(Boolean, nullable=False, default=True)
+    event_time = Column(String(5), nullable=False, default="09:00")
+    advance_minutes = Column(Integer, nullable=False, default=0)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (UniqueConstraint("user_id", "occurrence_key", name="uq_notification_occurrence"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    occurrence_key = Column(String(64), nullable=False)
+    target_type = Column(String(8), nullable=False)
+    target_id = Column(Integer, nullable=False)
+    target_created_at = Column(DateTime, nullable=False)
+    title = Column(String(50), nullable=False)
+    content = Column(String(200), nullable=False)
+    due_at = Column(DateTime, nullable=False)  # UTC
+    created_at = Column(DateTime, nullable=False)  # UTC，实际打开页面生成的时间
+    is_read = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True)  # 保留去重凭据，删除后刷新不会再生成

@@ -23,6 +23,9 @@
         </router-link>
       </nav>
       <div class="user-area">
+        <router-link class="notification-bell" to="/notifications" :aria-label="`通知中心，${notices.unread} 条未读`">
+          <el-icon :size="18"><Bell /></el-icon><span v-if="notices.unread" class="notification-count">{{ notices.unread > 99 ? '99+' : notices.unread }}</span>
+        </router-link>
         <el-avatar
           :size="32"
           class="avatar"
@@ -52,14 +55,18 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
+import { useNotificationStore } from '../stores/notifications'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const notices = useNotificationStore()
+watch(() => route.fullPath, () => notices.refresh(), { immediate: true })
+onBeforeUnmount(() => notices.reset())
 
 const navItems = computed(() => {
   const items = [
@@ -171,6 +178,9 @@ const onLogout = () => {
   gap: 10px;
   white-space: nowrap;
 }
+.notification-bell { position:relative; display:grid; place-items:center; padding:8px; color:var(--ink-1); text-decoration:none; border-radius:6px; }
+.notification-bell:hover { background:var(--bg-soft); }
+.notification-count { position:absolute; top:-3px; right:-4px; min-width:16px; padding:1px 4px; background:var(--coral-deep); color:white; border-radius:10px; font-size:10px; line-height:14px; }
 .avatar {
   background: var(--ink-1);
   color: var(--bg-page);

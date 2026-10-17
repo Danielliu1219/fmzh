@@ -14,6 +14,7 @@ const routes = [
       { path: 'admin', name: 'admin', component: () => import('../views/Admin.vue'), meta: { title: '管理端', admin: true } },
       { path: 'stats', name: 'stats', component: () => import('../views/Stats.vue'), meta: { title: '学习统计' } },
       { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue'), meta: { title: '个人资料' } },
+      { path: 'notifications', name: 'notifications', component: () => import('../views/Notifications.vue'), meta: { title: '通知中心' } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

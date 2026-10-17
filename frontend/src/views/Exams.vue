@@ -46,7 +46,7 @@
       </el-card>
 
       <el-card shadow="never">
-        <el-table :data="exams" v-loading="loading" empty-text="还没有课程，点右上角添加">
+        <el-table ref="examTable" :data="exams" row-key="id" highlight-current-row v-loading="loading" empty-text="还没有课程，点右上角添加">
           <el-table-column type="expand">
             <template #default="{ row }">
               <div class="task-panel">
@@ -80,11 +80,12 @@
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="190">
+                  <el-table-column label="操作" width="240">
                     <template #default="{ row: t }">
                       <el-button v-if="!t.is_done" link type="success" size="small" @click="onCheckin(t)">打卡</el-button>
                       <el-button v-else link size="small" @click="onUncheckin(t)">撤销</el-button>
                       <el-button link type="primary" size="small" @click="openTaskDialog(t, row)">编辑</el-button>
+                      <el-button link type="primary" size="small" @click="openReminder('task', t.id)">提醒</el-button>
                       <el-button link type="danger" size="small" @click="onDeleteTask(t)">删除</el-button>
                     </template>
                   </el-table-column>
@@ -108,11 +109,12 @@
           <el-table-column prop="note" label="备注" min-width="120">
             <template #default="{ row }">{{ row.note || '-' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="250" fixed="right">
+          <el-table-column label="操作" width="290" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openPlanDialog(row)" title="按考试日期倒推生成复习计划">倒推计划</el-button>
               <el-button link type="primary" @click="onPickIcs(row)" title="把课表/日历 ICS 导入为本科目任务">导入 ICS</el-button>
               <el-button link @click="openDialog(row)">编辑</el-button>
+              <el-button link type="primary" @click="openReminder('exam', row.id)">提醒</el-button>
               <el-button link type="danger" @click="onDelete(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -250,12 +252,15 @@
       </template>
     </el-dialog>
 
+    <ReminderDialog v-model="reminderVisible" :kind="reminderKind" :target-id="reminderTarget" />
     <input ref="icsInputRef" type="file" accept=".ics,text/calendar" style="display: none" @change="onImportIcs" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import ReminderDialog from '../components/ReminderDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi, taskApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
@@ -265,6 +270,15 @@ import { examColor, SUBJECT_PALETTE } from '../utils/subjectColor'
 const examColorById = (examId) => examColor(exams.value.find((e) => e.id === examId))
 
 const viewMode = ref('list')
+const route = useRoute(), examTable = ref()
+const reminderVisible = ref(false), reminderKind = ref('exam'), reminderTarget = ref(null)
+function openReminder(kind, id) { reminderKind.value = kind; reminderTarget.value = id; reminderVisible.value = true }
+async function revealTarget() {
+  const id = route.query.exam ? Number(route.query.exam) : tasks.value.find(t => t.id === Number(route.query.task))?.exam_id
+  const row = exams.value.find(e => e.id === id)
+  if (row) { viewMode.value = 'list'; await nextTick(); examTable.value?.toggleRowExpansion(row, true); examTable.value?.setCurrentRow(row) }
+}
+watch(() => route.fullPath, revealTarget)
 const exams = ref([])
 const tasks = ref([])
 const loading = ref(false)
@@ -307,6 +321,7 @@ const load = async () => {
       exams.value = await examApi.list(params)
     }
     await loadTasks()
+    await revealTarget()
   } finally {
     loading.value = false
   }
