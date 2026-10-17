@@ -29,10 +29,13 @@
         >
       </div>
     </div>
-    <aside v-if="notices.unread || notices.error" class="home-notices" aria-label="站内提醒">
-      <div><strong>{{ notices.error || `${notices.unread} 条未读提醒` }}</strong><p v-if="!notices.error">{{ notices.preview.map(n => n.title).join('；') }}</p></div>
+    <aside class="home-notices" aria-label="站内提醒">
+      <div>
+        <strong>{{ notices.error || (notices.loading ? '正在检查提醒' : notices.unread ? `${notices.unread} 条未读提醒` : '当前没有未读通知') }}</strong>
+        <p v-if="!notices.error">{{ notices.unread ? notices.preview.map(n => n.title).join('；') : notices.enabled ? '查看通知历史，或为考试与复习任务设置提醒。' : '提醒已暂停，可在通知中心重新开启。' }}</p>
+      </div>
       <el-button v-if="notices.error" text @click="notices.refresh()">重试</el-button>
-      <router-link to="/notifications">查看通知 ↗</router-link>
+      <router-link to="/notifications">{{ notices.unread ? '查看通知 ↗' : '打开通知中心 ↗' }}</router-link>
     </aside>
     <div v-if="loading" class="loading-desk" aria-label="正在加载学习进度">
       <el-skeleton :rows="8" animated />
@@ -716,7 +719,7 @@ const dismissGuide = () => {
     localStorage.setItem(guideKey(), 'dismissed')
   } catch {}
 }
-const mockScenario = ref('normal')
+const mockScenario = ref(mockStudySession.scenario)
 const planningVisible = ref(false),
   planningBusy = ref(false),
   budgetHours = ref(4),
@@ -1357,7 +1360,9 @@ const goStep = (to) => {
           window.scrollY -
           workspaceOffset.value
         : 0,
-      behavior: 'instant',
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        ? 'instant'
+        : 'smooth',
     })
     return
   }
