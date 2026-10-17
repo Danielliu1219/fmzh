@@ -150,8 +150,8 @@ h1, h2, h3, h4 {
   box-shadow: var(--shadow-card);
 }
 
-/* 主按钮：珊瑚 + 墨线 + 硬阴影，按下有位移 */
-.el-button--primary {
+/* 实心主按钮；plain / text / link 保留各自的配色，避免同色文字与背景。 */
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link) {
   --el-button-bg-color: var(--coral);
   --el-button-border-color: var(--ink-1);
   --el-button-hover-bg-color: var(--coral-deep);
@@ -166,35 +166,48 @@ h1, h2, h3, h4 {
   letter-spacing: 0.04em;
   transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
 }
-.el-button--primary:hover,
-.el-button--primary:focus {
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link):hover,
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link):focus {
   background: var(--coral-deep);
   transform: translate(-1px, -1px);
   box-shadow: var(--shadow-ink-sm);
 }
-.el-button--primary:active {
+.el-button--primary:not(.is-plain):not(.is-text):not(.is-link):active {
   transform: translate(2px, 2px);
   box-shadow: 0 0 0 var(--ink-1);
+}
+
+/* 浅色主按钮使用深珊瑚文字；悬停 / 聚焦时再切为深底白字。 */
+.el-button--primary.is-plain:not(.is-text):not(.is-link) {
+  --el-button-text-color: var(--coral-deep);
+  --el-button-bg-color: var(--bg-card);
+  --el-button-border-color: var(--coral-deep);
+  --el-button-hover-text-color: #fff;
+  --el-button-hover-bg-color: var(--coral-deep);
+  --el-button-hover-border-color: var(--coral-deep);
+  --el-button-active-text-color: #fff;
+  --el-button-active-bg-color: var(--coral-deep);
+  --el-button-active-border-color: var(--coral-deep);
 }
 
 /* 普通按钮：纸面 + 墨线 */
 .el-button {
   font-weight: 600;
 }
-.el-button:not(.el-button--primary):not(.el-button--text):not(.el-button--link) {
+.el-button:not(.el-button--primary):not(.is-text):not(.is-link) {
   background: var(--bg-card);
   border: 1.5px solid var(--ink-1);
   color: var(--ink-1);
 }
-.el-button:not(.el-button--primary):not(.el-button--text):not(.el-button--link):hover {
+.el-button:not(.el-button--primary):not(.is-text):not(.is-link):hover {
   background: var(--bg-soft);
   border-color: var(--ink-1);
   color: var(--ink-1);
 }
 
 /* 链接按钮：珊瑚 + 下划线感 */
-.el-button--link,
-.el-button--text {
+.el-button.is-link,
+.el-button.is-text {
   font-weight: 700;
 }
 
