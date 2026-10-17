@@ -309,13 +309,15 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { collectionApi, examApi, materialApi } from '../api'
-import { USE_MOCK } from '../mock/dashboard'
+import { USE_MOCK, mockStudySession } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
 
 const sourceTypes = ['历年题', '老师重点', '平时作业', '课堂笔记', '教材章节', '实验报告', '练习题', '其他']
 
+const route = useRoute()
 const exams = ref([])
 const materials = ref([])
 const loading = ref(false)
@@ -410,7 +412,7 @@ const wrongQuestions = computed(() => collections.value.filter((c) => c.item_typ
 
 const loadExams = async () => {
   if (USE_MOCK) {
-    exams.value = mockExams
+    exams.value = structuredClone(mockStudySession.exams)
     return
   }
   exams.value = await examApi.list()
@@ -755,9 +757,16 @@ const exportAs = async (format) => {
 }
 
 onMounted(() => {
+  const requested = Number(route.query.exam)
+  if (requested > 0) { filter.exam_id = requested; uploadForm.exam_id = requested }
   loadExams()
   load()
   loadCollections()
+})
+watch(() => route.query.exam, value => {
+  filter.exam_id = Number(value) || null
+  uploadForm.exam_id = filter.exam_id
+  load()
 })
 </script>
 

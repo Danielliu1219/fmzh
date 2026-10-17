@@ -4,7 +4,7 @@
 // 与首页同一套演示数据（高数 5 天后 / 英语 11 天后 / 数据结构 14 天后）。
 // 仅界面预览用；联调与答辩演示请以真实后端为准（USE_MOCK = false）。
 // ============================================================
-import { mockDashboard, getToday } from './dashboard'
+import { mockDashboard, getToday, mockStudySession } from './dashboard'
 
 // 考试列表（与首页 mock 同源；note 为页面补充字段）
 export const mockExams = mockDashboard.exams.map((e) => ({ ...e, note: '' }))
@@ -85,7 +85,7 @@ export const mockAnalysis = {
 // 学习统计总览（与 StatsOverviewOut 同构；锚定 getToday()，与首页 mock 同一天）
 const round3 = (x) => Math.round(x * 1000) / 1000
 // 30 天每日专注分钟（最后 7 天合计 225，对齐 mockDashboard.extras.focus_minutes）
-const MINUTES_30 = [30, 0, 45, 20, 0, 35, 50, 0, 25, 40, 0, 30, 15, 0, 20, 35, 0, 40, 25, 0, 30, 20, 0, 25, 0, 25, 30, 40, 60, 45]
+const MINUTES_30 = [30, 0, 45, 20, 0, 35, 50, 0, 25, 40, 0, 30, 15, 0, 20, 35, 0, 40, 25, 0, 30, 20, 0, 25, 0, 25, 30, 40, 30, 75]
 
 const buildStats = (days) => {
   const base = new Date(`${getToday()}T00:00:00`)
@@ -94,7 +94,7 @@ const buildStats = (days) => {
     const d = new Date(base)
     d.setDate(base.getDate() - (days - 1 - i))
     const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    const minutes = MINUTES_30[30 - days + i] ?? 0
+    const minutes = i === days - 1 ? mockStudySession.focus.total_minutes : (MINUTES_30[30 - days + i] ?? 0)
     const total = minutes > 0 ? (minutes >= 40 ? 3 : 2) : 0
     const done = total > 0 ? total - 1 : 0
     daily.push({ date, minutes, total, done, rate: total ? round3(done / total) : 0 })
@@ -107,6 +107,13 @@ const buildStats = (days) => {
     { exam_id: 2, subject: '大学英语', minutes: eng, total_tasks: 3, done_tasks: 1, rate: 0.333, exam_date: '2026-09-18', days_left: 11 },
     { exam_id: 3, subject: '数据结构', minutes: 0, total_tasks: 0, done_tasks: 0, rate: 0, exam_date: '2026-09-21', days_left: 14 },
   ]
+  for (const subject of subjects) {
+    const tasks = mockStudySession.tasks.filter(t=>t.exam_id===subject.exam_id)
+    subject.total_tasks=tasks.length
+    subject.done_tasks=tasks.filter(t=>t.is_done).length
+    subject.rate=tasks.length?round3(subject.done_tasks/tasks.length):0
+  }
+  const totalTasks=mockStudySession.tasks.length,doneTasks=mockStudySession.tasks.filter(t=>t.is_done).length
   const free = totalMinutes - gao - eng
   if (free > 0) {
     subjects.push({ exam_id: null, subject: '未指定科目', minutes: free, total_tasks: 0, done_tasks: 0, rate: 0, exam_date: null, days_left: null })
@@ -116,9 +123,9 @@ const buildStats = (days) => {
     start_date: daily[0]?.date ?? '',
     end_date: daily[daily.length - 1]?.date ?? '',
     total_minutes: totalMinutes,
-    total_tasks: 8,
-    done_tasks: 3,
-    rate: 0.375,
+    total_tasks: totalTasks,
+    done_tasks: doneTasks,
+    rate: totalTasks?round3(doneTasks/totalTasks):0,
     subjects,
     days: daily,
   }

@@ -46,7 +46,7 @@
       </el-card>
 
       <el-card shadow="never">
-        <el-table :data="exams" v-loading="loading" empty-text="还没有课程，点右上角添加">
+        <el-table ref="examTable" :data="exams" row-key="id" highlight-current-row v-loading="loading" empty-text="还没有课程，点右上角添加">
           <el-table-column type="expand">
             <template #default="{ row }">
               <div class="task-panel">
@@ -80,11 +80,12 @@
                       </el-tag>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="190">
+                  <el-table-column label="操作" width="240">
                     <template #default="{ row: t }">
                       <el-button v-if="!t.is_done" link type="success" size="small" @click="onCheckin(t)">打卡</el-button>
                       <el-button v-else link size="small" @click="onUncheckin(t)">撤销</el-button>
                       <el-button link type="primary" size="small" @click="openTaskDialog(t, row)">编辑</el-button>
+                      <el-button link type="primary" size="small" @click="openReminder('task', t.id)">提醒</el-button>
                       <el-button link type="danger" size="small" @click="onDeleteTask(t)">删除</el-button>
                     </template>
                   </el-table-column>
@@ -108,11 +109,12 @@
           <el-table-column prop="note" label="备注" min-width="120">
             <template #default="{ row }">{{ row.note || '-' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="250" fixed="right">
+          <el-table-column label="操作" width="290" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openPlanDialog(row)" title="按考试日期倒推生成复习计划">倒推计划</el-button>
               <el-button link type="primary" @click="onPickIcs(row)" title="把课表/日历 ICS 导入为本科目任务">导入 ICS</el-button>
               <el-button link @click="openDialog(row)">编辑</el-button>
+              <el-button link type="primary" @click="openReminder('exam', row.id)">提醒</el-button>
               <el-button link type="danger" @click="onDelete(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -250,22 +252,33 @@
       </template>
     </el-dialog>
 
+    <ReminderDialog v-model="reminderVisible" :kind="reminderKind" :target-id="reminderTarget" />
     <input ref="icsInputRef" type="file" accept=".ics,text/calendar" style="display: none" @change="onImportIcs" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import ReminderDialog from '../components/ReminderDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi, taskApi } from '../api'
-import { USE_MOCK } from '../mock/dashboard'
-import { mockExams } from '../mock/pages'
+import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { examColor, SUBJECT_PALETTE } from '../utils/subjectColor'
 
 // 2.11 全站统一科目配色：任务/日历只有 exam_id 时先找考试再取色
 const examColorById = (examId) => examColor(exams.value.find((e) => e.id === examId))
 
 const viewMode = ref('list')
+const route = useRoute(), examTable = ref()
+const reminderVisible = ref(false), reminderKind = ref('exam'), reminderTarget = ref(null)
+function openReminder(kind, id) { reminderKind.value = kind; reminderTarget.value = id; reminderVisible.value = true }
+async function revealTarget() {
+  const id = route.query.exam ? Number(route.query.exam) : tasks.value.find(t => t.id === Number(route.query.task))?.exam_id
+  const row = exams.value.find(e => e.id === id)
+  if (row) { viewMode.value = 'list'; await nextTick(); examTable.value?.toggleRowExpansion(row, true); examTable.value?.setCurrentRow(row) }
+}
+watch(() => route.fullPath, revealTarget)
 const exams = ref([])
 const tasks = ref([])
 const loading = ref(false)
@@ -297,7 +310,7 @@ const load = async () => {
   try {
     // mock 模式下展示本地演示数据；真实模式下走接口（含筛选参数）
     if (USE_MOCK) {
-      exams.value = mockExams
+      exams.value = structuredClone(mockStudySession.exams)
     } else {
       const params = {}
       if (filter.subject) params.subject = filter.subject
@@ -308,6 +321,7 @@ const load = async () => {
       exams.value = await examApi.list(params)
     }
     await loadTasks()
+    await revealTarget()
   } finally {
     loading.value = false
   }
@@ -315,7 +329,7 @@ const load = async () => {
 
 const loadTasks = async () => {
   if (USE_MOCK) {
-    tasks.value = mockTasksForCalendar()
+    tasks.value = structuredClone(mockStudySession.tasks)
     return
   }
   tasks.value = await taskApi.list()
@@ -458,12 +472,14 @@ const onSaveTask = async () => {
 const onCheckin = async (t) => {
   if (!USE_MOCK) await taskApi.checkin(t.id)
   t.is_done = true
+  if (USE_MOCK) t.done_at = `${getToday()}T12:00:00`
   ElMessage.success('已完成，继续保持！')
 }
 
 const onUncheckin = async (t) => {
   if (!USE_MOCK) await taskApi.uncheckin(t.id)
   t.is_done = false
+  if (USE_MOCK) t.done_at = null
 }
 
 const onDeleteTask = async (t) => {
@@ -574,7 +590,7 @@ const onExportIcs = async () => {
 }
 
 // ==================== 备考日历（2.9） ====================
-const calDate = ref(new Date())
+const calDate = ref(new Date(`${getToday()}T12:00:00`))
 const dragTask = ref(null)
 
 const tasksOn = (day) => tasks.value.filter((t) => t.plan_date === day)
@@ -604,19 +620,8 @@ const onDropToDate = async (ev, day) => {
   ElMessage.success(`「${t.title.slice(0, 12)}…」已改期到 ${day}`)
 }
 
-// mock 模式：把演示任务铺进本月日历方便预览
-const mockTasksForCalendar = () => {
-  const base = new Date()
-  const fmt = (d) => d.toISOString().slice(0, 10)
-  const mk = (offset, title, minutes, examId) => {
-    const d = new Date(base)
-    d.setDate(d.getDate() + offset)
-    return { id: 9000 + offset, exam_id: examId, title, plan_date: fmt(d), estimated_minutes: minutes, priority: 2, is_done: false, source: 'manual' }
-  }
-  const e1 = mockExams[0]?.id || 1
-  const e2 = mockExams[1]?.id || 2
-  return [mk(0, '英语真题阅读两篇', 60, e2), mk(1, '高数刷错题本', 90, e1), mk(2, '专业vol.2 章节题', 60, e2), mk(3, '高数模拟卷一套', 120, e1)]
-}
+watch(tasks, value=>{if(USE_MOCK)mockStudySession.tasks=JSON.parse(JSON.stringify(value))},{deep:true,flush:'sync'})
+watch(exams, value=>{if(USE_MOCK)mockStudySession.exams=JSON.parse(JSON.stringify(value))},{deep:true,flush:'sync'})
 
 onMounted(load)
 </script>

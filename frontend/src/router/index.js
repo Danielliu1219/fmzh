@@ -14,6 +14,7 @@ const routes = [
       { path: 'admin', name: 'admin', component: () => import('../views/Admin.vue'), meta: { title: '管理端', admin: true } },
       { path: 'stats', name: 'stats', component: () => import('../views/Stats.vue'), meta: { title: '学习统计' } },
       { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue'), meta: { title: '个人资料' } },
+      { path: 'notifications', name: 'notifications', component: () => import('../views/Notifications.vue'), meta: { title: '通知中心' } },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -23,6 +24,12 @@ const router = createRouter({
   // 用构建基路径（本地为 '/'，GitHub Pages 构建为 '/fmzh/'），子路径部署下路由才正确
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    // Home scrolls after its asynchronous task list has mounted.
+    if (to.hash === '#board') return false
+    return { top: 0 }
+  },
 })
 
 // 登录守卫：未登录一律去登录页，已登录访问登录页则回首页；管理端仅管理员可进

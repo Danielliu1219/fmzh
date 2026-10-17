@@ -50,7 +50,7 @@ export const collectionApi = {
 export const aiApi = {
   profile: (data) => request.post('/ai/profile', data),
   analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),
-  latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`),
+  latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
 }
 
 export const taskApi = {
@@ -100,4 +100,23 @@ export const adminApi = {
   unbanUser: (id) => request.post(`/admin/users/${id}/unban`),
   materials: (params) => request.get('/admin/materials', { params }),
   removeMaterial: (id) => request.delete(`/admin/materials/${id}`),
+}
+
+export const studyApi = {
+  settings: () => request.get('/study/settings'),
+  saveSettings: (data) => request.put('/study/settings', data),
+  preview: () => request.get('/study/plan/preview'),
+  confirm: (data) => request.post('/study/plan/confirm', data),
+}
+
+export const notificationApi = {
+  check: () => request.post('/notifications/check'),
+  list: (params) => request.get('/notifications', { params }),
+  preferences: () => request.get('/notifications/preferences'),
+  savePreferences: (data) => request.put('/notifications/preferences', data),
+  reminder: (kind, id) => request.get(`/notifications/reminders/${kind}/${id}`),
+  saveReminder: (kind, id, data) => request.put(`/notifications/reminders/${kind}/${id}`, data),
+  mark: (id, is_read) => request.patch(`/notifications/${id}`, { is_read }),
+  readAll: () => request.post('/notifications/read-all'),
+  remove: (id) => request.delete(`/notifications/${id}`),
 }
