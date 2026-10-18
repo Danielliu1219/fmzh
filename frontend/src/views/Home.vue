@@ -240,16 +240,15 @@
           </section>
         </template>
       </StudyWorkspace>
-      <details class="care-drawer">
-        <summary>
-          <span>调整复习节奏</span
-          ><small>{{
+      <section class="care-section" aria-labelledby="care-heading">
+        <header class="care-heading">
+          <h2 id="care-heading">情绪记录与减负</h2>
+          <small>{{
             pressure
               ? `当前压力 ${pressure.score} · ${pressure.level}`
               : '状态记录、救急与减负'
-          }}</small
-          ><span>情绪记录与减负 ↓</span>
-        </summary>
+          }}</small>
+        </header>
         <div class="care-grid">
           <section
             v-if="pressure"
@@ -322,7 +321,7 @@
             </div>
           </section>
         </div>
-      </details>
+      </section>
       <section class="panel exam-panel">
         <div class="section-head">
           <div>
@@ -2437,30 +2436,27 @@ onBeforeUnmount(() => {
 .workspace-focus .focus-status {
   font-size: 9px;
 }
-.care-drawer {
+.care-section {
   margin: 24px 0;
 }
-.care-drawer > summary {
+.care-heading {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 18px;
-  cursor: pointer;
   padding: 17px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
-  list-style: none;
 }
-.care-drawer > summary small {
-  margin-right: auto;
+.care-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.care-heading small {
   font-size: 10px;
   color: var(--ink-3);
 }
-.care-drawer > summary > span:last-child {
-  font-size: 10px;
-  color: var(--coral-deep);
-}
-.care-drawer .care-grid {
+.care-section .care-grid {
   margin-top: 18px;
 }
 .planning-intro {
@@ -2528,11 +2524,11 @@ onBeforeUnmount(() => {
   .desk-date {
     font-size: 10px;
   }
-  .care-drawer > summary {
+  .care-heading {
     gap: 10px;
     flex-wrap: wrap;
   }
-  .care-drawer > summary small {
+  .care-heading small {
     width: 100%;
     order: 3;
   }
