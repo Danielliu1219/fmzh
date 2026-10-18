@@ -164,8 +164,7 @@ const onLogin = async () => {
 // mock 模式种本地会话跳过登录（含管理员标记，便于预览管理端）；联调模式用演示账号真实登录，数据与功能全部真实
 const onDemoLogin = async () => {
   if (USE_MOCK) {
-    localStorage.setItem('fmzh_token', 'demo-token')
-    localStorage.setItem('fmzh_user', JSON.stringify({ username: 'demo', nickname: '演示同学', is_admin: true }))
+    userStore._setSession({ access_token: 'demo-token', user: { username: 'demo', nickname: '演示同学', is_admin: true } })
     router.push('/')
     return
   }

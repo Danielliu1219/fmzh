@@ -34,7 +34,7 @@
           ></i
         ></span>
       </div>
-      <button class="text-button budget-button" @click="$emit('budget')">
+      <button class="text-button budget-button" data-tour="budget" @click="$emit('budget')">
         时间与排程 <span>↗</span>
       </button>
     </header>
@@ -56,15 +56,15 @@
       }}</span>
     </div>
     <nav class="mobile-panes" aria-label="学习区切换">
-      <button :aria-pressed="pane === 'tasks'" @click="switchPane('tasks')">
+      <button data-tour="tasks-mobile" :aria-pressed="pane === 'tasks'" @click="switchPane('tasks')">
         任务清单 · {{ due.length }}</button
-      ><button :aria-pressed="pane === 'focus'" @click="switchPane('focus')">
+      ><button data-tour="focus-mobile" :aria-pressed="pane === 'focus'" @click="switchPane('focus')">
         {{ running ? `专注中 ${clock}` : '番茄钟与资料' }}
       </button>
     </nav>
     <div class="workspace-body">
       <section class="task-workbench" aria-label="复习任务清单">
-        <div class="task-tools">
+        <div class="task-tools" data-tour="tasks">
           <h3>
             任务清单 <small>{{ visible.length }}</small>
           </h3>

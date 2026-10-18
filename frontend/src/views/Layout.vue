@@ -16,6 +16,7 @@
           v-for="item in navItems"
           :key="item.path"
           :to="item.path"
+          :data-tour="item.path.slice(1) || 'home'"
           class="nav-link"
           :class="{ active: isActive(item.path) }"
         >
@@ -23,7 +24,7 @@
         </router-link>
       </nav>
       <div class="user-area">
-        <router-link class="notification-bell" to="/notifications" :aria-label="`通知中心，${notices.unread} 条未读`">
+        <router-link class="notification-bell" data-tour="notifications" to="/notifications" :aria-label="`通知中心，${notices.unread} 条未读`">
           <el-icon :size="18"><Bell /></el-icon><span v-if="notices.unread" class="notification-count">{{ notices.unread > 99 ? '99+' : notices.unread }}</span>
         </router-link>
         <el-avatar

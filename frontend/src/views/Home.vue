@@ -20,10 +20,7 @@
           class="scenario-picker"
           ><el-option label="日常复习" value="normal" /><el-option
             label="多任务 · 40 项"
-            value="busy" /><el-option label="新用户" value="new" /></el-select
-        ><el-button text @click="guideVisible = !guideVisible"
-          >使用指南</el-button
-        >
+            value="busy" /><el-option label="新用户" value="new" /></el-select>
         <el-button :loading="refreshing" :disabled="loading" text @click="load"
           ><el-icon><Refresh /></el-icon>&nbsp;刷新数据</el-button
         >
@@ -50,37 +47,6 @@
       >
     </div>
     <template v-else>
-      <section
-        v-if="guideVisible"
-        class="getting-started"
-        aria-label="新用户使用指南"
-      >
-        <div class="guide-title">
-          <h2>准备好，再开始今天的复习</h2>
-          <button @click="dismissGuide" aria-label="收起使用指南">
-            已了解 ×
-          </button>
-        </div>
-        <div class="guide-steps">
-          <router-link to="/exams"
-            ><b>01</b
-            ><span>录入全部考试<small>先把每一科的截止日期放在一起</small></span
-            >↗</router-link
-          ><button @click="openPlanning">
-            <b>02</b
-            ><span
-              >设定每天总时间<small>所有科目共用，不会每科各算一遍</small></span
-            >↗</button
-          ><router-link to="/analysis"
-            ><b>03</b
-            ><span
-              >上传资料，生成计划<small
-                >按科分析内容，再统筹每天的任务</small
-              ></span
-            >↗</router-link
-          >
-        </div>
-      </section>
       <section class="hero rise">
         <div class="hero-copy">
           <p class="hero-kicker">
@@ -88,7 +54,7 @@
               userStore.displayName
             }}
           </p>
-          <h1>期末有计划，<br /><span>今天不慌张。</span></h1>
+          <h1 tabindex="-1">期末有计划，<br /><span>今天不慌张。</span></h1>
           <p class="hero-sub">{{ heroMessage }}</p>
           <div class="hero-actions">
             <el-button
@@ -201,7 +167,7 @@
       >
         <template #focus>
           <section class="panel focus-panel workspace-focus">
-            <div class="section-head">
+            <div class="section-head" data-tour="focus">
               <h2>番茄钟</h2>
               <span class="focus-status">{{
                 focusRunning ? '专注中' : focusStarted ? '已暂停' : '准备开始'
@@ -414,6 +380,10 @@
       <p v-if="USE_MOCK" class="demo-note">
         当前为交互演示 · 数据不会保存到服务器，刷新后恢复示例。
       </p>
+      <section class="guide-replay" aria-label="重新查看教程">
+        <div><h2>需要再熟悉一下复习流程？</h2><p>从录入考试到每天专注，随时可以重新走一遍。</p></div>
+        <el-button @click="startGuide">重新查看新手教程 <span aria-hidden="true">↗</span></el-button>
+      </section>
       <el-dialog
         v-model="planningVisible"
         title="全科时间与排程"
@@ -600,6 +570,7 @@
         </template>
       </el-dialog>
     </template>
+    <OnboardingTour v-model="guideVisible" @closed="finishGuide" />
   </div>
 </template>
 
@@ -608,6 +579,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import ProgressRing from '../components/ProgressRing.vue'
 import StudyWorkspace from '../components/StudyWorkspace.vue'
+import OnboardingTour from '../components/OnboardingTour.vue'
 import {
   buildStudyPlan,
   applyStudyPlan,
@@ -705,19 +677,27 @@ const selectedTask = computed(
   () => tasks.value.find((t) => t.id === selectedTaskId.value) || null,
 )
 const guideVisible = ref(false)
-const guideKey = () => 'fmzh_guide_' + (userStore.user?.id || 'preview')
+let guideAutoChecked = false
+const guideKey = () => ['fmzh_onboarding_v2', userStore.user?.id || 'preview', userStore.user?.created_at || userStore.user?.username || 'demo'].join(':')
 const guideDismissed = () => {
   try {
-    return localStorage.getItem(guideKey()) === 'dismissed'
+    return localStorage.getItem(guideKey()) === 'completed'
   } catch {
     return false
   }
 }
-const dismissGuide = () => {
+const startGuide = () => {
+  window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+  guideVisible.value = true
+}
+const finishGuide = async () => {
   guideVisible.value = false
   try {
-    localStorage.setItem(guideKey(), 'dismissed')
+    localStorage.setItem(guideKey(), 'completed')
   } catch {}
+  await nextTick()
+  window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+  document.querySelector('.hero h1')?.focus({ preventScroll: true })
 }
 const mockScenario = ref(mockStudySession.scenario)
 const planningVisible = ref(false),
@@ -757,7 +737,6 @@ const changeScenario = async (key) => {
   }
   setMockScenario(key)
   selectedTaskId.value = null
-  guideVisible.value = key === 'new'
   await load()
 }
 const openPlanning = () => {
@@ -1111,8 +1090,11 @@ const load = async () => {
     selectTask(
       tasks.value.find((t) => !t.is_done && t.plan_date <= getToday()) || null,
     )
-  if (!exams.value.length && !guideDismissed()) guideVisible.value = true
-  if (route.hash === '#board') goStep('#board')
+  if (!error.value && !guideAutoChecked) {
+    guideAutoChecked = true
+    if (!guideDismissed()) startGuide()
+  }
+  if (route.hash === '#board' && !guideVisible.value) goStep('#board')
 }
 
 const onEmergency = async () => {
@@ -1411,6 +1393,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.guide-replay { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:24px 0 0; margin-top:28px; border-top:1px solid var(--line); }
+.guide-replay h2 { font-family:var(--font-serif); font-size:18px; }
+.guide-replay p { font-size:12px; line-height:1.8; color:var(--ink-2); margin-top:6px; }
+.guide-replay .el-button { flex-shrink:0; }
+@media(max-width:600px) { .guide-replay { align-items:flex-start; flex-direction:column; gap:14px; } }
+
 .home-notices { display:flex; align-items:center; gap:16px; padding:14px 18px; margin-bottom:22px; background:var(--bg-soft); border-left:3px solid var(--coral); font-size:12px; }
 .home-notices div { min-width:0; flex:1; }
 .home-notices p { margin-top:5px; color:var(--ink-2); overflow-wrap:anywhere; line-height:1.7; }
@@ -2409,66 +2397,6 @@ onBeforeUnmount(() => {
   font-size: 10px;
   color: var(--ink-3);
 }
-.getting-started {
-  padding: 20px;
-  margin-bottom: 22px;
-  background: #e6ebdf;
-  border: 1px solid #bac5af;
-  border-radius: 12px;
-}
-.guide-title {
-  display: flex;
-  justify-content: space-between;
-  gap: 15px;
-  align-items: center;
-}
-.guide-title h2 {
-  font-size: 18px;
-  margin: 0;
-}
-.guide-title button {
-  background: none;
-  border: 0;
-  color: var(--ink-3);
-  font-size: 11px;
-  cursor: pointer;
-}
-.guide-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 22px;
-  margin-top: 20px;
-}
-.guide-steps > a,
-.guide-steps > button {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  font: inherit;
-  color: var(--ink-1);
-  text-decoration: none;
-  text-align: left;
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  font-size: 12px;
-}
-.guide-steps b {
-  font-family: 'Space Grotesk';
-  font-size: 25px;
-  color: #35554c;
-}
-.guide-steps span {
-  flex: 1;
-}
-.guide-steps small {
-  display: block;
-  font-size: 10px;
-  line-height: 1.7;
-  color: var(--ink-3);
-  margin-top: 4px;
-}
 .workspace-focus {
   padding: 0;
   background: transparent;
@@ -2599,13 +2527,6 @@ onBeforeUnmount(() => {
   }
   .desk-date {
     font-size: 10px;
-  }
-  .guide-steps {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-  .guide-title h2 {
-    font-size: 16px;
   }
   .care-drawer > summary {
     gap: 10px;
