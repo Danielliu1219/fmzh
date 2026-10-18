@@ -126,7 +126,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
     {"day": 1, "date": "2026-09-08", "title": "当天复习主题", "estimated_minutes": 180, "priority": 1, "detail": "具体做什么"}
   ],
   "quiz": [
-    {"question": "题目", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": "B", "analysis": "解析", "knowledge_point": "对应知识点"}
+    {"kind": "single", "question": "题目", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": "B", "analysis": "解析", "knowledge_point": "对应知识点", "accepted_answers": []}
   ]
 }
 
@@ -135,7 +135,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
 2. level 只取 must（必考）/common（常考）。
 3. 所有推荐必须基于用户上传的资料内容，并注明 source（出自哪类资料）；资料里没有的依据不要编造，可以在 summary 中说明资料不足。
 4. review_plan 必须严格按用户画像定制：目标为 pass 且基础 weak 时，优先高频基础内容、适当压缩任务量；目标为 high 时加入综合题、难题和易错点。计划天数不超过 available_days，每天任务量不超过 daily_hours*60 分钟。
-5. 自测题 3~5 道，尽量贴合资料内容。
+5. 自测题 3~5 道，贴合历年题型与资料内容。kind 只取 single（单选）、multiple（多选）、boolean（判断）、fill（填空）；单/多选 options 按 A/B/C 顺序，answer 为选项字母，多选用 A,C 格式；判断答案为 true 或 false；填空答案必须确定，accepted_answers 可列明确等价写法。不要生成需要主观评分的题。
 6. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
 
 

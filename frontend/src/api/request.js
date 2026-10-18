@@ -21,11 +21,14 @@ request.interceptors.response.use(
     if (Array.isArray(msg)) msg = msg[0]?.msg // FastAPI 参数校验错误
     msg = msg || error.message || '请求失败'
     if (error.response?.status === 401) {
-      localStorage.removeItem('fmzh_token')
-      localStorage.removeItem('fmzh_user')
-      // 延迟加载路由，避免 Layout → store → request → router 的循环依赖破坏热更新。
-      const { default: router } = await import('../router')
-      if (router.currentRoute.value.path !== '/login') router.push('/login')
+      // 迟到的旧请求不能清除刚登录的另一个账号。
+      if (error.config?.headers?.Authorization === `Bearer ${localStorage.getItem('fmzh_token')}`) {
+        const { useUserStore } = await import('../stores/user')
+        useUserStore().logout()
+        // 延迟加载路由，避免 Layout → store → request → router 的循环依赖破坏热更新。
+        const { default: router } = await import('../router')
+        if (router.currentRoute.value.path !== '/login') router.push('/login')
+      }
     }
     // No saved analysis is an expected empty state when first selecting a subject.
     if (!(error.config?.quietNotFound && error.response?.status === 404)) ElMessage.error(msg)

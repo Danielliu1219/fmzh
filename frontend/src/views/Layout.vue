@@ -58,7 +58,9 @@
 <script setup>
 import { computed, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { authApi } from '../api'
+import { USE_MOCK } from '../mock/dashboard'
 import { useUserStore } from '../stores/user'
 import { useNotificationStore } from '../stores/notifications'
 
@@ -85,7 +87,13 @@ const displayName = computed(() => userStore.displayName)
 const isActive = (path) =>
   path === '/' ? route.path === '/' : route.path.startsWith(path)
 
-const onLogout = () => {
+const onLogout = async () => {
+  try {
+    await ElMessageBox.confirm('确认退出？此账号的已有登录会话将失效，当前浏览器的未提交自测草稿将清除。', '退出登录', { confirmButtonText: '退出', cancelButtonText: '继续学习' })
+  } catch { return }
+  if (!USE_MOCK) {
+    try { await authApi.logout() } catch { return }
+  }
   userStore.logout()
   ElMessage.success('已退出登录，考试顺利！')
   router.push('/login')

@@ -195,7 +195,9 @@ const onChangePassword = async () => {
       old_password: pwdForm.old_password,
       new_password: pwdForm.new_password,
     })
-    ElMessage.success('密码修改成功，下次登录请使用新密码')
+    userStore.logout()
+    ElMessage.success('密码修改成功，旧会话已退出，请使用新密码登录')
+    router.replace('/login')
     pwdVisible.value = false
     pwdForm.old_password = pwdForm.new_password = pwdForm.confirm = ''
   } finally {

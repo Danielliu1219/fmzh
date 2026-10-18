@@ -4,6 +4,7 @@ import request from './request'
 export const authApi = {
   register: (data) => request.post('/auth/register', data),
   login: (data) => request.post('/auth/login', data),
+  logout: () => request.post('/auth/logout'),
   me: () => request.get('/auth/me'),
   updateMe: (data) => request.put('/auth/me', data),
   // 1.5 修改密码（登录态）
@@ -51,6 +52,13 @@ export const aiApi = {
   profile: (data) => request.post('/ai/profile', data),
   analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),
   latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
+}
+
+export const quizApi = {
+  start: (analysisId) => request.post('/quizzes', { analysis_id: analysisId }),
+  history: (analysisId) => request.get('/quizzes', { params: { analysis_id: analysisId } }),
+  detail: (id) => request.get(`/quizzes/${id}`),
+  submit: (id, answers) => request.post(`/quizzes/${id}/submit`, { answers }),
 }
 
 export const taskApi = {

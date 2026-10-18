@@ -6,11 +6,14 @@
 """
 import io
 import sys
+import argparse
 from datetime import date, timedelta
 
 import httpx
 
-BASE = "http://127.0.0.1:8000"
+parser = argparse.ArgumentParser()
+parser.add_argument('--base-url', default='http://127.0.0.1:8000')
+BASE = parser.parse_args().base_url.rstrip('/')
 client = httpx.Client(timeout=60)
 
 ok_count = 0

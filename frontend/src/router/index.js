@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '../views/Layout.vue'
+import { readSession } from '../utils/session'
 
 const routes = [
   { path: '/login', name: 'login', component: () => import('../views/Login.vue') },
@@ -34,11 +35,10 @@ const router = createRouter({
 
 // 登录守卫：未登录一律去登录页，已登录访问登录页则回首页；管理端仅管理员可进
 router.beforeEach((to) => {
-  const token = localStorage.getItem('fmzh_token')
+  const { token, user } = readSession()
   if (to.path !== '/login' && !token) return '/login'
   if (to.path === '/login' && token) return '/'
   if (to.meta.admin) {
-    const user = JSON.parse(localStorage.getItem('fmzh_user') || 'null')
     if (!user?.is_admin) return '/'
   }
 })

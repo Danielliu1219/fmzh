@@ -245,6 +245,8 @@ class QuizItem(BaseModel):
     answer: str
     analysis: str = ""
     knowledge_point: str = ""
+    kind: str = ""  # single / multiple / boolean / fill；旧数据自动识别
+    accepted_answers: list[str] = []  # 填空题明确列出的等价写法
 
 
 class AnalysisResult(BaseModel):
@@ -267,6 +269,14 @@ class AnalysisOut(BaseModel):
     result: AnalysisResult
     created_at: datetime
     scheduling: Optional[dict] = None
+
+
+class QuizStart(BaseModel):
+    analysis_id: int
+
+
+class QuizSubmit(BaseModel):
+    answers: list[str | list[str]] = Field(min_length=1, max_length=50)
 
 
 # ==================== 任务 ====================

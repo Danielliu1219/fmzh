@@ -429,30 +429,7 @@
           </el-table>
         </el-card>
 
-        <el-card shadow="never" class="result-card">
-          <template #header><b>自测题</b></template>
-          <el-collapse>
-            <el-collapse-item
-              v-for="(q, i) in result.quiz"
-              :key="i"
-              :title="`${i + 1}. ${q.question}`"
-            >
-              <div class="quiz-options">
-                <div v-for="opt in q.options" :key="opt">{{ opt }}</div>
-              </div>
-              <el-divider />
-              <div class="quiz-answer">
-                <el-tag type="success" size="small"
-                  >答案：{{ q.answer }}</el-tag
-                >
-                <span v-if="q.knowledge_point" class="kp"
-                  >知识点：{{ q.knowledge_point }}</span
-                >
-              </div>
-              <p v-if="q.analysis" class="quiz-analysis">{{ q.analysis }}</p>
-            </el-collapse-item>
-          </el-collapse>
-        </el-card>
+        <QuizPanel v-if="analysisId && result.quiz?.length" :key="analysisId" :analysis-id="analysisId" :questions="result.quiz" :subject="result.course" />
       </template>
 
       <!-- 分析中提示 -->
@@ -501,6 +478,8 @@ import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
 import { mockExams, mockProfile, mockAnalysis } from '../mock/pages'
+import QuizPanel from '../components/QuizPanel.vue'
+import { mockAnalysisSessions } from '../mock/quizzes'
 
 const FIELD_LABELS = {
   target: '备考目标',
@@ -537,6 +516,7 @@ const step = ref(0)
 const rawText = ref('')
 const profile = ref(null)
 const result = ref(null)
+const analysisId = ref(null)
 const profileLoading = ref(false)
 const analyzing = ref(false)
 const analyzeError = ref('')
@@ -730,6 +710,8 @@ const onAnalyze = async () => {
       // mock 模式下返回本地演示分析结果（模拟分析耗时）
       await new Promise((r) => setTimeout(r, 1500))
       result.value = previewAnalysis()
+      analysisId.value = `mock-${examId.value}-${Date.now()}`
+      mockAnalysisSessions.set(examId.value, { id: analysisId.value, result: JSON.parse(JSON.stringify(result.value)) })
       const retained = mockStudySession.tasks.filter(
         (t) => t.exam_id !== examId.value || t.is_done || t.source !== 'ai',
       )
@@ -778,6 +760,7 @@ const onAnalyze = async () => {
     } else {
       const resp = await aiApi.analyze(examId.value)
       result.value = resp.result
+      analysisId.value = resp.id
       if (resp.scheduling && !resp.scheduling.applied)
         schedulingNote.value =
           '分析已完成，但新任务无法在全科预算内排完，因此没有写入或覆盖现有任务。请调整预算、复习范围或目标后重新生成。'
@@ -814,16 +797,22 @@ const onExamChange = async () => {
   rawText.value = ''
   profile.value = null
   result.value = null
+  analysisId.value = null
   const selected = exams.value.find((e) => e.id === examId.value)
   brief.available_days = Math.max(
     1,
     Math.min(60, selected ? daysUntil(selected.exam_date, getToday()) : 5),
   )
-  if (USE_MOCK) return // 预览模式下每次都从第一步开始演示
+  if (USE_MOCK) {
+    const saved = mockAnalysisSessions.get(examId.value)
+    if (saved) { result.value = structuredClone(saved.result); analysisId.value = saved.id; step.value = 2 }
+    return
+  }
   // 已有分析结果的科目直接展示
   try {
     const resp = await aiApi.latestAnalysis(examId.value)
     result.value = resp.result
+    analysisId.value = resp.id
     step.value = 2
   } catch {
     /* 没有历史分析，从第一步开始 */
@@ -1176,25 +1165,6 @@ onMounted(async () => {
 .focus-basis {
   margin-top: 4px;
   color: var(--text-low);
-  font-size: 13px;
-}
-.quiz-options {
-  color: var(--text-mid);
-  font-size: 14px;
-  line-height: 2;
-}
-.quiz-answer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.kp {
-  color: var(--text-low);
-  font-size: 13px;
-}
-.quiz-analysis {
-  margin-top: 8px;
-  color: var(--text-mid);
   font-size: 13px;
 }
 </style>

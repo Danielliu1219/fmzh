@@ -1,4 +1,4 @@
-"""数据库表模型（共 15 张表）
+"""数据库表模型（共 16 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -11,6 +11,7 @@ users ──< exams ──< materials ──< collections
 另含 mood_records（情绪记录，模块 7.6）与 courses（课程/科目基础数据，模块 8.1）。
 """
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -36,6 +38,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(32), unique=True, index=True, nullable=False)
     hashed_password = Column(String(128), nullable=False)
+    auth_key = Column(String(64), nullable=False, default=lambda: uuid4().hex)
     nickname = Column(String(64), default="")
     student_no = Column(String(32), default="")
     major = Column(String(64), default="")
@@ -172,6 +175,7 @@ class Collection(Base):
     """收藏与错题本（用例 3.5）：收藏资料、收藏题目、自测答错的题目共用一个本子"""
 
     __tablename__ = "collections"
+    __table_args__ = (Index("uq_collections_user_question", "user_id", "question_key", unique=True),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
@@ -179,8 +183,26 @@ class Collection(Base):
     material_id = Column(Integer, ForeignKey("materials.id"), nullable=True)  # 收藏资料时指向资料
     title = Column(String(256), default="")  # 展示用：资料标题或题干
     content = Column(Text, default="")  # 题目详情 JSON（选项/答案/解析/知识点）
+    question_key = Column(String(64), nullable=True)
     source = Column(String(16), default="manual")  # manual=学生手动收藏 / quiz=自测答错自动入本
     created_at = Column(DateTime, default=datetime.now)
+
+
+class QuizAttempt(Base):
+    """一次自测的服务端题目快照、作答与判分；提交后不可改写。"""
+
+    __tablename__ = "quiz_attempts"
+    id = Column(String(32), primary_key=True, default=lambda: uuid4().hex)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
+    analysis_id = Column(Integer, ForeignKey("analyses.id"), index=True, nullable=False)
+    subject = Column(String(64), nullable=False)
+    questions_json = Column(Text, nullable=False)
+    status = Column(String(16), nullable=False, default="active")
+    answers_json = Column(Text, nullable=True)
+    result_json = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    submitted_at = Column(DateTime, nullable=True)
 
 
 class FocusSession(Base):

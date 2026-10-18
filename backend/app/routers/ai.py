@@ -27,6 +27,7 @@ from ..services import prompts
 from ..services.llm_client import LLMError, chat_json
 from ..services.plan_service import create_tasks_from_plan
 from ..services.study_planner import daily_budget
+from ..services.quizzes import public_analysis, prepare_questions
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -242,8 +243,9 @@ def analyze(
                     max_tokens=4000,
                 )
             result = AnalysisResult.model_validate(data)  # 校验大模型输出格式
+            prepare_questions([q.model_dump() for q in result.quiz])
             break
-        except (LLMError, ValidationError) as e:
+        except (LLMError, ValidationError, ValueError) as e:
             last_err = e
     if result is None:
         raise HTTPException(
@@ -268,7 +270,7 @@ def analyze(
         id=analysis.id,
         exam_id=analysis.exam_id,
         status=analysis.status,
-        result=result,
+        result=public_analysis(result),
         created_at=analysis.created_at,
         scheduling=scheduling,
     )
@@ -297,6 +299,6 @@ def latest_analysis(
         id=analysis.id,
         exam_id=analysis.exam_id,
         status=analysis.status,
-        result=result,
+        result=public_analysis(result),
         created_at=analysis.created_at,
     )
