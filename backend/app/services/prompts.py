@@ -9,6 +9,7 @@ LLM_MOCK=true 时使用本文件的启发式提取器/示例数据，无需 API 
 import json
 import re
 from datetime import date, timedelta
+from .score_targets import band_text
 
 # ==================== 第一次调用：画像提取 ====================
 
@@ -121,7 +122,10 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
     {"name": "知识点名", "weight": 0.9, "importance": "high", "recommend_reason": "推荐理由", "source": "历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他", "suggest_hours": 6}
   ],
   "exam_focus": [
-    {"content": "必考/常考内容描述", "level": "must", "basis": "判断依据", "source": "历年题"}
+    {"content": "必考/常考内容描述", "level": "must", "basis": "判断依据", "source": "历年题", "frequency": 4}
+  ],
+  "question_types": [
+    {"type": "计算题", "count": 8, "frequency": 0.4, "basis": "近 4 年每年约 2 道", "source": "历年题"}
   ],
   "review_plan": [
     {"day": 1, "date": "2026-09-08", "title": "当天复习主题", "estimated_minutes": 180, "priority": 1, "detail": "具体做什么"}
@@ -134,17 +138,19 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
 约束：
 1. weight 取值范围 0~1；importance 只取 high/medium/low。
 2. level 只取 must（必考）/common（常考）。
-3. 所有推荐必须基于用户上传的资料内容，并注明 source（出自哪类资料）；资料里没有的依据不要编造，可以在 summary 中说明资料不足。
-4. review_plan 必须严格按用户画像定制：目标为 pass 且基础 weak 时，优先高频基础内容、适当压缩任务量；目标为 high 时加入综合题、难题和易错点。计划天数不超过 available_days，每天任务量不超过 daily_hours*60 分钟。
+3. 所有推荐必须基于用户上传的资料内容，并注明 source（出自哪类资料）；资料里没有的依据不要编造，可以在 summary 中说明资料不足。资料头部的资料权重表示参考可信度，优先参考高权重内容；明确标注资料标题与来源，不能捏造出处。
+4. review_plan 必须严格按用户画像定制：优先遵循用户明确选择的分数区间与绩点目标，按区间调整知识点覆盖、练习深度和难题比例；及格目标且基础 weak 时，优先高频基础内容、适当压缩任务量，高区间加入综合题、难题和易错点。计划天数不超过 available_days，每天任务量不超过 daily_hours*60 分钟。
 5. 自测题 3~5 道，贴合历年题型与资料内容。kind 只取 single（单选）、multiple（多选）、boolean（判断）、fill（填空）；单/多选 options 按 A/B/C 顺序，answer 为选项字母，多选用 A,C 格式；判断答案为 true 或 false；填空答案必须确定，accepted_answers 可列明确等价写法。不要生成需要主观评分的题。
-6. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
+6. question_types 必须基于历年题/练习题等资料统计题型分布：type 取选择题/填空题/计算题/证明题/应用题/简答题/综合题；count 为可识别的题数或出现次数，frequency 为占比 0~1；没有可核实题型数据时返回空列表并说明资料不足，不能编造题数。exam_focus.frequency 只填写可核实的出现次数/年份数。
+7. recommend_reason 和 exam_focus.basis 必须写明依据来源（例如「历年题近 3 年每年出现」「老师标注重点」「画像中的薄弱章节」），不能只写“重要/常考”这类空话；每个结论都要让学生看得出依据是什么。
+8. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
 
 
 def build_analyze_user_prompt(profile_text: str, materials_text: str) -> str:
     return (
         "【用户画像】\n"
         f"{profile_text}\n\n"
-        "【复习资料】（格式：资料标题 [来源类型] 内容…）\n"
+        "【复习资料】（格式：资料标题 [来源类型｜资料权重] 内容…）\n"
         f"{materials_text}"
     )
 
@@ -159,17 +165,44 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
         ("综合应用题", 0.6, "medium", "历年题最后一道大题常考", "历年题"),
         ("拓展与易错点", 0.4, "low", "课堂笔记中标注的易错内容", "课堂笔记"),
     ]
-    plan_titles = [
-        "过一遍核心概念与公式",
-        "刷高频基础题",
-        "专项突破薄弱章节",
-        "做综合题与易错点",
-        "整体回顾 + 自测查漏",
-    ]
+    # 三档策略在 Mock 里也给出不同的计划主题（用例 4.11）
+    plan_by_target = {
+        "pass": [
+            "过一遍必考基础概念",
+            "刷高频基础题",
+            "巩固必得分题型",
+            "错题回顾",
+            "整体回顾 + 基础自测",
+        ],
+        "medium": [
+            "过一遍核心概念与公式",
+            "刷高频基础题",
+            "专项突破薄弱章节",
+            "做综合题与易错点",
+            "整体回顾 + 自测查漏",
+        ],
+        "high": [
+            "梳理高频考点与知识框架",
+            "重点章节专项突破",
+            "综合题训练",
+            "难题与易错点突破",
+            "限时模考 + 错题复盘",
+        ],
+    }
+    plan_titles = plan_by_target.get(getattr(profile, "target", None), plan_by_target["medium"])
+    strategy = getattr(profile, "target", "pass")
+    goal = band_text(getattr(profile, "target_band", None))
     focus_templates = [
-        ("核心概念的定义与辨析", "must", "近三年历年题每年必考", "历年题"),
-        ("高频题型的基本解法", "must", "老师划的重点内容", "老师重点"),
-        ("平时作业中出现过的同类题", "common", "平时作业与练习册高频出现", "平时作业"),
+        ("核心概念的定义与辨析", "must", "近三年历年题每年必考", "历年题", 4),
+        ("高频题型的基本解法", "must", "老师划的重点内容", "老师重点", 3),
+        ("平时作业中出现过的同类题", "common", "平时作业与练习册高频出现", "平时作业", 2),
+    ]
+    question_types = [
+        {"type": "选择题", "count": 10, "frequency": 0.25, "basis": "历年题选择题约占四分之一", "source": "历年题"},
+        {"type": "填空题", "count": 6, "frequency": 0.15, "basis": "历年题填空题稳定出现", "source": "历年题"},
+        {"type": "计算题", "count": 16, "frequency": 0.4, "basis": "历年题计算题占比最高", "source": "历年题"},
+        {"type": "证明题", "count": 4, "frequency": 0.1, "basis": "历年题证明题每年约 1 道", "source": "历年题"},
+        {"type": "应用题", "count": 4, "frequency": 0.1, "basis": "历年题末段常应用题", "source": "历年题"},
     ]
     quiz_templates = [
         {
@@ -208,15 +241,18 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
 
     return {
         "course": subject,
-        "summary": f"（Mock 数据）根据你的画像与资料，{subject}建议优先掌握高频基础内容，"
+        "summary": f"（Mock 数据）{subject}目标：{goal or '按当前学习画像复习'}。"
+        f"{'加强综合应用与限时训练，' if strategy == 'high' else '先巩固核心概念与常见题型，'}"
         f"每天按计划推进并及时自测。生成内容仅供复习参考，请结合教材与课堂要求判断。",
         "knowledge_points": [
             {"name": n, "weight": w, "importance": i, "recommend_reason": r, "source": s, "suggest_hours": 6 - idx}
             for idx, (n, w, i, r, s) in enumerate(kp_templates)
         ],
         "exam_focus": [
-            {"content": c, "level": l, "basis": b, "source": s} for c, l, b, s in focus_templates
+            {"content": c, "level": l, "basis": b, "source": s, "frequency": f}
+            for c, l, b, s, f in focus_templates
         ],
+        "question_types": question_types,
         "review_plan": [
             {
                 "day": i + 1,
@@ -230,6 +266,57 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
         ],
         "quiz": quiz_templates,
     }
+
+
+# ==================== 资料问答（用例 4.5） ====================
+
+QA_SYSTEM_PROMPT = """你是"期末周别慌"系统的资料问答助手。请只依据用户上传的复习资料回答问题。
+
+要求：
+1. 回答简洁、分点，优先引用资料中的原文，并说明出自哪份资料/哪类来源；
+2. 资料没有覆盖的内容，直接说明「资料中未找到相关内容」，不要编造；
+3. 可以结合之前的对话继续追问，但不要脱离资料范围；
+4. 涉及考试结论时提醒学生结合教材与老师要求判断。"""
+
+
+def build_qa_system_prompt(materials_text: str) -> str:
+    return f"{QA_SYSTEM_PROMPT}\n\n【可参考资料】\n{materials_text}"
+
+
+def mock_qa_answer(subject: str, question: str, materials_text: str) -> str:
+    """Mock 资料问答：用问题中的 2~3 字片段匹配资料句子；找不到时明确说明"""
+    stop_words = {
+        "什么", "怎么", "如何", "为什么", "哪些", "一下", "可以", "这个", "那个",
+        "资料", "请问", "帮我", "告诉我", "多少", "是否", "重要", "用来", "应该",
+    }
+    chunks = re.findall(r"[一-龥A-Za-z0-9]{2,}", question or "")
+    grams = set()
+    for chunk in chunks:
+        for size in (2, 3):
+            for index in range(len(chunk) - size + 1):
+                gram = chunk[index : index + size]
+                if gram not in stop_words:
+                    grams.add(gram)
+
+    sentences = [s.strip() for s in re.split(r"[。！？；\n]", materials_text or "") if s.strip()]
+    scored = []
+    for sentence in sentences:
+        score = sum(1 for gram in grams if gram in sentence)
+        if score:
+            scored.append((score, sentence))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    hits = [sentence for _, sentence in scored[:3]]
+
+    if not hits:
+        return (
+            f"（Mock）在{subject}的资料中没有找到与「{question}」直接相关的内容。"
+            "建议补充相关资料，或换个关键词再问。"
+        )
+    body = "\n".join(f"- {hit[:160]}" for hit in hits)
+    return (
+        f"（Mock）根据已上传的资料，与「{question}」相关的内容有：\n{body}\n\n"
+        "以上内容仅供复习参考，请结合教材与老师要求判断。"
+    )
 
 
 # ==================== 备考周报（FMZH-SRS-5.3.0） ====================

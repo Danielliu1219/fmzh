@@ -16,26 +16,31 @@ export const mockMaterials = [
   {
     id: 1, title: '高等数学 2021-2024 历年真题', exam_id: 1, source_type: '历年题',
     file_type: 'pdf', parse_status: 'done', description: '四年期末真题汇总',
+    weight: 0.85, default_weight: 0.85,
     text_preview: '（静态演示文本）2024 年期末：一、极限计算（3 小题）；二、定积分应用；……\n2023 年期末：一、等价无穷小替换；二、导数与单调性；……',
   },
   {
     id: 2, title: '极限与连续 老师标注重点', exam_id: 1, source_type: '老师重点',
     file_type: 'docx', parse_status: 'done', description: '',
+    weight: 1.0, default_weight: 1.0,
     text_preview: '（静态演示文本）老师标注重点：1. 极限的四则运算与等价无穷小；2. 连续性与间断点分类；3. 闭区间连续函数性质。',
   },
   {
     id: 3, title: '高数课堂笔记 第 1-6 章', exam_id: 1, source_type: '课堂笔记',
     file_type: 'pdf', parse_status: 'done', description: '',
+    weight: 0.7, default_weight: 0.7,
     text_preview: '（静态演示文本）第 1 章 函数与极限：…… 第 2 章 导数与微分：……',
   },
   {
     id: 4, title: '英语期末高频词汇表', exam_id: 2, source_type: '老师重点',
     file_type: 'docx', parse_status: 'done', description: 'Unit 1-8 高频词',
+    weight: 1.0, default_weight: 1.0,
     text_preview: '（静态演示文本）Unit 1-8 高频词汇共 240 个：abandon, abstract, accumulate …',
   },
   {
     id: 5, title: '英语阅读理解练习题 10 篇', exam_id: 2, source_type: '练习题',
     file_type: 'pdf', parse_status: 'done', description: '',
+    weight: 0.85, default_weight: 0.85,
     text_preview: '（静态演示文本）Passage 1 … Passage 10（含答案与解析）',
   },
 ]
@@ -64,9 +69,16 @@ export const mockAnalysis = {
     { name: '常微分方程初步', weight: 0.3, importance: 'low', suggest_hours: 1, recommend_reason: '近两年出现频率低，可放最后', source: '课堂笔记' },
   ],
   exam_focus: [
-    { level: 'must', content: '极限的四则运算与等价无穷小替换', basis: '近 4 年每年必出（共 11 题）', source: '历年题' },
-    { level: 'must', content: '定积分的分部积分与换元', basis: '近 4 年每年 2 道大题', source: '历年题' },
-    { level: 'often', content: '导数应用的单调性与最值', basis: '近 4 年出现 3 次', source: '老师重点' },
+    { level: 'must', content: '极限的四则运算与等价无穷小替换', basis: '近 4 年每年必出（共 11 题）', source: '历年题', frequency: 4 },
+    { level: 'must', content: '定积分的分部积分与换元', basis: '近 4 年每年 2 道大题', source: '历年题', frequency: 4 },
+    { level: 'often', content: '导数应用的单调性与最值', basis: '近 4 年出现 3 次', source: '老师重点', frequency: 3 },
+  ],
+  question_types: [
+    { type: '选择题', count: 10, frequency: 0.25, basis: '历年题选择题约占四分之一', source: '历年题' },
+    { type: '填空题', count: 6, frequency: 0.15, basis: '历年题填空题稳定出现', source: '历年题' },
+    { type: '计算题', count: 16, frequency: 0.4, basis: '历年题计算题占比最高', source: '历年题' },
+    { type: '证明题', count: 4, frequency: 0.1, basis: '历年题证明题每年约 1 道', source: '历年题' },
+    { type: '应用题', count: 4, frequency: 0.1, basis: '历年题末段常应用题', source: '历年题' },
   ],
   review_plan: [
     { day: 1, date: '2026-09-08', title: '核心概念与定义', estimated_minutes: 90, priority: 1, detail: '极限定义、连续性判定，过一遍课堂笔记第 1-2 章' },

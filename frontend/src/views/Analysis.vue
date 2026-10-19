@@ -7,9 +7,9 @@
       </div>
       <el-select
         v-model="examId"
-        :disabled="profileLoading || analyzing"
+        :disabled="courseLoading || profileLoading || analyzing || qaLoading || replanApplying"
         aria-label="选择要分析的科目"
-        placeholder="选择要分析的科目"
+        placeholder="选择课程，加载专属复习内容"
         class="subject-picker"
         @change="onExamChange"
       >
@@ -22,45 +22,49 @@
       </el-select>
     </div>
 
-    <el-empty v-if="!examId" description="请先选择科目（在考试管理里录入考试）">
-      <el-button type="primary" @click="$router.push('/exams')"
-        >去录入考试</el-button
-      >
-    </el-empty>
+    <div v-if="!examId" class="course-context">
+      <el-icon><InfoFilled /></el-icon>
+      <p><strong>先说说你的情况，再选择课程。</strong>你可以先填写自然语言描述、目标区间和每日总时间；选择课程后，再补充该课基础与薄弱章节。</p>
+      <router-link v-if="!exams.length && !courseLoading" to="/exams">去录入考试 ↗</router-link>
+    </div>
+    <div v-else class="course-context selected-course">
+      <el-icon><Reading /></el-icon>
+      <p><strong>{{ selectedExam?.subject }}</strong><span>考试日期 {{ selectedExam?.exam_date }} · 当前画像与方案仅对应这门课程</span></p>
+    </div>
 
-    <template v-else>
       <el-steps
         :active="step"
         align-center
         finish-status="success"
         class="steps"
       >
-        <el-step title="说说你的情况" description="目标与可用时间" />
+        <el-step title="描述学习情况" description="支持自然语言输入" />
         <el-step title="确认学习画像" description="核对并补全信息" />
         <el-step title="拿到复习方案" description="重点、计划与自测" />
       </el-steps>
 
       <!-- 第一步：自然语言描述 -->
-      <el-card v-if="step === 0" shadow="never" class="step-card">
+      <el-card v-if="step === 0" v-loading="courseLoading" shadow="never" class="step-card">
         <div class="brief-intro">
           <span class="brief-index">01</span>
           <div>
-            <h3>这一次，你想复习到什么程度？</h3>
-            <p>先选目标和学习节奏，也可以补充薄弱章节与特别要求。</p>
+            <h3>{{ selectedExam ? `说说你的${selectedExam.subject}复习情况` : '这一次，你想怎样准备期末？' }}</h3>
+            <p>用自己的话描述学习情况，再确认目标区间与可用时间。</p>
           </div>
         </div>
-        <el-form label-position="top" class="brief-form">
-          <el-form-item label="我的备考目标" class="brief-wide"
-            ><el-radio-group v-model="brief.target" class="goal-choices"
-              ><el-radio-button value="pass">保及格</el-radio-button
-              ><el-radio-button value="medium">稳中等</el-radio-button
-              ><el-radio-button value="high"
-                >冲高分</el-radio-button
-              ></el-radio-group
-            >
-            <p class="choice-hint">{{ goalHint }}</p></el-form-item
-          >
-          <el-form-item label="当前基础"
+        <section class="natural-input" aria-labelledby="natural-input-title">
+          <div class="natural-input-head"><el-icon><ChatLineSquare /></el-icon><label id="natural-input-title" for="study-notes">用自然语言，说说你的情况</label><span>直接打字就可以</span></div>
+          <p id="natural-input-help">像聊天一样写下学习基础、薄弱内容或特别要求，AI 会提取学习画像。目标区间以滑条选择为准，提取后还可以核对和补全。</p>
+          <el-input id="study-notes" v-model="rawText" type="textarea" :rows="7" maxlength="2000" show-word-limit
+            :disabled="profileLoading" aria-label="用自然语言描述你的复习情况" aria-describedby="natural-input-help"
+            placeholder="例如：我这门课前半学期没跟上，公式记得不牢，做综合题容易卡住。希望先把基础补起来，再练常考题型；晚上复习比较方便，希望计划里多安排一些例题。" />
+          <p class="natural-input-tip">不知道从哪说起？可以写「学到了哪里」「哪些内容不会」「希望怎样复习」。</p>
+        </section>
+        <el-form label-position="top" class="brief-form" :disabled="profileLoading">
+          <el-form-item label="这门课想达到的目标区间" class="brief-wide goal-field">
+            <ScoreGoalSlider v-model="brief.target_band" :disabled="profileLoading" />
+          </el-form-item>
+          <el-form-item v-if="examId" label="这门课的当前基础"
             ><el-select
               v-model="brief.learning_status"
               aria-label="当前学习基础"
@@ -72,7 +76,7 @@
                 label="基础良好，想练综合难题"
                 value="good" /></el-select
           ></el-form-item>
-          <el-form-item label="距离考试还有"
+          <el-form-item v-if="examId" label="距离这门考试还有"
             ><el-input-number
               v-model="brief.available_days"
               :min="1"
@@ -89,7 +93,7 @@
               aria-label="每日可用小时数"
             /><span class="unit">小时</span></el-form-item
           >
-          <el-form-item label="薄弱章节（可选）"
+          <el-form-item v-if="examId" label="这门课的薄弱章节（可选）"
             ><el-input
               v-model="brief.weak_chapters"
               placeholder="例如：极限、积分"
@@ -100,16 +104,8 @@
           各科保留各自的目标与基础，共享这份每日时间预算。生成后会统筹所有考试的未完成
           AI 任务，任务日期以首页与课程管理为准。
         </p>
-        <label for="study-notes" class="notes-label">再补充一点（可选）</label>
-        <el-input
-          id="study-notes"
-          v-model="rawText"
-          type="textarea"
-          :rows="4"
-          maxlength="2000"
-          show-word-limit
-          placeholder="例如：选择题经常失分，希望多安排基础题；晚上更方便学习。"
-        />
+        <div v-if="result" class="existing-analysis"><p>这门课已有复习方案。可以修改上方画像后重新生成，也可以继续查看已有方案。</p><el-button @click="step = 2">查看已有方案</el-button></div>
+        <p v-if="!examId" class="select-before-submit">填写的内容会在当前页面保留；请在右上方选择课程后生成学习画像。</p>
         <div class="actions">
           <router-link to="/materials" class="material-link"
             >还没有资料？先去上传 ↗</router-link
@@ -117,9 +113,10 @@
           <el-button
             type="primary"
             :loading="profileLoading"
+            :disabled="!examId || courseLoading"
             @click="onExtractProfile"
           >
-            确认目标，生成学习画像 →
+            {{ examId ? '生成学习画像 →' : '选择课程后生成学习画像' }}
           </el-button>
         </div>
       </el-card>
@@ -128,7 +125,7 @@
       <el-card v-if="step === 1" shadow="never" class="step-card">
         <el-descriptions :column="2" border title="系统提取的学习画像">
           <el-descriptions-item label="备考目标">
-            {{ targetText(profile.target) || '（未提取到）' }}
+            {{ scoreBandText(profile.target_band) || targetText(profile.target) || '（未提取到）' }}
           </el-descriptions-item>
           <el-descriptions-item label="基础水平">
             {{ statusText(profile.learning_status) || '（未提取到）' }}
@@ -160,11 +157,7 @@
         <div v-if="!profile.is_complete" class="complete-form">
           <el-form label-width="100px">
             <el-form-item v-if="missing.includes('target')" label="备考目标">
-              <el-radio-group v-model="completeForm.target">
-                <el-radio-button value="pass">保及格</el-radio-button>
-                <el-radio-button value="medium">稳中等</el-radio-button>
-                <el-radio-button value="high">冲高分</el-radio-button>
-              </el-radio-group>
+              <ScoreGoalSlider v-model="completeForm.target_band" :disabled="profileLoading" />
             </el-form-item>
             <el-form-item
               v-if="missing.includes('learning_status')"
@@ -227,9 +220,7 @@
         <el-card shadow="never" class="result-card result-overview">
           <div class="result-head">
             <h3>{{ result.course }} · 复习分析</h3>
-            <el-button :loading="analyzing" @click="onAnalyze"
-              >重新生成</el-button
-            >
+            <div class="result-controls"><el-button :disabled="analyzing" @click="onBackToDescribe">修改画像与目标</el-button><el-button :loading="analyzing" @click="onAnalyze">重新生成</el-button></div>
           </div>
           <el-alert type="info" :closable="false" :title="result.summary" />
           <div class="result-metrics">
@@ -239,7 +230,7 @@
             </div>
             <div>
               <strong>{{ result.review_plan?.length || 0 }}</strong
-              ><span>天复习安排</span>
+              ><span>项复习安排</span>
             </div>
             <div>
               <strong>{{ result.quiz?.length || 0 }}</strong
@@ -360,11 +351,108 @@
           </el-table>
         </el-card>
 
+        <!-- 思维导图与记忆卡片（用例 4.4） -->
+        <el-card v-if="study" shadow="never" class="result-card">
+          <template #header>
+            <b>思维导图与记忆卡片</b>
+            <span class="hint">提纲可视化 · 点击卡片翻面背诵</span>
+          </template>
+          <div ref="mindmapRef" class="mindmap-chart"></div>
+          <el-divider />
+          <div v-if="cards.length" class="flash-area">
+            <div
+              class="flash-card"
+              :class="{ flipped: cardFlipped }"
+              @click="cardFlipped = !cardFlipped"
+            >
+              <div class="flash-inner">
+                <div class="flash-face flash-front">
+                  <span class="flash-label">正面 · 背诵要点</span>
+                  <p class="flash-text">{{ currentCard?.front }}</p>
+                  <span class="flash-hint">{{ currentCard?.hint }}</span>
+                </div>
+                <div class="flash-face flash-back">
+                  <span class="flash-label">背面 · 资料依据</span>
+                  <p class="flash-text">{{ currentCard?.back }}</p>
+                </div>
+              </div>
+            </div>
+            <div class="flash-controls">
+              <el-button size="small" @click="prevCard">上一张</el-button>
+              <span class="flash-count">{{ cardIndex + 1 }} / {{ cards.length }}</span>
+              <el-button size="small" @click="nextCard">下一张</el-button>
+              <el-button size="small" @click="shuffleCards">打乱顺序</el-button>
+              <el-button link type="primary" @click="cardFlipped = !cardFlipped">
+                翻面
+              </el-button>
+            </div>
+          </div>
+          <el-empty v-else description="暂无可背诵的卡片" :image-size="60" />
+        </el-card>
+
+        <!-- 资料问答（用例 4.5） -->
         <el-card shadow="never" class="result-card">
-          <template #header><b>常考点 / 必考点</b></template>
+          <template #header>
+            <b>资料问答</b>
+            <span class="hint">就当前科目的复习资料提问，支持多轮追问与历史保存</span>
+          </template>
+          <div ref="qaListRef" class="qa-list">
+            <el-empty
+              v-if="!qaMessages.length"
+              description="试着问：这份资料的重点是什么？"
+              :image-size="60"
+            />
+            <div v-for="m in qaMessages" :key="m.id" class="qa-row" :class="m.role">
+              <div class="qa-bubble">
+                <div class="qa-role">{{ m.role === 'user' ? '我' : 'AI 助手' }}</div>
+                <div class="qa-content">{{ m.content }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="qa-input-row">
+            <div class="qa-input-box">
+              <el-input
+                v-model="qaInput"
+                type="textarea"
+                :rows="2"
+                maxlength="2000"
+                show-word-limit
+                placeholder="针对资料提问，例如：极限这一章有哪些必考内容？"
+                @keydown.enter.exact.prevent="onAsk"
+              />
+            </div>
+            <el-button
+              type="primary"
+              :loading="qaLoading"
+              :disabled="!qaInput.trim()"
+              @click="onAsk"
+            >
+              发送
+            </el-button>
+          </div>
+        </el-card>
+
+        <el-card shadow="never" class="result-card">
+          <template #header>
+            <b>常考题型与高频考点</b>
+            <span class="hint">基于历年题与多来源资料统计</span>
+          </template>
+          <div v-if="result.question_types?.length" class="type-block">
+            <div ref="typeChartRef" class="type-chart"></div>
+            <el-table :data="result.question_types" size="small" class="type-table">
+              <el-table-column prop="type" label="题型" width="100" />
+              <el-table-column prop="count" label="出现次数" width="90" />
+              <el-table-column label="占比" width="90">
+                <template #default="{ row }">{{ Math.round(row.frequency * 100) }}%</template>
+              </el-table-column>
+              <el-table-column prop="basis" label="统计依据" min-width="180" />
+              <el-table-column prop="source" label="来源" width="100" />
+            </el-table>
+          </div>
+          <el-divider v-if="result.question_types?.length" />
           <el-timeline>
             <el-timeline-item
-              v-for="(f, i) in result.exam_focus"
+              v-for="(f, i) in sortedFocus"
               :key="i"
               :type="f.level === 'must' ? 'danger' : 'primary'"
               :hollow="f.level !== 'must'"
@@ -375,6 +463,9 @@
                 class="focus-tag"
               >
                 {{ f.level === 'must' ? '必考' : '常考' }}
+              </el-tag>
+              <el-tag v-if="f.frequency" size="small" type="info" effect="plain" class="focus-tag">
+                出现 {{ f.frequency }} 次
               </el-tag>
               {{ f.content }}
               <div class="focus-basis">
@@ -430,7 +521,71 @@
         </el-card>
 
         <QuizPanel v-if="analysisId && result.quiz?.length" :key="analysisId" :analysis-id="analysisId" :questions="result.quiz" :subject="result.course" />
+
+        <!-- 动态调整计划与权重（用例 4.12） -->
+        <el-card shadow="never" class="result-card">
+          <template #header>
+            <b>动态调整计划与权重</b>
+            <span class="hint">根据打卡、自测错题与剩余天数重新排序</span>
+          </template>
+          <div class="replan-actions">
+            <el-button type="primary" plain :loading="replanLoading" @click="onReplanPreview">
+              预览调整
+            </el-button>
+            <span class="replan-tip">
+              已完成的打卡记录会保留；按反馈追加针对性练习，并在全科预算内重排未完成的 AI 任务。
+            </span>
+          </div>
+        </el-card>
+
       </template>
+
+      <!-- 动态调整预览 -->
+      <el-dialog v-model="replanVisible" title="动态调整预览" width="760px">
+        <el-alert
+          v-if="replanPreview"
+          :title="replanPreview.note"
+          type="info"
+          :closable="false"
+          class="replan-note"
+        />
+        <h4 class="replan-title">知识点权重调整</h4>
+        <el-table :data="replanPreview?.weights || []" size="small" max-height="260">
+          <el-table-column prop="name" label="知识点" min-width="140" />
+          <el-table-column label="权重变化" width="150">
+            <template #default="{ row }">
+              <span
+                :class="{
+                  'weight-up': row.new_weight > row.old_weight,
+                  'weight-down': row.new_weight < row.old_weight,
+                }"
+              >
+                {{ Math.round(row.old_weight * 100) }}% → {{ Math.round(row.new_weight * 100) }}%
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="reason" label="调整依据" min-width="240" />
+        </el-table>
+        <el-divider />
+        <el-alert v-for="(conflict, i) in replanPreview?.scheduling?.conflicts || []" :key="i" type="warning" :closable="false" :title="`${conflict.title || conflict.date || '排程冲突'}：${conflict.reason}，超出 ${conflict.minutes} 分钟`" />
+        <h4 class="replan-title">调整后的全科复习计划</h4>
+        <el-table :data="replanPreview?.scheduling?.assignments || []" size="small" max-height="240">
+          <el-table-column label="科目" min-width="100">
+            <template #default="{ row }">{{ exams.find(e => e.id === row.exam_id)?.subject || '当前科目' }}</template>
+          </el-table-column>
+          <el-table-column prop="date" label="日期" width="110" />
+          <el-table-column prop="title" label="任务" min-width="180" />
+          <el-table-column prop="minutes" label="时长" width="90">
+            <template #default="{ row }">{{ row.minutes }} 分钟</template>
+          </el-table-column>
+        </el-table>
+        <template #footer>
+          <el-button @click="replanVisible = false">取消</el-button>
+          <el-button type="primary" :loading="replanApplying" :disabled="!replanPreview || !!replanPreview.scheduling?.conflicts?.length" @click="onReplanApply">
+            应用调整
+          </el-button>
+        </template>
+      </el-dialog>
 
       <!-- 分析中提示 -->
       <el-card v-if="step === 2 && analyzing" shadow="never" class="step-card">
@@ -465,21 +620,24 @@
           </template>
         </el-result>
       </el-card>
-    </template>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { aiApi, examApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
-import { mockExams, mockProfile, mockAnalysis } from '../mock/pages'
+import { mockProfile, mockAnalysis } from '../mock/pages'
 import QuizPanel from '../components/QuizPanel.vue'
-import { mockAnalysisSessions } from '../mock/quizzes'
+import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail } from '../mock/quizzes'
+import { feedbackReplan } from '../utils/replan'
+import ScoreGoalSlider from '../components/ScoreGoalSlider.vue'
+import { scoreBand, scoreBandText } from '../utils/scoreTargets'
+import * as echarts from 'echarts'
 
 const FIELD_LABELS = {
   target: '备考目标',
@@ -492,26 +650,22 @@ const exams = ref([])
 const route = useRoute()
 const knowledgeView = ref('visual')
 const brief = reactive({
-  target: 'pass',
+  target_band: 'D',
   learning_status: 'weak',
   available_days: 5,
   daily_hours: 3,
   weak_chapters: '',
 })
-const goalHint = computed(
-  () =>
-    ({
-      pass: '优先高频基础题、必考概念和短期提分内容。',
-      medium: '覆盖核心考点，巩固常考题型，兼顾薄弱章节。',
-      high: '在核心考点之外，增加综合题、难题与易失分点。',
-    })[brief.target],
-)
 const sortedKnowledge = computed(() =>
   [...(result.value?.knowledge_points || [])].sort(
     (a, b) => b.weight - a.weight,
   ),
 )
 const examId = ref(null)
+const selectedExam = computed(() => exams.value.find((exam) => exam.id === examId.value))
+const courseLoading = ref(false)
+const courseDrafts = new Map()
+let activeExamId = null
 const step = ref(0)
 const rawText = ref('')
 const profile = ref(null)
@@ -523,11 +677,43 @@ const analyzeError = ref('')
 const schedulingNote = ref('')
 
 const completeForm = reactive({
-  target: 'pass',
+  target_band: 'D',
   learning_status: 'weak',
   available_days: 5,
   daily_hours: 3,
 })
+
+// 思维导图与记忆卡片（用例 4.4）
+const study = ref(null)
+const cardIndex = ref(0)
+const cardFlipped = ref(false)
+const mindmapRef = ref(null)
+let mindmapChart = null
+const cards = computed(() => study.value?.cards || [])
+const currentCard = computed(() => cards.value[cardIndex.value] || null)
+
+// 常考题型与高频考点（用例 4.7）
+const typeChartRef = ref(null)
+let typeChart = null
+const sortedFocus = computed(() =>
+  [...(result.value?.exam_focus || [])].sort(
+    (a, b) => (b.frequency || 0) - (a.frequency || 0),
+  ),
+)
+
+// 资料问答（用例 4.5）
+const qaConversationId = ref(null)
+const qaMessages = ref([])
+const qaInput = ref('')
+const qaLoading = ref(false)
+const qaListRef = ref(null)
+
+// 动态调整计划与权重（用例 4.12）
+const replanVisible = ref(false)
+const replanLoading = ref(false)
+const replanApplying = ref(false)
+const replanPreview = ref(null)
+
 
 const missing = computed(() => profile.value?.missing_fields || [])
 const missingFieldLabels = computed(() =>
@@ -536,7 +722,7 @@ const missingFieldLabels = computed(() =>
 const completeFormValid = computed(() =>
   missing.value.every((f) => {
     if (f === 'target')
-      return ['pass', 'medium', 'high'].includes(completeForm.target)
+      return !!scoreBand(completeForm.target_band)
     if (f === 'learning_status')
       return ['weak', 'medium', 'good'].includes(completeForm.learning_status)
     if (f === 'available_days') return completeForm.available_days > 0
@@ -555,7 +741,7 @@ const weightColor = (w) =>
 const buildSupplement = () => {
   const parts = []
   if (missing.value.includes('target'))
-    parts.push(`我的目标是${targetText(completeForm.target)}`)
+    parts.push(`我的目标区间是${scoreBandText(completeForm.target_band)}`)
   if (missing.value.includes('learning_status'))
     parts.push(`我基础${statusText(completeForm.learning_status)}`)
   if (missing.value.includes('available_days'))
@@ -566,6 +752,7 @@ const buildSupplement = () => {
 }
 
 const onExtractProfile = async () => {
+  if (!examId.value || courseLoading.value) return
   profileLoading.value = true
   try {
     if (USE_MOCK) {
@@ -575,7 +762,10 @@ const onExtractProfile = async () => {
       await new Promise((r) => setTimeout(r, 600))
       profile.value = {
         ...structuredClone(mockProfile),
-        target: brief.target,
+        exam_id: examId.value,
+        raw_text: rawText.value,
+        target: scoreBand(brief.target_band).strategy,
+        target_band: brief.target_band,
         learning_status: brief.learning_status,
         available_days: brief.available_days,
         daily_hours: brief.daily_hours,
@@ -593,12 +783,14 @@ const onExtractProfile = async () => {
         medium: '我的基础一般',
         good: '我的基础很好',
       }[brief.learning_status]
-      const description = `我的目标是${targetText(brief.target)}，${basis}，还有${brief.available_days}天考试，每天能学${brief.daily_hours}小时。${brief.weak_chapters.trim() ? '薄弱的是' + brief.weak_chapters + '。' : ''}${rawText.value}`
+      const description = `${basis}，还有${brief.available_days}天考试，每天能学${brief.daily_hours}小时。${brief.weak_chapters.trim() ? '薄弱的是' + brief.weak_chapters + '。' : ''}${rawText.value}\n明确选择的目标区间：${scoreBandText(brief.target_band)}，目标以此区间为准。`
       profile.value = await aiApi.profile({
         exam_id: examId.value,
         raw_text: description,
+        target_band: brief.target_band,
       })
     }
+    completeForm.target_band = brief.target_band
     step.value = 1
     if (profile.value.is_complete) ElMessage.success('画像提取完成')
     else ElMessage.warning('画像缺少部分信息，请补全')
@@ -616,6 +808,7 @@ const onCompleteProfile = async () => {
       exam_id: examId.value,
       raw_text: '',
       supplement: buildSupplement(),
+      target_band: missing.value.includes('target') ? completeForm.target_band : profile.value.target_band,
     })
     if (profile.value.is_complete) ElMessage.success('画像已补全')
   } catch {
@@ -637,7 +830,8 @@ const previewAnalysis = () => {
         : ['核心概念', '重点原理', '典型题型', '综合练习', '错题复盘']
   const copy = structuredClone(mockAnalysis)
   copy.course = subject
-  copy.summary = `${subject}的示例复习方案。全科每日共享 ${brief.daily_hours} 小时，实际日期与各科分配统一在首页确认；以下考点权重用于演示。`
+  const band = scoreBand(profile.value?.target_band || brief.target_band)
+  copy.summary = `${subject}的示例复习方案，目标为${scoreBandText(band.id)}。全科每日共享 ${brief.daily_hours} 小时，实际日期与各科分配统一在首页确认；以下考点权重用于演示。`
   copy.knowledge_points = copy.knowledge_points.map((p, i) => ({
     ...p,
     name: names[i],
@@ -653,7 +847,7 @@ const previewAnalysis = () => {
   copy.review_plan = copy.review_plan.map((p, i) => ({
     ...p,
     title: names[i],
-    detail: `复习${names[i]}并整理练习中的易错点`,
+    detail: `按${band.range}目标复习${names[i]}，${band.min >= 85 ? '增加综合应用与限时训练' : band.min >= 70 ? '巩固常见题型并练习综合应用' : '优先基础题与高频考点'}，整理易错点`,
     estimated_minutes: Math.max(
       15,
       Math.round(
@@ -699,7 +893,341 @@ const previewAnalysis = () => {
   return copy
 }
 
+// 静态演示模式：从 mockAnalysis 直接构建导图与卡片
+const buildMockStudy = () => {
+  const course = result.value.course
+  const kpNodes = result.value.knowledge_points.map((kp) => ({
+    name: `${kp.name}（${Math.round(kp.weight * 100)}%）`,
+    value: kp.weight,
+    level: kp.importance,
+    source: kp.source,
+    children: [
+      { name: `依据：${kp.recommend_reason}` },
+      { name: `建议投入：${kp.suggest_hours} 小时` },
+    ],
+  }))
+  const focusNodes = result.value.exam_focus.map((f) => ({
+    name: `${f.level === 'must' ? '必考' : '常考'}：${f.content}`,
+    level: f.level,
+    source: f.source,
+    children: [{ name: `依据：${f.basis}` }],
+  }))
+  return {
+    exam_id: examId.value,
+    course,
+    mindmap: {
+      name: course,
+      children: [
+        { name: '知识点', children: kpNodes },
+        { name: '考点', children: focusNodes },
+      ],
+    },
+    cards: [
+      ...result.value.knowledge_points.map((kp, i) => ({
+        id: i + 1,
+        front: kp.name,
+        back: kp.recommend_reason,
+        hint: `依据来源：${kp.source} · 建议投入 ${kp.suggest_hours} 小时`,
+        knowledge_point: kp.name,
+        source: kp.source,
+      })),
+      ...result.value.exam_focus.map((f, i) => ({
+        id: 100 + i,
+        front: f.content,
+        back: f.basis,
+        hint: `来源：${f.source} · ${f.level === 'must' ? '必考' : '常考'}`,
+        knowledge_point: '',
+        source: f.source,
+      })),
+    ],
+  }
+}
+
+const renderMindmap = async () => {
+  await nextTick()
+  if (!mindmapRef.value || !study.value) return
+  if (!mindmapChart) mindmapChart = echarts.init(mindmapRef.value)
+  mindmapChart.setOption(
+    {
+      tooltip: { trigger: 'item', triggerOn: 'mousemove' },
+      series: [
+        {
+          type: 'tree',
+          orient: 'LR',
+          data: [study.value.mindmap],
+          top: '3%',
+          left: '8%',
+          bottom: '3%',
+          right: '18%',
+          symbol: 'circle',
+          symbolSize: 9,
+          initialTreeDepth: 3,
+          expandAndCollapse: true,
+          label: {
+            position: 'left',
+            verticalAlign: 'middle',
+            align: 'right',
+            fontSize: 12,
+            color: '#0c1614',
+            width: 200,
+            overflow: 'break',
+          },
+          leaves: {
+            label: { position: 'right', align: 'left', width: 220, overflow: 'break' },
+          },
+          lineStyle: { color: '#d9d4c3', width: 1.2, curveness: 0.5 },
+          itemStyle: { color: '#e66348', borderColor: '#e66348' },
+          emphasis: { focus: 'descendant' },
+          animationDuration: 400,
+        },
+      ],
+    },
+    true,
+  )
+  mindmapChart.resize()
+}
+
+const loadStudy = async () => {
+  // 重建图表，避免 v-if 切换后复用已脱离 DOM 的旧实例
+  if (mindmapChart) {
+    mindmapChart.dispose()
+    mindmapChart = null
+  }
+  if (!examId.value) {
+    study.value = null
+    return
+  }
+  if (USE_MOCK) {
+    study.value = buildMockStudy()
+  } else {
+    try {
+      study.value = await aiApi.mindmap(examId.value)
+    } catch {
+      study.value = null // 没有分析结果或接口失败时不展示该卡片
+    }
+  }
+  cardIndex.value = 0
+  cardFlipped.value = false
+  await renderMindmap()
+}
+
+const prevCard = () => {
+  if (!cards.value.length) return
+  cardIndex.value = (cardIndex.value - 1 + cards.value.length) % cards.value.length
+  cardFlipped.value = false
+}
+
+const nextCard = () => {
+  if (!cards.value.length) return
+  cardIndex.value = (cardIndex.value + 1) % cards.value.length
+  cardFlipped.value = false
+}
+
+const shuffleCards = () => {
+  if (!study.value?.cards?.length) return
+  const shuffled = [...study.value.cards]
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  study.value.cards = shuffled
+  cardIndex.value = 0
+  cardFlipped.value = false
+}
+
+const renderTypeChart = async () => {
+  if (typeChart) {
+    typeChart.dispose()
+    typeChart = null
+  }
+  await nextTick()
+  const types = result.value?.question_types || []
+  if (!typeChartRef.value || !types.length) return
+  typeChart = echarts.init(typeChartRef.value)
+  typeChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => `${params[0].name}<br/>占比 ${params[0].value}%`,
+    },
+    grid: { left: 48, right: 20, top: 30, bottom: 36 },
+    xAxis: {
+      type: 'category',
+      data: types.map((item) => item.type),
+      axisLabel: { color: '#454e48' },
+    },
+    yAxis: {
+      type: 'value',
+      max: 100,
+      axisLabel: { formatter: '{value}%', color: '#8b9084' },
+      splitLine: { lineStyle: { color: '#e9e5d7' } },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: types.map((item) => Math.round(item.frequency * 100)),
+        barWidth: '46%',
+        itemStyle: { color: '#e66348', borderRadius: [6, 6, 0, 0] },
+        label: { show: true, position: 'top', formatter: '{c}%', color: '#0c1614' },
+      },
+    ],
+  })
+  typeChart.resize()
+}
+
+const resizeMindmap = () => {
+  mindmapChart?.resize()
+  typeChart?.resize()
+}
+
+// 静态演示模式的本地问答：优先匹配知识点/考点
+const mockQaAnswer = (question) => {
+  const kp = result.value.knowledge_points.find((item) => question.includes(item.name))
+  if (kp) {
+    return (
+      `（Mock）「${kp.name}」权重 ${Math.round(kp.weight * 100)}%，` +
+      `推荐依据：${kp.recommend_reason}（${kp.source}），建议投入 ${kp.suggest_hours} 小时。`
+    )
+  }
+  const focus = result.value.exam_focus.find((item) => question.includes(item.content.slice(0, 4)))
+  if (focus) {
+    return `（Mock）${focus.content}：${focus.basis}（${focus.source}）。`
+  }
+  const top = result.value.knowledge_points.slice(0, 3).map((item) => item.name).join('、')
+  return `（Mock）根据当前资料，建议优先复习：${top}。以上内容仅供复习参考，请结合教材与老师要求判断。`
+}
+
+const scrollQaToBottom = async () => {
+  await nextTick()
+  if (qaListRef.value) qaListRef.value.scrollTop = qaListRef.value.scrollHeight
+}
+
+const loadQa = async () => {
+  qaConversationId.value = null
+  qaMessages.value = []
+  if (!examId.value || USE_MOCK) return
+  try {
+    const conversations = await aiApi.qaConversations(examId.value)
+    if (!conversations.length) return
+    const detail = await aiApi.qaConversation(conversations[0].id)
+    qaConversationId.value = detail.id
+    qaMessages.value = detail.messages || []
+    await scrollQaToBottom()
+  } catch {
+    /* 没有历史会话时保持空状态 */
+  }
+}
+
+const onAsk = async () => {
+  const content = qaInput.value.trim()
+  if (!content || qaLoading.value) return
+  qaLoading.value = true
+  qaInput.value = ''
+  const optimistic = {
+    id: `tmp-${Date.now()}`,
+    role: 'user',
+    content,
+    created_at: new Date().toISOString(),
+  }
+  qaMessages.value = [...qaMessages.value, optimistic]
+  await scrollQaToBottom()
+  try {
+    if (USE_MOCK) {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      qaMessages.value = [
+        ...qaMessages.value,
+        {
+          id: `tmp-a-${Date.now()}`,
+          role: 'assistant',
+          content: mockQaAnswer(content),
+          created_at: new Date().toISOString(),
+        },
+      ]
+    } else {
+      if (!qaConversationId.value) {
+        const conversation = await aiApi.createQaConversation(examId.value)
+        qaConversationId.value = conversation.id
+      }
+      const conversation = await aiApi.askQa(qaConversationId.value, content)
+      qaConversationId.value = conversation.id
+      qaMessages.value = conversation.messages || []
+    }
+  } catch (e) {
+    // 失败时撤回乐观展示的提问
+    qaMessages.value = qaMessages.value.filter((item) => item.id !== optimistic.id)
+    ElMessage.error(e?.response?.data?.detail || '提问失败，请稍后重试')
+  } finally {
+    qaLoading.value = false
+    await scrollQaToBottom()
+  }
+}
+
+const mockFeedback = () => {
+  const latest = mockQuizHistory(analysisId.value).find(a => a.status === 'submitted')
+  return latest ? mockQuizDetail(latest.id).result.items.map(item => ({ ...item, subject: result.value.course })) : []
+}
+const buildMockReplan = () => feedbackReplan(
+  result.value, examId.value, mockStudySession.tasks, mockStudySession.exams,
+  mockStudySession.daily_minutes, getToday(), mockFeedback(),
+)
+const applyMockReplan = () => {
+  const preview = replanPreview.value
+  if (preview.fingerprint !== buildMockReplan().fingerprint) throw new Error('任务、预算或自测结果已变化，请重新预览')
+  if (preview.scheduling.conflicts.length) throw new Error('请先处理排程冲突')
+  mockStudySession.tasks = applyStudyPlan(preview.candidate, preview.scheduling)
+  const weightMap = Object.fromEntries(preview.weights.map(item => [item.name, item.new_weight]))
+  result.value.knowledge_points = result.value.knowledge_points.map(kp => ({ ...kp, weight: weightMap[kp.name] ?? kp.weight })).sort((a, b) => b.weight-a.weight)
+  result.value.review_plan = preview.plan
+  result.value.replan_base_weights = preview.base
+  result.value.replan_feedback_key = preview.feedbackKey
+  const saved = mockAnalysisSessions.get(examId.value)
+  if (saved) saved.result = JSON.parse(JSON.stringify(result.value))
+}
+
+const onReplanPreview = async () => {
+  if (!examId.value) return
+  replanLoading.value = true
+  try {
+    replanPreview.value = USE_MOCK
+      ? buildMockReplan()
+      : await aiApi.replan(examId.value, false)
+    replanVisible.value = true
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || e.message || '预览失败，请稍后重试')
+  } finally {
+    replanLoading.value = false
+  }
+}
+
+const onReplanApply = async () => {
+  if (!replanPreview.value) return
+  replanApplying.value = true
+  try {
+    if (USE_MOCK) {
+      applyMockReplan()
+    } else {
+      replanPreview.value = await aiApi.replan(examId.value, true, replanPreview.value.fingerprint)
+      try {
+        const latest = await aiApi.latestAnalysis(examId.value)
+        result.value = latest.result
+      } catch {
+        /* 保留当前展示 */
+      }
+      await loadStudy()
+      await renderTypeChart()
+    }
+    await loadStudy()
+    await renderTypeChart()
+    replanVisible.value = false
+    ElMessage.success('已按当前进度调整计划与权重')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || e.message || '应用失败，请稍后重试')
+  } finally {
+    replanApplying.value = false
+  }
+}
+
 const onAnalyze = async () => {
+  if (!examId.value) return
   analyzing.value = true
   analyzeError.value = ''
   schedulingNote.value = ''
@@ -711,7 +1239,11 @@ const onAnalyze = async () => {
       await new Promise((r) => setTimeout(r, 1500))
       result.value = previewAnalysis()
       analysisId.value = `mock-${examId.value}-${Date.now()}`
-      mockAnalysisSessions.set(examId.value, { id: analysisId.value, result: JSON.parse(JSON.stringify(result.value)) })
+      mockAnalysisSessions.set(examId.value, {
+        id: analysisId.value, result: JSON.parse(JSON.stringify(result.value)),
+        profile: profile.value ? JSON.parse(JSON.stringify(profile.value)) : null,
+        brief: { ...brief }, rawText: rawText.value,
+      })
       const retained = mockStudySession.tasks.filter(
         (t) => t.exam_id !== examId.value || t.is_done || t.source !== 'ai',
       )
@@ -765,6 +1297,9 @@ const onAnalyze = async () => {
         schedulingNote.value =
           '分析已完成，但新任务无法在全科预算内排完，因此没有写入或覆盖现有任务。请调整预算、复习范围或目标后重新生成。'
     }
+    await loadStudy()
+    await renderTypeChart()
+    await loadQa()
     if (schedulingNote.value) ElMessage.warning(schedulingNote.value)
     else
       ElMessage.success(
@@ -788,38 +1323,82 @@ const onBackToDescribe = () => {
 
 const backToProfile = () => {
   analyzeError.value = ''
-  step.value = 1
+  step.value = profile.value ? 1 : 0
 }
 
 const onExamChange = async () => {
+  // 未选课时的公共草稿带入第一门课；之后按课程保留草稿，避免串课。
+  if (activeExamId) courseDrafts.set(activeExamId, { brief: { ...brief }, rawText: rawText.value, profile: profile.value })
+  const firstSelection = !activeExamId
+  const hasPublicDraft = firstSelection && (rawText.value.trim() || brief.target_band !== 'D')
+  activeExamId = examId.value
+  study.value = null
+  qaConversationId.value = null
+  qaMessages.value = []
+  qaInput.value = ''
+  replanPreview.value = null
+  replanVisible.value = false
   step.value = 0
   analyzeError.value = ''
-  rawText.value = ''
   profile.value = null
   result.value = null
   analysisId.value = null
+  schedulingNote.value = ''
   const selected = exams.value.find((e) => e.id === examId.value)
+  if (!firstSelection) {
+    rawText.value = ''
+    Object.assign(brief, { target_band: 'D', learning_status: 'weak', weak_chapters: '' })
+  }
   brief.available_days = Math.max(
     1,
     Math.min(60, selected ? daysUntil(selected.exam_date, getToday()) : 5),
   )
-  if (USE_MOCK) {
-    const saved = mockAnalysisSessions.get(examId.value)
-    if (saved) { result.value = structuredClone(saved.result); analysisId.value = saved.id; step.value = 2 }
-    return
+  const draft = courseDrafts.get(examId.value)
+  if (draft) {
+    const hours = brief.daily_hours
+    Object.assign(brief, draft.brief, { daily_hours: hours })
+    rawText.value = draft.rawText
+    profile.value = draft.profile
   }
-  // 已有分析结果的科目直接展示
+  courseLoading.value = true
   try {
-    const resp = await aiApi.latestAnalysis(examId.value)
-    result.value = resp.result
-    analysisId.value = resp.id
-    step.value = 2
-  } catch {
-    /* 没有历史分析，从第一步开始 */
-  }
+    if (USE_MOCK) {
+      const saved = mockAnalysisSessions.get(examId.value)
+      if (saved) {
+        result.value = structuredClone(saved.result)
+        analysisId.value = saved.id
+        if (!draft && !hasPublicDraft && saved.brief) {
+          const hours = brief.daily_hours
+          Object.assign(brief, saved.brief, { daily_hours: hours })
+          rawText.value = saved.rawText || ''
+          profile.value = saved.profile
+        }
+      }
+    } else {
+      const [savedProfile, savedAnalysis] = await Promise.allSettled([
+        aiApi.savedProfile(examId.value), aiApi.latestAnalysis(examId.value),
+      ])
+      if (!draft && !hasPublicDraft && savedProfile.status === 'fulfilled') {
+        const saved = savedProfile.value
+        profile.value = saved
+        rawText.value = saved.raw_text
+        Object.assign(brief, {
+          target_band: saved.target_band || ({ pass: 'D', medium: 'B', high: 'A' }[saved.target] || 'D'),
+          learning_status: saved.learning_status || 'weak',
+          weak_chapters: (saved.weak_chapters || []).join('、'),
+        })
+      }
+      if (savedAnalysis.status === 'fulfilled') {
+        result.value = savedAnalysis.value.result
+        analysisId.value = savedAnalysis.value.id
+      }
+    }
+    await loadQa()
+  } finally { courseLoading.value = false }
 }
 
 onMounted(async () => {
+  window.addEventListener('resize', resizeMindmap)
   if (USE_MOCK) {
     exams.value = structuredClone(mockStudySession.exams)
     brief.daily_hours = mockStudySession.daily_minutes / 60
@@ -833,6 +1412,21 @@ onMounted(async () => {
     await onExamChange()
   }
 })
+
+watch([step, analysisId], async () => {
+  if (step.value === 2 && result.value && !analyzing.value) {
+    await loadStudy()
+    await renderTypeChart()
+  }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeMindmap)
+  mindmapChart?.dispose()
+  mindmapChart = null
+  typeChart?.dispose()
+  typeChart = null
+})
 </script>
 
 <style scoped>
@@ -841,6 +1435,8 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 .page-head h2 {
   color: var(--text-hi);
@@ -854,8 +1450,30 @@ onMounted(async () => {
   letter-spacing: 0.06em;
 }
 .subject-picker {
-  width: 260px;
+  width: 300px;
 }
+.course-context { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-card); }
+.course-context > .el-icon { color: var(--coral-deep); margin-top: 4px; flex-shrink: 0; }
+.course-context p { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.9; }
+.course-context strong { color: var(--ink-1); }
+.course-context a { margin-left: auto; color: var(--coral-deep); font-size: 12px; white-space: nowrap; }
+.selected-course p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.selected-course strong { font-size: 15px; }
+.natural-input { padding: 24px; margin-bottom: 32px; border: 1px solid var(--coral); border-left: 4px solid var(--coral); border-radius: var(--radius-md); background: var(--coral-soft); }
+.natural-input-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.natural-input-head .el-icon { font-size: 22px; color: var(--coral-deep); }
+.natural-input-head label { font-size: 19px; font-weight: 700; color: var(--ink-1); }
+.natural-input-head > span { margin-left: auto; color: var(--coral-deep); font-size: 11px; }
+.natural-input > p { font-size: 12px; color: var(--ink-2); line-height: 1.9; margin: 12px 0 16px; }
+.natural-input :deep(.el-textarea__inner) { min-height: 190px; padding: 16px 18px 30px; font-size: 14px; line-height: 1.9; background: var(--bg-card); resize: vertical; }
+.natural-input :deep(.el-input__count) { background: var(--bg-card); padding: 3px; }
+.natural-input .natural-input-tip { margin: 12px 0 0; font-size: 11px; color: var(--ink-2); }
+.goal-field { padding-bottom: 26px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.existing-analysis { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; margin-top: 20px; background: var(--bg-soft); border-radius: var(--radius-sm); }
+.existing-analysis p { flex: 1; min-width: 180px; font-size: 12px; line-height: 1.8; margin: 0; color: var(--ink-2); }
+.select-before-submit { color: var(--coral-deep); font-size: 12px; line-height: 1.8; margin: 18px 0 0; }
+.result-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.result-controls .el-button + .el-button { margin-left: 0; }
 .brief-intro {
   display: flex;
   align-items: flex-start;
@@ -884,27 +1502,11 @@ onMounted(async () => {
 .brief-wide {
   grid-column: 1 / -1;
 }
-.goal-choices {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-.goal-choices :deep(.el-radio-button__inner) {
-  width: 100%;
-  padding-block: 14px;
-  font-weight: 700;
-}
 .choice-hint {
   margin: 12px 0 0;
   font-size: 12px;
   color: var(--ink-3);
   line-height: 1.8;
-}
-.notes-label {
-  display: block;
-  font-size: 13px;
-  margin: 5px 0 12px;
-  color: var(--ink-2);
 }
 .material-link {
   align-self: center;
@@ -1043,6 +1645,17 @@ onMounted(async () => {
   margin-left: 3px;
 }
 @media (max-width: 680px) {
+  .course-context { padding: 14px; flex-wrap: wrap; }
+  .course-context p { flex: 1; min-width: 0; }
+  .course-context a { width: 100%; margin-left: 26px; }
+  .selected-course p { display: block; }
+  .selected-course p > span { display: block; margin-top: 4px; }
+  .natural-input { padding: 18px 14px; margin-bottom: 26px; }
+  .natural-input-head { gap: 8px; }
+  .natural-input-head label { font-size: 16px; }
+  .natural-input-head > span { margin-left: 30px; width: 100%; }
+  .natural-input :deep(.el-textarea__inner) { min-height: 210px; font-size: 14px; padding: 13px 13px 30px; }
+  .result-controls { width: 100%; }
   .subject-picker {
     width: 100%;
   }
@@ -1123,7 +1736,7 @@ onMounted(async () => {
   margin: 24px 0;
 }
 .step-card {
-  max-width: 860px;
+  max-width: 960px;
   margin: 0 auto;
 }
 .actions {
@@ -1166,5 +1779,178 @@ onMounted(async () => {
   margin-top: 4px;
   color: var(--text-low);
   font-size: 13px;
+}
+.quiz-options {
+  color: var(--text-mid);
+  font-size: 14px;
+  line-height: 2;
+}
+.quiz-answer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.kp {
+  color: var(--text-low);
+  font-size: 13px;
+}
+.quiz-analysis {
+  margin-top: 8px;
+  color: var(--text-mid);
+  font-size: 13px;
+}
+.mindmap-chart {
+  width: 100%;
+  height: 460px;
+}
+.type-block {
+  margin-bottom: 8px;
+}
+.type-chart {
+  width: 100%;
+  height: 260px;
+}
+.type-table {
+  margin-top: 4px;
+}
+.flash-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 0 4px;
+}
+.flash-card {
+  width: min(580px, 100%);
+  height: 230px;
+  perspective: 1200px;
+  cursor: pointer;
+}
+.flash-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.5s;
+  transform-style: preserve-3d;
+}
+.flash-card.flipped .flash-inner {
+  transform: rotateY(180deg);
+}
+.flash-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  backface-visibility: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.flash-back {
+  transform: rotateY(180deg);
+  background: var(--coral-soft);
+}
+.flash-label {
+  font-size: 12px;
+  color: var(--text-low);
+}
+.flash-text {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text-hi);
+  white-space: pre-wrap;
+}
+.flash-hint {
+  font-size: 12px;
+  color: var(--text-low);
+}
+.flash-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.flash-count {
+  font-size: 13px;
+  color: var(--text-mid);
+  min-width: 64px;
+  text-align: center;
+}
+.qa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px 2px 8px;
+}
+.qa-row {
+  display: flex;
+  justify-content: flex-start;
+}
+.qa-row.user {
+  justify-content: flex-end;
+}
+.qa-bubble {
+  max-width: 78%;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.qa-row.user .qa-bubble {
+  background: var(--coral-soft);
+  border-color: var(--coral);
+}
+.qa-role {
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--text-low);
+}
+.qa-content {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-hi);
+  white-space: pre-wrap;
+}
+.qa-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+.qa-input-box {
+  flex: 1;
+}
+.replan-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.replan-tip {
+  font-size: 12px;
+  color: var(--text-low);
+}
+.replan-note {
+  margin-bottom: 14px;
+}
+.replan-title {
+  margin: 4px 0 10px;
+  font-size: 14px;
+  color: var(--text-hi);
+}
+.weight-up {
+  color: var(--red);
+  font-weight: 600;
+}
+.weight-down {
+  color: var(--green);
+  font-weight: 600;
 }
 </style>

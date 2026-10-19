@@ -47,3 +47,35 @@ def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000) -> d
         return json.loads(content)
     except (httpx.HTTPError, KeyError, IndexError, TypeError, json.JSONDecodeError) as e:
         raise LLMError(f"大模型调用失败：{e}") from e
+
+
+def chat_text(system_prompt: str, messages: list[dict], max_tokens: int = 1200) -> str:
+    """多轮文本对话（资料问答用例 4.5），返回助手回复文本
+
+    messages 为历史消息列表，元素形如 {"role": "user"|"assistant", "content": "..."}。
+    """
+    if not settings.DEEPSEEK_API_KEY:
+        raise LLMError("未配置 DEEPSEEK_API_KEY，请在 backend/.env 中填写，或保持 LLM_MOCK=true")
+
+    headers = {
+        "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": settings.DEEPSEEK_MODEL,
+        "messages": [{"role": "system", "content": system_prompt}, *messages],
+        "temperature": 0.3,
+        "max_tokens": max_tokens,
+    }
+    try:
+        resp = httpx.post(
+            f"{settings.DEEPSEEK_BASE_URL}/chat/completions",
+            json=body,
+            headers=headers,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        return (content or "").strip()
+    except (httpx.HTTPError, KeyError, IndexError, TypeError) as e:
+        raise LLMError(f"大模型调用失败：{e}") from e

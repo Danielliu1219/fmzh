@@ -26,6 +26,9 @@ CONTENT_SIGNATURES: dict[str, tuple[bytes, ...]] = {
 # 纯文本类没有固定魔数，改用「开头不含 NUL 等二进制字节」来间接判断
 TEXT_LIKE = {"txt", "md", "csv"}
 
+# UTF-16 文本按 BOM 识别：正常编码的 UTF-16 也会出现 NUL 字节，需先放行再做 NUL 扫描
+UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
+
 
 class UploadRejected(Exception):
     """上传校验未通过；异常消息可直接回给前端"""
@@ -59,8 +62,13 @@ def check_content_head(content: bytes, ext: str) -> None:
         if not any(head.startswith(sig) for sig in signatures):
             raise UploadRejected(f"文件内容与扩展名 .{ext} 不符（可能被改过名），已拒绝上传")
         return
-    if ext in TEXT_LIKE and b"\x00" in content[:4096]:
-        raise UploadRejected("该文件含二进制内容，不像纯文本，已拒绝上传")
+    if ext in TEXT_LIKE:
+        head = content[:4096]
+        # 带 BOM 的 UTF-16 文本不是伪装文件：ASCII 字符的高字节为 0，属正常编码
+        if head.startswith(UTF16_BOMS):
+            return
+        if b"\x00" in head:
+            raise UploadRejected("该文件含二进制内容，不像纯文本，已拒绝上传")
 
 
 def validate_upload(

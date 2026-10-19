@@ -34,6 +34,11 @@ export const materialApi = {
   list: (params) => request.get('/materials', { params }),
   upload: (formData) =>
     request.post('/materials', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  // 系统辅助识别来源建议（用例 3.2）：上传前按文件名 + 正文给建议
+  suggestSource: (formData) =>
+    request.post('/materials/source-suggestion', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
   detail: (id) => request.get(`/materials/${id}`),
   update: (id, data) => request.put(`/materials/${id}`, data),
   merge: (data) => request.post('/materials/merge', data),
@@ -50,7 +55,20 @@ export const collectionApi = {
 
 export const aiApi = {
   profile: (data) => request.post('/ai/profile', data),
+  savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),
   analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),
+  // 思维导图与记忆卡片（用例 4.4）
+  mindmap: (examId) => request.get(`/ai/analyses/${examId}/mindmap`),
+  // 动态调整计划与权重（用例 4.12）
+  replan: (examId, apply = false, fingerprint = null) =>
+    request.post(`/ai/analyses/${examId}/replan`, { apply, fingerprint }),
+  // 资料问答（用例 4.5）
+  qaConversations: (examId) =>
+    request.get('/ai/qa/conversations', { params: { exam_id: examId } }),
+  createQaConversation: (examId) =>
+    request.post('/ai/qa/conversations', { exam_id: examId }),
+  qaConversation: (id) => request.get(`/ai/qa/conversations/${id}`),
+  askQa: (id, content) => request.post(`/ai/qa/conversations/${id}/messages`, { content }),
   latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
 }
 
