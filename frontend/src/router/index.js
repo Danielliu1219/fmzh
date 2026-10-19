@@ -14,6 +14,7 @@ const routes = [
       { path: 'analysis', name: 'analysis', component: () => import('../views/Analysis.vue'), meta: { title: 'AI 复习分析' } },
       { path: 'admin', name: 'admin', component: () => import('../views/Admin.vue'), meta: { title: '管理端', admin: true } },
       { path: 'stats', name: 'stats', component: () => import('../views/Stats.vue'), meta: { title: '学习统计' } },
+      { path: 'report', name: 'report', component: () => import('../views/WeeklyReport.vue'), meta: { title: '备考周报' } },
       { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue'), meta: { title: '个人资料' } },
       { path: 'notifications', name: 'notifications', component: () => import('../views/Notifications.vue'), meta: { title: '通知中心' } },
     ],

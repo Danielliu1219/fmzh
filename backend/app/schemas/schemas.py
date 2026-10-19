@@ -649,3 +649,53 @@ class FocusGoalUpdate(BaseModel):
 class FocusGoalOut(BaseModel):
     goal_date: date
     target_minutes: int
+
+
+# ==================== 备考周报（FMZH-SRS-5.3.0） ====================
+
+
+class WeeklyReportRequest(BaseModel):
+    """按需生成周报：不传 week_start 时统计最近 7 天（含今天）"""
+
+    week_start: Optional[date] = None  # 起始日；统计 [week_start, week_start+6] 且不超过今天
+
+
+class WeeklySubjectOut(BaseModel):
+    exam_id: Optional[int] = None  # None 表示「未指定科目」的自由专注
+    subject: str
+    minutes: int
+    total_tasks: int
+    done_tasks: int
+    rate: float
+    exam_date: Optional[date] = None
+    days_left: Optional[int] = None
+    mastery: Optional[int] = Field(default=None, ge=0, le=100)  # 大模型评测的掌握度 0~100
+    level: str = ""  # 优秀 / 良好 / 一般 / 薄弱
+    comment: str = ""
+    suggestions: list[str] = []
+
+
+class WeeklyDayOut(BaseModel):
+    date: str
+    minutes: int
+    total: int
+    done: int
+    rate: float
+
+
+class WeeklyReportOut(BaseModel):
+    week_start: str
+    week_end: str
+    generated_at: datetime
+    total_minutes: int
+    total_tasks: int
+    done_tasks: int
+    rate: float
+    active_days: int  # 窗口内有专注记录的天数
+    overall_mastery: Optional[int] = Field(default=None, ge=0, le=100)
+    summary: str = ""
+    highlights: list[str] = []
+    next_week_advice: list[str] = []
+    subjects: list[WeeklySubjectOut] = []
+    days: list[WeeklyDayOut] = []
+    note: str = ""

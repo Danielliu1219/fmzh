@@ -77,6 +77,8 @@ export const dashboardApi = {
   overview: () => request.get('/dashboard'),
   stats: (examId) => request.get(`/stats/${examId}`),
   statsOverview: (days) => request.get('/stats/overview', { params: { days } }),
+  // 5.3 备考周报（按需生成；week_start 为空时统计最近 7 天）
+  weeklyReport: (weekStart) => request.post('/reports/weekly', { week_start: weekStart }),
 }
 
 export const focusApi = {

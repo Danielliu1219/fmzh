@@ -78,6 +78,7 @@ const navItems = computed(() => {
     { path: '/materials', label: '复习资料' },
     { path: '/analysis', label: 'AI 复习分析' },
     { path: '/stats', label: '学习统计' },
+    { path: '/report', label: '备考周报' },
   ]
   if (userStore.isAdmin) items.push({ path: '/admin', label: '管理端' })
   return items
