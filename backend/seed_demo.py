@@ -19,8 +19,17 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.config import UPLOAD_DIR
-from app.database import SessionLocal
-from app.models.models import Analysis, Course, Exam, Material, Task, User, UserProfile
+from app.database import Base, SessionLocal, engine
+from app.models.models import (
+    Analysis,
+    Course,
+    Exam,
+    Material,
+    OperationLog,
+    Task,
+    User,
+    UserProfile,
+)
 from app.utils.security import hash_password
 
 today = date.today()
@@ -208,6 +217,8 @@ TASKS = [
 
 
 def seed() -> None:
+    # 删库重建后直接运行本脚本也能建表（与 app/main.py 的 create_all 一致）
+    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
 
     # 演示账号：始终存在，密码固定 demo123456
@@ -321,6 +332,26 @@ def seed() -> None:
                     is_done=t["done"],
                     done_at=datetime.now() if t["done"] else None,
                     source=t["source"],
+                )
+            )
+
+        # 5. 操作日志示例（9.4）：清掉旧演示日志后写入最近几条关键操作
+        db.query(OperationLog).filter(OperationLog.user_id == user.id).delete()
+        log_samples = [
+            ("登录", "", None, "登录成功", timedelta(hours=2)),
+            ("上传资料", "material", None, "高数期末复习笔记（txt，解析成功）", timedelta(hours=1, minutes=50)),
+            ("AI 复习分析", "analysis", analysis.id, "高等数学 · 生成 4 天复习计划", timedelta(hours=1)),
+        ]
+        for action, target_type, target_id, detail, ago in log_samples:
+            db.add(
+                OperationLog(
+                    user_id=user.id,
+                    username=user.username,
+                    action=action,
+                    target_type=target_type,
+                    target_id=target_id,
+                    detail=detail,
+                    created_at=datetime.now() - ago,
                 )
             )
 

@@ -26,6 +26,7 @@ from ..schemas.schemas import (
     UserRegister,
     UserUpdate,
 )
+from ..utils.operation_log import log_operation
 from ..utils.security import (
     create_access_token,
     create_reset_token,
@@ -68,6 +69,7 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    log_operation(db, "注册账号", user, detail=f"昵称：{user.nickname}", commit=True)
     return _token_response(user)
 
 
@@ -110,6 +112,7 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
     # 登录成功：清零失败计数与锁定状态
     user.failed_attempts = 0
     user.locked_until = None
+    log_operation(db, "登录", user, detail="登录成功")
     db.commit()
     return _token_response(user)
 
@@ -127,6 +130,7 @@ def change_password(
     user.hashed_password = hash_password(payload.new_password)
     user.failed_attempts = 0
     user.locked_until = None
+    log_operation(db, "修改密码", user, detail="验证原密码后修改")
     db.commit()
     db.refresh(user)
     return user
@@ -154,6 +158,7 @@ def reset_confirm(payload: ResetConfirmRequest, db: Session = Depends(get_db)):
     user.hashed_password = hash_password(payload.new_password)
     user.failed_attempts = 0
     user.locked_until = None  # 重置成功后立即解锁
+    log_operation(db, "重置密码", user, detail="找回密码：账号+学号验证后重置")
     db.commit()
     return {"ok": True, "message": "密码重置成功，账号已解锁，请使用新密码登录"}
 
@@ -169,8 +174,13 @@ def update_me(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    changed = list(payload.model_dump(exclude_none=True))
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(user, field, value)
+    log_operation(
+        db, "修改资料", user,
+        target_type="user", target_id=user.id, detail="字段：" + ", ".join(changed),
+    )
     db.commit()
     db.refresh(user)
     return user
@@ -185,6 +195,9 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
     user_dir = UPLOAD_DIR / str(user.id)
     if user_dir.exists() and not any(user_dir.iterdir()):
         user_dir.rmdir()
+
+    # 日志先落库：user 删除后 operation_logs 仍保留账号快照
+    log_operation(db, "注销账号", user, target_type="user", target_id=user.id, detail="清理个人数据")
 
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
     for model in (FocusSession, FocusGoal, Task, Analysis, UserProfile):

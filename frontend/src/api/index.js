@@ -100,4 +100,5 @@ export const adminApi = {
   unbanUser: (id) => request.post(`/admin/users/${id}/unban`),
   materials: (params) => request.get('/admin/materials', { params }),
   removeMaterial: (id) => request.delete(`/admin/materials/${id}`),
+  logs: (params) => request.get('/admin/logs', { params }),
 }

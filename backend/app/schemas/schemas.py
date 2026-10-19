@@ -561,6 +561,21 @@ class AdminMaterialOut(BaseModel):
     created_at: datetime
 
 
+class OperationLogOut(BaseModel):
+    """操作日志（9.4）"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: Optional[int] = None
+    username: str
+    action: str
+    target_type: str
+    target_id: Optional[int] = None
+    detail: str
+    created_at: datetime
+
+
 # ==================== 学习统计总览（FMZH-SRS-5.2.0，张诗琦） ====================
 
 

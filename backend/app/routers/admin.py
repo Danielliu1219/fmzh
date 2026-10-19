@@ -7,14 +7,16 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.models import Course, Exam, Material, User
+from ..models.models import Course, Exam, Material, OperationLog, User
 from ..schemas.schemas import (
     AdminMaterialOut,
     AdminUserOut,
     CourseCreate,
     CourseOut,
     CourseUpdate,
+    OperationLogOut,
 )
+from ..utils.operation_log import log_operation
 from ..utils.security import get_current_admin
 
 router = APIRouter()
@@ -30,11 +32,16 @@ def list_courses(_: User = Depends(get_current_admin), db: Session = Depends(get
 @router.post("/courses", response_model=CourseOut, summary="新增课程/科目")
 def create_course(
     payload: CourseCreate,
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     course = Course(**payload.model_dump())
     db.add(course)
+    db.flush()  # 先拿到课程 id 再记日志，二者同一次 commit
+    log_operation(
+        db, "新增课程", admin,
+        target_type="course", target_id=course.id, detail=course.name,
+    )
     db.commit()
     db.refresh(course)
     return course
@@ -51,12 +58,18 @@ def _get_course(db: Session, course_id: int) -> Course:
 def update_course(
     course_id: int,
     payload: CourseUpdate,
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     course = _get_course(db, course_id)
-    for field, value in payload.model_dump(exclude_none=True).items():
+    changed = payload.model_dump(exclude_none=True)
+    for field, value in changed.items():
         setattr(course, field, value)
+    log_operation(
+        db, "修改课程", admin,
+        target_type="course", target_id=course.id,
+        detail=f"{course.name}（字段：{', '.join(changed)}）",
+    )
     db.commit()
     db.refresh(course)
     return course
@@ -65,10 +78,14 @@ def update_course(
 @router.delete("/courses/{course_id}", summary="删除课程/科目")
 def delete_course(
     course_id: int,
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     course = _get_course(db, course_id)
+    log_operation(
+        db, "删除课程", admin,
+        target_type="course", target_id=course.id, detail=course.name,
+    )
     db.delete(course)
     db.commit()
     return {"ok": True}
@@ -120,6 +137,10 @@ def ban_user(
     if user.id == admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能封禁自己")
     user.is_banned = True
+    log_operation(
+        db, "封禁账号", admin,
+        target_type="user", target_id=user.id, detail=user.username,
+    )
     db.commit()
     return {"ok": True, "is_banned": True}
 
@@ -127,11 +148,15 @@ def ban_user(
 @router.post("/users/{user_id}/unban", summary="解除封禁")
 def unban_user(
     user_id: int,
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     user = _get_user(db, user_id)
     user.is_banned = False
+    log_operation(
+        db, "解封账号", admin,
+        target_type="user", target_id=user.id, detail=user.username,
+    )
     db.commit()
     return {"ok": True, "is_banned": False}
 
@@ -163,12 +188,44 @@ def list_materials(
 @router.delete("/materials/{material_id}", summary="删除违规内容")
 def delete_material(
     material_id: int,
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     material = db.get(Material, material_id)
     if material is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="资料不存在")
+    log_operation(
+        db, "删除违规资料", admin,
+        target_type="material", target_id=material.id,
+        detail=f"{material.title}（上传者 id={material.user_id}）",
+    )
     db.delete(material)
     db.commit()
     return {"ok": True}
+
+
+# ==================== 9.4 操作日志查询 ====================
+
+@router.get("/logs", response_model=list[OperationLogOut], summary="操作日志（管理员可查）")
+def list_logs(
+    username: str = "",
+    action: str = "",
+    keyword: str = "",
+    limit: int = 100,
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(OperationLog)
+    if username.strip():
+        query = query.filter(OperationLog.username.contains(username.strip()))
+    if action.strip():
+        query = query.filter(OperationLog.action.contains(action.strip()))
+    if keyword.strip():
+        kw = keyword.strip()
+        query = query.filter(
+            OperationLog.detail.contains(kw)
+            | OperationLog.action.contains(kw)
+            | OperationLog.username.contains(kw)
+        )
+    limit = max(1, min(limit, 500))
+    return query.order_by(OperationLog.id.desc()).limit(limit).all()

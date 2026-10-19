@@ -1,4 +1,4 @@
-"""数据库表模型（共 11 张表）
+"""数据库表模型（共 12 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -8,7 +8,8 @@ users ──< exams ──< materials ──< collections
   │
   ├──< focus_sessions   番茄钟记录（学习时长统计唯一依据）
   └──< focus_goals      每日学习时长目标
-另含 mood_records（情绪记录，模块 7.6）与 courses（课程/科目基础数据，模块 8.1）。
+另含 mood_records（情绪记录，模块 7.6）、courses（课程/科目基础数据，模块 8.1）
+与 operation_logs（操作日志，模块 9.4）。
 """
 from datetime import datetime
 
@@ -198,6 +199,24 @@ class FocusSession(Base):
     end_time = Column(DateTime, nullable=False)
     duration_minutes = Column(Integer, nullable=False)  # 1~180，单个默认 25
     created_at = Column(DateTime, default=datetime.now)
+
+
+class OperationLog(Base):
+    """操作日志（9.4）：登录、资料增删改、AI 分析等关键操作留痕，管理员可查
+
+    不设 user 外键：账号注销后日志仍需保留，因此冗余存 username 快照。
+    """
+
+    __tablename__ = "operation_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True, nullable=True)  # 失败登录等无归属用户时为空
+    username = Column(String(32), default="")  # 操作者账号快照
+    action = Column(String(32), index=True, nullable=False)  # 中文动作名，如 登录/上传资料
+    target_type = Column(String(32), default="")  # exam/material/analysis/user/course/...
+    target_id = Column(Integer, nullable=True)
+    detail = Column(String(512), default="")
+    created_at = Column(DateTime, default=datetime.now, index=True)
 
 
 class FocusGoal(Base):

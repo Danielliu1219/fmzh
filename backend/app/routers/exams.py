@@ -24,6 +24,7 @@ from ..schemas.schemas import (
 )
 from ..services import schedule_service
 from ..services.schedule_service import DEFAULT_DAILY_LIMIT_MINUTES, parse_ics
+from ..utils.operation_log import log_operation
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -63,6 +64,12 @@ def create_exam(
 ):
     exam = Exam(user_id=user.id, **payload.model_dump())
     db.add(exam)
+    db.flush()
+    log_operation(
+        db, "新增考试", user,
+        target_type="exam", target_id=exam.id,
+        detail=f"{exam.subject} · {exam.exam_date}",
+    )
     db.commit()
     db.refresh(exam)
     return exam
@@ -76,8 +83,14 @@ def update_exam(
     db: Session = Depends(get_db),
 ):
     exam = _get_own_exam(db, user, exam_id)
+    changed = list(payload.model_dump(exclude_none=True))
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(exam, field, value)
+    log_operation(
+        db, "修改考试", user,
+        target_type="exam", target_id=exam.id,
+        detail=f"{exam.subject}（字段：{', '.join(changed)}）",
+    )
     db.commit()
     db.refresh(exam)
     return exam
@@ -90,6 +103,10 @@ def delete_exam(
     db: Session = Depends(get_db),
 ):
     exam = _get_own_exam(db, user, exam_id)
+    log_operation(
+        db, "删除考试", user,
+        target_type="exam", target_id=exam.id, detail=exam.subject,
+    )
     db.delete(exam)
     db.commit()
     return {"ok": True}
@@ -113,6 +130,12 @@ def generate_schedule(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    log_operation(
+        db, "生成备考时间表", user,
+        target_type="exam", target_id=exam.id,
+        detail=f"{exam.subject} · 每日 {payload.daily_minutes} 分钟",
+    )
+    db.commit()
     return ScheduleGenerateOut(**result)
 
 
@@ -168,6 +191,11 @@ async def import_ics(
             )
         )
         imported += 1
+    log_operation(
+        db, "导入 ICS 日程", user,
+        target_type="exam", target_id=exam.id,
+        detail=f"{exam.subject} · 导入 {imported} 条，跳过 {skipped} 条",
+    )
     db.commit()
     return IcsImportResult(imported=imported, skipped=skipped, conflicts=list(conflict_map.values()))
 

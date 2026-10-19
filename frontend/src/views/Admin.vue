@@ -3,7 +3,7 @@
     <header class="admin-head">
       <div>
         <h1>管理端</h1>
-        <p class="admin-sub">课程/科目基础数据维护 · 异常账号与违规内容治理</p>
+        <p class="admin-sub">课程/科目基础数据维护 · 异常账号与违规内容治理 · 操作日志</p>
       </div>
       <el-tag v-if="USE_MOCK" type="warning" effect="plain">预览态（不落库）</el-tag>
     </header>
@@ -69,6 +69,57 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- ===== 9.4 操作日志 ===== -->
+      <el-tab-pane label="操作日志" name="logs">
+        <div class="bar">
+          <div class="filters">
+            <el-input
+              v-model="logFilter.username"
+              placeholder="账号"
+              clearable
+              style="width: 130px"
+              @keyup.enter="loadLogs"
+            />
+            <el-input
+              v-model="logFilter.action"
+              placeholder="操作类型"
+              clearable
+              style="width: 130px"
+              @keyup.enter="loadLogs"
+            />
+            <el-input
+              v-model="logFilter.keyword"
+              placeholder="关键词（账号 / 操作 / 详情）"
+              clearable
+              style="width: 220px"
+              @keyup.enter="loadLogs"
+            />
+            <el-button type="primary" plain @click="loadLogs">查询</el-button>
+          </div>
+          <span class="bar-count">最近 {{ logs.length }} 条</span>
+        </div>
+        <el-table :data="logs" stripe v-loading="logLoading">
+          <el-table-column label="时间" width="160">
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column prop="username" label="操作账号" width="120" />
+          <el-table-column label="操作" width="140">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain">{{ row.action }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="对象" width="150">
+            <template #default="{ row }">
+              <span v-if="row.target_type">
+                {{ row.target_type }}<span v-if="row.target_id">#{{ row.target_id }}</span>
+              </span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="detail" label="详情" min-width="260" show-overflow-tooltip />
+        </el-table>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- ===== 新增 / 编辑课程弹窗 ===== -->
@@ -108,6 +159,7 @@ import { adminApi } from '../api'
 import {
   USE_MOCK,
   mockAdminCourses,
+  mockAdminLogs,
   mockAdminMaterials,
   mockAdminUsers,
 } from '../mock/dashboard'
@@ -117,6 +169,10 @@ const loading = ref(false)
 const courses = ref([])
 const users = ref([])
 const materials = ref([])
+
+const logs = ref([])
+const logLoading = ref(false)
+const logFilter = reactive({ username: '', action: '', keyword: '' })
 
 const courseDialog = ref(false)
 const editing = ref(false)
@@ -276,7 +332,34 @@ const removeMaterial = async (row) => {
   }
 }
 
-onMounted(loadAll)
+const formatTime = (value) => (value || '').replace('T', ' ').slice(0, 16)
+
+const loadLogs = async () => {
+  logLoading.value = true
+  try {
+    if (USE_MOCK) {
+      const { username, action, keyword } = logFilter
+      logs.value = mockAdminLogs.filter(
+        (l) =>
+          (!username || l.username.includes(username.trim())) &&
+          (!action || l.action.includes(action.trim())) &&
+          (!keyword ||
+            `${l.username}${l.action}${l.detail}${l.target_type}`.includes(keyword.trim())),
+      )
+    } else {
+      logs.value = await adminApi.logs({ ...logFilter })
+    }
+  } catch (e) {
+    // request.js 已统一提示错误
+  } finally {
+    logLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadAll()
+  loadLogs()
+})
 </script>
 
 <style scoped>
@@ -316,6 +399,11 @@ onMounted(loadAll)
 .bar-count {
   font-size: 13px;
   color: var(--ink-3);
+}
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .sec-title {
   margin: 22px 0 10px;

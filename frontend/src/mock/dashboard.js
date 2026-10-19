@@ -152,6 +152,16 @@ export const mockAdminUsers = [
   { id: 3, username: 'lily', nickname: '莉莉', student_no: '20240012', major: '软件工程', grade: '2024级', is_admin: false, is_banned: false, exam_count: 2, material_count: 1, created_at: '2026-09-02T14:00:00' },
 ]
 
+// 操作日志（9.4）演示数据：管理员可查最近的关键操作
+export const mockAdminLogs = [
+  { id: 108, user_id: 1, username: 'demo', action: 'AI 复习分析', target_type: 'analysis', target_id: 8, detail: '高等数学 · 生成 14 天复习计划', created_at: '2026-09-07T20:15:00' },
+  { id: 107, user_id: 1, username: 'demo', action: '上传资料', target_type: 'material', target_id: 12, detail: '历年真题精选（2019-2023）（txt，解析成功）', created_at: '2026-09-07T19:40:00' },
+  { id: 106, user_id: 1, username: 'demo', action: '修改考试', target_type: 'exam', target_id: 3, detail: '数据结构（字段：exam_date, note）', created_at: '2026-09-07T18:02:00' },
+  { id: 105, user_id: 3, username: 'lily', action: '登录', target_type: '', target_id: null, detail: '登录成功', created_at: '2026-09-07T14:20:00' },
+  { id: 104, user_id: 1, username: 'demo', action: '封禁账号', target_type: 'user', target_id: 2, detail: 'spammer', created_at: '2026-09-07T10:05:00' },
+  { id: 103, user_id: 2, username: 'spammer', action: '上传资料', target_type: 'material', target_id: 13, detail: '某某刷单兼职【点击领取】（txt，解析成功）', created_at: '2026-09-06T22:30:00' },
+]
+
 export const mockAdminMaterials = [
   { id: 11, user_id: 1, username: 'demo', title: '高数期末复习笔记', source_type: '课堂笔记', file_type: 'txt', parse_status: 'done', created_at: '2026-09-05T09:00:00' },
   { id: 12, user_id: 1, username: 'demo', title: '历年真题精选（2019-2023）', source_type: '历年题', file_type: 'txt', parse_status: 'done', created_at: '2026-09-05T09:10:00' },

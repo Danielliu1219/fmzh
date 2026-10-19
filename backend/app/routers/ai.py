@@ -24,6 +24,7 @@ from ..schemas.schemas import (
 from ..services import prompts
 from ..services.llm_client import LLMError, chat_json
 from ..services.plan_service import create_tasks_from_plan
+from ..utils.operation_log import log_operation
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -160,6 +161,11 @@ def create_profile(
     profile.output_need = json.dumps(data["output_need"], ensure_ascii=False)
     profile.is_complete = not data["missing_fields"]
     profile.missing_fields = json.dumps(data["missing_fields"], ensure_ascii=False)
+    log_operation(
+        db, "生成学习画像", user,
+        target_type="exam", target_id=payload.exam_id,
+        detail=f"{exam.subject} · {'画像完整' if profile.is_complete else '待补全' + str(data['missing_fields'])}",
+    )
     db.commit()
 
     return ProfileOut(
@@ -243,6 +249,12 @@ def analyze(
         status="success",
     )
     db.add(analysis)
+    db.flush()
+    log_operation(
+        db, "AI 复习分析", user,
+        target_type="analysis", target_id=analysis.id,
+        detail=f"{exam.subject} · 生成 {len(result.review_plan)} 天复习计划",
+    )
     db.commit()
     db.refresh(analysis)
 

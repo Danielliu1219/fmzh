@@ -23,6 +23,7 @@ from ..services.upload_guard import (
     check_extension,
     check_size,
 )
+from ..utils.operation_log import log_operation
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -133,6 +134,12 @@ async def upload_material(
         tags=tags,
     )
     db.add(material)
+    db.flush()
+    log_operation(
+        db, "上传资料", user,
+        target_type="material", target_id=material.id,
+        detail=f"{material.title}（{ext}，解析{('成功' if parse_status == 'done' else '失败')}）",
+    )
     db.commit()
     db.refresh(material)
     return material
@@ -216,6 +223,11 @@ def update_material(
 
     for field, value in data.items():
         setattr(material, field, value)
+    log_operation(
+        db, "编辑资料", user,
+        target_type="material", target_id=material.id,
+        detail=f"{material.title}（字段：{', '.join(data)}）",
+    )
     db.commit()
     db.refresh(material)
     return material
@@ -316,6 +328,10 @@ def delete_material(
     db.query(Collection).filter(
         Collection.user_id == user.id, Collection.material_id == material_id
     ).delete(synchronize_session=False)
+    log_operation(
+        db, "删除资料", user,
+        target_type="material", target_id=material.id, detail=material.title,
+    )
     db.delete(material)
     db.commit()
     return {"ok": True}
