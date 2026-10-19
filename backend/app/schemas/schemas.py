@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+from ..services.score_targets import ScoreBand
 
 # ==================== 用户 ====================
 
@@ -196,12 +197,14 @@ class ProfileRequest(BaseModel):
     exam_id: int
     raw_text: str = ""  # 用户自然语言描述；补全时可为空串
     supplement: Optional[str] = None  # 补全内容，与已保存的 raw_text 合并后重新提取
+    target_band: Optional[ScoreBand] = None
 
 
 class ProfileOut(BaseModel):
     exam_id: int
     raw_text: str
     target: Optional[str] = None  # pass / medium / high
+    target_band: Optional[ScoreBand] = None  # 川大成绩区间，旧画像可为空
     learning_status: Optional[str] = None  # weak / medium / good
     available_days: Optional[int] = None
     daily_hours: Optional[float] = None

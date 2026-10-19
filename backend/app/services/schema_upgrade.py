@@ -9,6 +9,10 @@ from ..models.models import Collection
 
 def upgrade_schema(engine):
     with engine.begin() as conn:
+        if inspect(conn).has_table("user_profiles"):
+            columns = {c["name"] for c in inspect(conn).get_columns("user_profiles")}
+            if "target_band" not in columns:
+                conn.execute(text("ALTER TABLE user_profiles ADD COLUMN target_band VARCHAR(8)"))
         columns = {c["name"] for c in inspect(conn).get_columns("users")}
         if "auth_key" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN auth_key VARCHAR(64)"))

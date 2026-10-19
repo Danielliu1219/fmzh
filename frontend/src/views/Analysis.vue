@@ -7,9 +7,9 @@
       </div>
       <el-select
         v-model="examId"
-        :disabled="profileLoading || analyzing"
+        :disabled="courseLoading || profileLoading || analyzing"
         aria-label="选择要分析的科目"
-        placeholder="选择要分析的科目"
+        placeholder="选择课程，加载专属复习内容"
         class="subject-picker"
         @change="onExamChange"
       >
@@ -22,45 +22,49 @@
       </el-select>
     </div>
 
-    <el-empty v-if="!examId" description="请先选择科目（在考试管理里录入考试）">
-      <el-button type="primary" @click="$router.push('/exams')"
-        >去录入考试</el-button
-      >
-    </el-empty>
+    <div v-if="!examId" class="course-context">
+      <el-icon><InfoFilled /></el-icon>
+      <p><strong>先说说你的情况，再选择课程。</strong>你可以先填写自然语言描述、目标区间和每日总时间；选择课程后，再补充该课基础与薄弱章节。</p>
+      <router-link v-if="!exams.length && !courseLoading" to="/exams">去录入考试 ↗</router-link>
+    </div>
+    <div v-else class="course-context selected-course">
+      <el-icon><Reading /></el-icon>
+      <p><strong>{{ selectedExam?.subject }}</strong><span>考试日期 {{ selectedExam?.exam_date }} · 当前画像与方案仅对应这门课程</span></p>
+    </div>
 
-    <template v-else>
       <el-steps
         :active="step"
         align-center
         finish-status="success"
         class="steps"
       >
-        <el-step title="说说你的情况" description="目标与可用时间" />
+        <el-step title="描述学习情况" description="支持自然语言输入" />
         <el-step title="确认学习画像" description="核对并补全信息" />
         <el-step title="拿到复习方案" description="重点、计划与自测" />
       </el-steps>
 
       <!-- 第一步：自然语言描述 -->
-      <el-card v-if="step === 0" shadow="never" class="step-card">
+      <el-card v-if="step === 0" v-loading="courseLoading" shadow="never" class="step-card">
         <div class="brief-intro">
           <span class="brief-index">01</span>
           <div>
-            <h3>这一次，你想复习到什么程度？</h3>
-            <p>先选目标和学习节奏，也可以补充薄弱章节与特别要求。</p>
+            <h3>{{ selectedExam ? `说说你的${selectedExam.subject}复习情况` : '这一次，你想怎样准备期末？' }}</h3>
+            <p>用自己的话描述学习情况，再确认目标区间与可用时间。</p>
           </div>
         </div>
-        <el-form label-position="top" class="brief-form">
-          <el-form-item label="我的备考目标" class="brief-wide"
-            ><el-radio-group v-model="brief.target" class="goal-choices"
-              ><el-radio-button value="pass">保及格</el-radio-button
-              ><el-radio-button value="medium">稳中等</el-radio-button
-              ><el-radio-button value="high"
-                >冲高分</el-radio-button
-              ></el-radio-group
-            >
-            <p class="choice-hint">{{ goalHint }}</p></el-form-item
-          >
-          <el-form-item label="当前基础"
+        <section class="natural-input" aria-labelledby="natural-input-title">
+          <div class="natural-input-head"><el-icon><ChatLineSquare /></el-icon><label id="natural-input-title" for="study-notes">用自然语言，说说你的情况</label><span>直接打字就可以</span></div>
+          <p id="natural-input-help">像聊天一样写下学习基础、薄弱内容或特别要求，AI 会提取学习画像。目标区间以滑条选择为准，提取后还可以核对和补全。</p>
+          <el-input id="study-notes" v-model="rawText" type="textarea" :rows="7" maxlength="2000" show-word-limit
+            :disabled="profileLoading" aria-label="用自然语言描述你的复习情况" aria-describedby="natural-input-help"
+            placeholder="例如：我这门课前半学期没跟上，公式记得不牢，做综合题容易卡住。希望先把基础补起来，再练常考题型；晚上复习比较方便，希望计划里多安排一些例题。" />
+          <p class="natural-input-tip">不知道从哪说起？可以写「学到了哪里」「哪些内容不会」「希望怎样复习」。</p>
+        </section>
+        <el-form label-position="top" class="brief-form" :disabled="profileLoading">
+          <el-form-item label="这门课想达到的目标区间" class="brief-wide goal-field">
+            <ScoreGoalSlider v-model="brief.target_band" :disabled="profileLoading" />
+          </el-form-item>
+          <el-form-item v-if="examId" label="这门课的当前基础"
             ><el-select
               v-model="brief.learning_status"
               aria-label="当前学习基础"
@@ -72,7 +76,7 @@
                 label="基础良好，想练综合难题"
                 value="good" /></el-select
           ></el-form-item>
-          <el-form-item label="距离考试还有"
+          <el-form-item v-if="examId" label="距离这门考试还有"
             ><el-input-number
               v-model="brief.available_days"
               :min="1"
@@ -89,7 +93,7 @@
               aria-label="每日可用小时数"
             /><span class="unit">小时</span></el-form-item
           >
-          <el-form-item label="薄弱章节（可选）"
+          <el-form-item v-if="examId" label="这门课的薄弱章节（可选）"
             ><el-input
               v-model="brief.weak_chapters"
               placeholder="例如：极限、积分"
@@ -100,16 +104,8 @@
           各科保留各自的目标与基础，共享这份每日时间预算。生成后会统筹所有考试的未完成
           AI 任务，任务日期以首页与课程管理为准。
         </p>
-        <label for="study-notes" class="notes-label">再补充一点（可选）</label>
-        <el-input
-          id="study-notes"
-          v-model="rawText"
-          type="textarea"
-          :rows="4"
-          maxlength="2000"
-          show-word-limit
-          placeholder="例如：选择题经常失分，希望多安排基础题；晚上更方便学习。"
-        />
+        <div v-if="result" class="existing-analysis"><p>这门课已有复习方案。可以修改上方画像后重新生成，也可以继续查看已有方案。</p><el-button @click="step = 2">查看已有方案</el-button></div>
+        <p v-if="!examId" class="select-before-submit">填写的内容会在当前页面保留；请在右上方选择课程后生成学习画像。</p>
         <div class="actions">
           <router-link to="/materials" class="material-link"
             >还没有资料？先去上传 ↗</router-link
@@ -117,9 +113,10 @@
           <el-button
             type="primary"
             :loading="profileLoading"
+            :disabled="!examId || courseLoading"
             @click="onExtractProfile"
           >
-            确认目标，生成学习画像 →
+            {{ examId ? '生成学习画像 →' : '选择课程后生成学习画像' }}
           </el-button>
         </div>
       </el-card>
@@ -128,7 +125,7 @@
       <el-card v-if="step === 1" shadow="never" class="step-card">
         <el-descriptions :column="2" border title="系统提取的学习画像">
           <el-descriptions-item label="备考目标">
-            {{ targetText(profile.target) || '（未提取到）' }}
+            {{ scoreBandText(profile.target_band) || targetText(profile.target) || '（未提取到）' }}
           </el-descriptions-item>
           <el-descriptions-item label="基础水平">
             {{ statusText(profile.learning_status) || '（未提取到）' }}
@@ -160,11 +157,7 @@
         <div v-if="!profile.is_complete" class="complete-form">
           <el-form label-width="100px">
             <el-form-item v-if="missing.includes('target')" label="备考目标">
-              <el-radio-group v-model="completeForm.target">
-                <el-radio-button value="pass">保及格</el-radio-button>
-                <el-radio-button value="medium">稳中等</el-radio-button>
-                <el-radio-button value="high">冲高分</el-radio-button>
-              </el-radio-group>
+              <ScoreGoalSlider v-model="completeForm.target_band" :disabled="profileLoading" />
             </el-form-item>
             <el-form-item
               v-if="missing.includes('learning_status')"
@@ -227,9 +220,7 @@
         <el-card shadow="never" class="result-card result-overview">
           <div class="result-head">
             <h3>{{ result.course }} · 复习分析</h3>
-            <el-button :loading="analyzing" @click="onAnalyze"
-              >重新生成</el-button
-            >
+            <div class="result-controls"><el-button :disabled="analyzing" @click="onBackToDescribe">修改画像与目标</el-button><el-button :loading="analyzing" @click="onAnalyze">重新生成</el-button></div>
           </div>
           <el-alert type="info" :closable="false" :title="result.summary" />
           <div class="result-metrics">
@@ -465,7 +456,6 @@
           </template>
         </el-result>
       </el-card>
-    </template>
   </div>
 </template>
 
@@ -477,9 +467,11 @@ import { aiApi, examApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
-import { mockExams, mockProfile, mockAnalysis } from '../mock/pages'
+import { mockProfile, mockAnalysis } from '../mock/pages'
 import QuizPanel from '../components/QuizPanel.vue'
 import { mockAnalysisSessions } from '../mock/quizzes'
+import ScoreGoalSlider from '../components/ScoreGoalSlider.vue'
+import { scoreBand, scoreBandText } from '../utils/scoreTargets'
 
 const FIELD_LABELS = {
   target: '备考目标',
@@ -492,26 +484,22 @@ const exams = ref([])
 const route = useRoute()
 const knowledgeView = ref('visual')
 const brief = reactive({
-  target: 'pass',
+  target_band: 'D',
   learning_status: 'weak',
   available_days: 5,
   daily_hours: 3,
   weak_chapters: '',
 })
-const goalHint = computed(
-  () =>
-    ({
-      pass: '优先高频基础题、必考概念和短期提分内容。',
-      medium: '覆盖核心考点，巩固常考题型，兼顾薄弱章节。',
-      high: '在核心考点之外，增加综合题、难题与易失分点。',
-    })[brief.target],
-)
 const sortedKnowledge = computed(() =>
   [...(result.value?.knowledge_points || [])].sort(
     (a, b) => b.weight - a.weight,
   ),
 )
 const examId = ref(null)
+const selectedExam = computed(() => exams.value.find((exam) => exam.id === examId.value))
+const courseLoading = ref(false)
+const courseDrafts = new Map()
+let activeExamId = null
 const step = ref(0)
 const rawText = ref('')
 const profile = ref(null)
@@ -523,7 +511,7 @@ const analyzeError = ref('')
 const schedulingNote = ref('')
 
 const completeForm = reactive({
-  target: 'pass',
+  target_band: 'D',
   learning_status: 'weak',
   available_days: 5,
   daily_hours: 3,
@@ -536,7 +524,7 @@ const missingFieldLabels = computed(() =>
 const completeFormValid = computed(() =>
   missing.value.every((f) => {
     if (f === 'target')
-      return ['pass', 'medium', 'high'].includes(completeForm.target)
+      return !!scoreBand(completeForm.target_band)
     if (f === 'learning_status')
       return ['weak', 'medium', 'good'].includes(completeForm.learning_status)
     if (f === 'available_days') return completeForm.available_days > 0
@@ -555,7 +543,7 @@ const weightColor = (w) =>
 const buildSupplement = () => {
   const parts = []
   if (missing.value.includes('target'))
-    parts.push(`我的目标是${targetText(completeForm.target)}`)
+    parts.push(`我的目标区间是${scoreBandText(completeForm.target_band)}`)
   if (missing.value.includes('learning_status'))
     parts.push(`我基础${statusText(completeForm.learning_status)}`)
   if (missing.value.includes('available_days'))
@@ -566,6 +554,7 @@ const buildSupplement = () => {
 }
 
 const onExtractProfile = async () => {
+  if (!examId.value || courseLoading.value) return
   profileLoading.value = true
   try {
     if (USE_MOCK) {
@@ -575,7 +564,10 @@ const onExtractProfile = async () => {
       await new Promise((r) => setTimeout(r, 600))
       profile.value = {
         ...structuredClone(mockProfile),
-        target: brief.target,
+        exam_id: examId.value,
+        raw_text: rawText.value,
+        target: scoreBand(brief.target_band).strategy,
+        target_band: brief.target_band,
         learning_status: brief.learning_status,
         available_days: brief.available_days,
         daily_hours: brief.daily_hours,
@@ -593,12 +585,14 @@ const onExtractProfile = async () => {
         medium: '我的基础一般',
         good: '我的基础很好',
       }[brief.learning_status]
-      const description = `我的目标是${targetText(brief.target)}，${basis}，还有${brief.available_days}天考试，每天能学${brief.daily_hours}小时。${brief.weak_chapters.trim() ? '薄弱的是' + brief.weak_chapters + '。' : ''}${rawText.value}`
+      const description = `${basis}，还有${brief.available_days}天考试，每天能学${brief.daily_hours}小时。${brief.weak_chapters.trim() ? '薄弱的是' + brief.weak_chapters + '。' : ''}${rawText.value}\n明确选择的目标区间：${scoreBandText(brief.target_band)}，目标以此区间为准。`
       profile.value = await aiApi.profile({
         exam_id: examId.value,
         raw_text: description,
+        target_band: brief.target_band,
       })
     }
+    completeForm.target_band = brief.target_band
     step.value = 1
     if (profile.value.is_complete) ElMessage.success('画像提取完成')
     else ElMessage.warning('画像缺少部分信息，请补全')
@@ -616,6 +610,7 @@ const onCompleteProfile = async () => {
       exam_id: examId.value,
       raw_text: '',
       supplement: buildSupplement(),
+      target_band: missing.value.includes('target') ? completeForm.target_band : profile.value.target_band,
     })
     if (profile.value.is_complete) ElMessage.success('画像已补全')
   } catch {
@@ -637,7 +632,8 @@ const previewAnalysis = () => {
         : ['核心概念', '重点原理', '典型题型', '综合练习', '错题复盘']
   const copy = structuredClone(mockAnalysis)
   copy.course = subject
-  copy.summary = `${subject}的示例复习方案。全科每日共享 ${brief.daily_hours} 小时，实际日期与各科分配统一在首页确认；以下考点权重用于演示。`
+  const band = scoreBand(profile.value?.target_band || brief.target_band)
+  copy.summary = `${subject}的示例复习方案，目标为${scoreBandText(band.id)}。全科每日共享 ${brief.daily_hours} 小时，实际日期与各科分配统一在首页确认；以下考点权重用于演示。`
   copy.knowledge_points = copy.knowledge_points.map((p, i) => ({
     ...p,
     name: names[i],
@@ -653,7 +649,7 @@ const previewAnalysis = () => {
   copy.review_plan = copy.review_plan.map((p, i) => ({
     ...p,
     title: names[i],
-    detail: `复习${names[i]}并整理练习中的易错点`,
+    detail: `按${band.range}目标复习${names[i]}，${band.min >= 85 ? '增加综合应用与限时训练' : band.min >= 70 ? '巩固常见题型并练习综合应用' : '优先基础题与高频考点'}，整理易错点`,
     estimated_minutes: Math.max(
       15,
       Math.round(
@@ -700,6 +696,7 @@ const previewAnalysis = () => {
 }
 
 const onAnalyze = async () => {
+  if (!examId.value) return
   analyzing.value = true
   analyzeError.value = ''
   schedulingNote.value = ''
@@ -711,7 +708,11 @@ const onAnalyze = async () => {
       await new Promise((r) => setTimeout(r, 1500))
       result.value = previewAnalysis()
       analysisId.value = `mock-${examId.value}-${Date.now()}`
-      mockAnalysisSessions.set(examId.value, { id: analysisId.value, result: JSON.parse(JSON.stringify(result.value)) })
+      mockAnalysisSessions.set(examId.value, {
+        id: analysisId.value, result: JSON.parse(JSON.stringify(result.value)),
+        profile: profile.value ? JSON.parse(JSON.stringify(profile.value)) : null,
+        brief: { ...brief }, rawText: rawText.value,
+      })
       const retained = mockStudySession.tasks.filter(
         (t) => t.exam_id !== examId.value || t.is_done || t.source !== 'ai',
       )
@@ -788,35 +789,71 @@ const onBackToDescribe = () => {
 
 const backToProfile = () => {
   analyzeError.value = ''
-  step.value = 1
+  step.value = profile.value ? 1 : 0
 }
 
 const onExamChange = async () => {
+  // 未选课时的公共草稿带入第一门课；之后按课程保留草稿，避免串课。
+  if (activeExamId) courseDrafts.set(activeExamId, { brief: { ...brief }, rawText: rawText.value, profile: profile.value })
+  const firstSelection = !activeExamId
+  const hasPublicDraft = firstSelection && (rawText.value.trim() || brief.target_band !== 'D')
+  activeExamId = examId.value
   step.value = 0
   analyzeError.value = ''
-  rawText.value = ''
   profile.value = null
   result.value = null
   analysisId.value = null
+  schedulingNote.value = ''
   const selected = exams.value.find((e) => e.id === examId.value)
+  if (!firstSelection) {
+    rawText.value = ''
+    Object.assign(brief, { target_band: 'D', learning_status: 'weak', weak_chapters: '' })
+  }
   brief.available_days = Math.max(
     1,
     Math.min(60, selected ? daysUntil(selected.exam_date, getToday()) : 5),
   )
-  if (USE_MOCK) {
-    const saved = mockAnalysisSessions.get(examId.value)
-    if (saved) { result.value = structuredClone(saved.result); analysisId.value = saved.id; step.value = 2 }
-    return
+  const draft = courseDrafts.get(examId.value)
+  if (draft) {
+    const hours = brief.daily_hours
+    Object.assign(brief, draft.brief, { daily_hours: hours })
+    rawText.value = draft.rawText
+    profile.value = draft.profile
   }
-  // 已有分析结果的科目直接展示
+  courseLoading.value = true
   try {
-    const resp = await aiApi.latestAnalysis(examId.value)
-    result.value = resp.result
-    analysisId.value = resp.id
-    step.value = 2
-  } catch {
-    /* 没有历史分析，从第一步开始 */
-  }
+    if (USE_MOCK) {
+      const saved = mockAnalysisSessions.get(examId.value)
+      if (saved) {
+        result.value = structuredClone(saved.result)
+        analysisId.value = saved.id
+        if (!draft && !hasPublicDraft && saved.brief) {
+          const hours = brief.daily_hours
+          Object.assign(brief, saved.brief, { daily_hours: hours })
+          rawText.value = saved.rawText || ''
+          profile.value = saved.profile
+        }
+      }
+    } else {
+      const [savedProfile, savedAnalysis] = await Promise.allSettled([
+        aiApi.savedProfile(examId.value), aiApi.latestAnalysis(examId.value),
+      ])
+      if (!draft && !hasPublicDraft && savedProfile.status === 'fulfilled') {
+        const saved = savedProfile.value
+        profile.value = saved
+        rawText.value = saved.raw_text
+        Object.assign(brief, {
+          target_band: saved.target_band || ({ pass: 'D', medium: 'B', high: 'A' }[saved.target] || 'D'),
+          learning_status: saved.learning_status || 'weak',
+          weak_chapters: (saved.weak_chapters || []).join('、'),
+        })
+      }
+      if (savedAnalysis.status === 'fulfilled') {
+        result.value = savedAnalysis.value.result
+        analysisId.value = savedAnalysis.value.id
+      }
+    }
+  } finally { courseLoading.value = false }
 }
 
 onMounted(async () => {
@@ -841,6 +878,8 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 .page-head h2 {
   color: var(--text-hi);
@@ -854,8 +893,30 @@ onMounted(async () => {
   letter-spacing: 0.06em;
 }
 .subject-picker {
-  width: 260px;
+  width: 300px;
 }
+.course-context { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-card); }
+.course-context > .el-icon { color: var(--coral-deep); margin-top: 4px; flex-shrink: 0; }
+.course-context p { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.9; }
+.course-context strong { color: var(--ink-1); }
+.course-context a { margin-left: auto; color: var(--coral-deep); font-size: 12px; white-space: nowrap; }
+.selected-course p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.selected-course strong { font-size: 15px; }
+.natural-input { padding: 24px; margin-bottom: 32px; border: 1px solid var(--coral); border-left: 4px solid var(--coral); border-radius: var(--radius-md); background: var(--coral-soft); }
+.natural-input-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.natural-input-head .el-icon { font-size: 22px; color: var(--coral-deep); }
+.natural-input-head label { font-size: 19px; font-weight: 700; color: var(--ink-1); }
+.natural-input-head > span { margin-left: auto; color: var(--coral-deep); font-size: 11px; }
+.natural-input > p { font-size: 12px; color: var(--ink-2); line-height: 1.9; margin: 12px 0 16px; }
+.natural-input :deep(.el-textarea__inner) { min-height: 190px; padding: 16px 18px 30px; font-size: 14px; line-height: 1.9; background: var(--bg-card); resize: vertical; }
+.natural-input :deep(.el-input__count) { background: var(--bg-card); padding: 3px; }
+.natural-input .natural-input-tip { margin: 12px 0 0; font-size: 11px; color: var(--ink-2); }
+.goal-field { padding-bottom: 26px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.existing-analysis { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 16px; margin-top: 20px; background: var(--bg-soft); border-radius: var(--radius-sm); }
+.existing-analysis p { flex: 1; min-width: 180px; font-size: 12px; line-height: 1.8; margin: 0; color: var(--ink-2); }
+.select-before-submit { color: var(--coral-deep); font-size: 12px; line-height: 1.8; margin: 18px 0 0; }
+.result-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.result-controls .el-button + .el-button { margin-left: 0; }
 .brief-intro {
   display: flex;
   align-items: flex-start;
@@ -884,27 +945,11 @@ onMounted(async () => {
 .brief-wide {
   grid-column: 1 / -1;
 }
-.goal-choices {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-.goal-choices :deep(.el-radio-button__inner) {
-  width: 100%;
-  padding-block: 14px;
-  font-weight: 700;
-}
 .choice-hint {
   margin: 12px 0 0;
   font-size: 12px;
   color: var(--ink-3);
   line-height: 1.8;
-}
-.notes-label {
-  display: block;
-  font-size: 13px;
-  margin: 5px 0 12px;
-  color: var(--ink-2);
 }
 .material-link {
   align-self: center;
@@ -1043,6 +1088,17 @@ onMounted(async () => {
   margin-left: 3px;
 }
 @media (max-width: 680px) {
+  .course-context { padding: 14px; flex-wrap: wrap; }
+  .course-context p { flex: 1; min-width: 0; }
+  .course-context a { width: 100%; margin-left: 26px; }
+  .selected-course p { display: block; }
+  .selected-course p > span { display: block; margin-top: 4px; }
+  .natural-input { padding: 18px 14px; margin-bottom: 26px; }
+  .natural-input-head { gap: 8px; }
+  .natural-input-head label { font-size: 16px; }
+  .natural-input-head > span { margin-left: 30px; width: 100%; }
+  .natural-input :deep(.el-textarea__inner) { min-height: 210px; font-size: 14px; padding: 13px 13px 30px; }
+  .result-controls { width: 100%; }
   .subject-picker {
     width: 100%;
   }
@@ -1123,7 +1179,7 @@ onMounted(async () => {
   margin: 24px 0;
 }
 .step-card {
-  max-width: 860px;
+  max-width: 960px;
   margin: 0 auto;
 }
 .actions {

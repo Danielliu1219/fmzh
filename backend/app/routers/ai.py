@@ -28,6 +28,7 @@ from ..services.llm_client import LLMError, chat_json
 from ..services.plan_service import create_tasks_from_plan
 from ..services.study_planner import daily_budget
 from ..services.quizzes import public_analysis, prepare_questions
+from ..services.score_targets import band_strategy, band_text
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -86,12 +87,13 @@ def _profile_to_text(profile: UserProfile) -> str:
     target_map = {"pass": "保及格", "medium": "稳中等", "high": "冲高分"}
     status_map = {"weak": "基础薄弱", "medium": "基础一般", "good": "基础良好"}
     return (
-        f"备考目标：{target_map.get(profile.target, '未填写')}；"
+        f"备考目标：{band_text(profile.target_band) or target_map.get(profile.target, '未填写')}；"
         f"基础水平：{status_map.get(profile.learning_status, '未填写')}；"
         f"剩余天数：{profile.available_days} 天；"
         f"每天可投入：{profile.daily_hours} 小时；"
         f"薄弱章节：{'、'.join(json.loads(profile.weak_chapters or '[]')) or '无'}；"
-        f"期望输出：{'、'.join(json.loads(profile.output_need or '[]'))}"
+        f"期望输出：{'、'.join(json.loads(profile.output_need or '[]'))}；"
+        f"用户补充描述（目标以以上分数区间为准）：{(profile.raw_text or '')[:3000]}"
     )
 
 
@@ -156,6 +158,14 @@ def create_profile(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
     data = normalize_profile(data)
+    # 滑条选中的区间为明确目标，不让模型将其重新猜回另一档。
+    if payload.target_band:
+        profile.target_band = payload.target_band
+    elif payload.raw_text.strip():
+        profile.target_band = None  # 旧客户端重填自然语言时，不沿用上一份明确目标。
+    if profile.target_band:
+        data["target"] = band_strategy(profile.target_band)
+        data["missing_fields"] = [f for f in data["missing_fields"] if f != "target"]
     profile.target = data["target"]
     profile.learning_status = data["learning_status"]
     profile.available_days = data["available_days"]
@@ -170,6 +180,7 @@ def create_profile(
         exam_id=payload.exam_id,
         raw_text=raw_text,
         target=profile.target,
+        target_band=profile.target_band,
         learning_status=profile.learning_status,
         available_days=profile.available_days,
         daily_hours=profile.daily_hours,
@@ -177,6 +188,22 @@ def create_profile(
         output_need=data["output_need"],
         is_complete=profile.is_complete,
         missing_fields=data["missing_fields"],
+    )
+
+
+@router.get("/profile/{exam_id}", response_model=ProfileOut, summary="读取本科已保存画像，供重新描述与调整目标")
+def saved_profile(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_own_exam(db, user, exam_id)
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user.id, UserProfile.exam_id == exam_id).order_by(UserProfile.id.desc()).first()
+    if profile is None:
+        raise HTTPException(status_code=404, detail="该科目还没有学习画像")
+    return ProfileOut(
+        exam_id=exam_id, raw_text=profile.raw_text or "", target=profile.target,
+        target_band=profile.target_band, learning_status=profile.learning_status,
+        available_days=profile.available_days, daily_hours=profile.daily_hours,
+        weak_chapters=json.loads(profile.weak_chapters or "[]"),
+        output_need=json.loads(profile.output_need or "[]"), is_complete=profile.is_complete,
+        missing_fields=json.loads(profile.missing_fields or "[]"),
     )
 
 
@@ -226,6 +253,7 @@ def analyze(
     planning_profile = SimpleNamespace(
         available_days=min(profile.available_days, remaining_days), daily_hours=share / 60,
         target=profile.target, learning_status=profile.learning_status,
+        target_band=profile.target_band,
     )
     context = _profile_to_text(profile) + f"\n注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
 

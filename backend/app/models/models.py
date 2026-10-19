@@ -97,6 +97,7 @@ class UserProfile(Base):
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
     raw_text = Column(Text, default="")  # 用户原始自然语言描述（含补全内容）
     target = Column(String(16), nullable=True)  # pass / medium / high
+    target_band = Column(String(8), nullable=True)  # 川大本科目标成绩区间 D 至 A
     learning_status = Column(String(16), nullable=True)  # weak / medium / good
     available_days = Column(Integer, nullable=True)
     daily_hours = Column(Float, nullable=True)

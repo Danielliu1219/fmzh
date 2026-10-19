@@ -9,6 +9,7 @@ LLM_MOCK=true 时使用本文件的启发式提取器/示例数据，无需 API 
 import json
 import re
 from datetime import date, timedelta
+from .score_targets import band_text
 
 # ==================== 第一次调用：画像提取 ====================
 
@@ -135,7 +136,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
 1. weight 取值范围 0~1；importance 只取 high/medium/low。
 2. level 只取 must（必考）/common（常考）。
 3. 所有推荐必须基于用户上传的资料内容，并注明 source（出自哪类资料）；资料里没有的依据不要编造，可以在 summary 中说明资料不足。
-4. review_plan 必须严格按用户画像定制：目标为 pass 且基础 weak 时，优先高频基础内容、适当压缩任务量；目标为 high 时加入综合题、难题和易错点。计划天数不超过 available_days，每天任务量不超过 daily_hours*60 分钟。
+4. review_plan 必须严格按用户画像定制：优先遵循用户明确选择的分数区间与绩点目标，按区间调整知识点覆盖、练习深度和难题比例；及格目标且基础 weak 时，优先高频基础内容、适当压缩任务量，高区间加入综合题、难题和易错点。计划天数不超过 available_days，每天任务量不超过 daily_hours*60 分钟。
 5. 自测题 3~5 道，贴合历年题型与资料内容。kind 只取 single（单选）、multiple（多选）、boolean（判断）、fill（填空）；单/多选 options 按 A/B/C 顺序，answer 为选项字母，多选用 A,C 格式；判断答案为 true 或 false；填空答案必须确定，accepted_answers 可列明确等价写法。不要生成需要主观评分的题。
 6. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
 
@@ -166,6 +167,13 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
         "做综合题与易错点",
         "整体回顾 + 自测查漏",
     ]
+    goal = band_text(getattr(profile, "target_band", None))
+    strategy = getattr(profile, "target", "pass")
+    if strategy == "high":
+        plan_titles[1] = "高频题型与综合应用强化"
+        plan_titles[3] = "限时综合难题与易错点训练"
+    elif strategy == "medium":
+        plan_titles[3] = "巩固主要题型与综合应用"
     focus_templates = [
         ("核心概念的定义与辨析", "must", "近三年历年题每年必考", "历年题"),
         ("高频题型的基本解法", "must", "老师划的重点内容", "老师重点"),
@@ -208,7 +216,8 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
 
     return {
         "course": subject,
-        "summary": f"（Mock 数据）根据你的画像与资料，{subject}建议优先掌握高频基础内容，"
+        "summary": f"（Mock 数据）{subject}目标：{goal or '按当前学习画像复习'}。"
+        f"{'加强综合应用与限时训练，' if strategy == 'high' else '先巩固核心概念与常见题型，'}"
         f"每天按计划推进并及时自测。生成内容仅供复习参考，请结合教材与课堂要求判断。",
         "knowledge_points": [
             {"name": n, "weight": w, "importance": i, "recommend_reason": r, "source": s, "suggest_hours": 6 - idx}
