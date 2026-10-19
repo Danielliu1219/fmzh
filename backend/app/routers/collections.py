@@ -10,6 +10,7 @@ from ..database import get_db
 from ..models.models import Collection, Material, User
 from ..schemas.schemas import CollectionCreate, CollectionOut, MistakeBatchIn
 from ..utils.security import get_current_user
+from ..services.mistakes import save_question
 
 router = APIRouter()
 
@@ -90,13 +91,9 @@ def add_collection(
         title = payload.title.strip()
         if not title:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="题目内容不能为空")
-        item = Collection(
-            user_id=user.id,
-            item_type="question",
-            title=title,
-            content=payload.content,
-            source="manual",
-        )
+        item, _ = save_question(db, user.id, title, payload.content, "manual")
+        db.commit()
+        return item
 
     db.add(item)
     db.commit()
@@ -121,26 +118,9 @@ def add_mistakes(
         title = mistake.title.strip()
         if not title:
             continue
-        exists = (
-            db.query(Collection)
-            .filter(
-                Collection.user_id == user.id,
-                Collection.item_type == "question",
-                Collection.title == title,
-            )
-            .first()
-        )
-        if exists is not None:
-            continue
-        item = Collection(
-            user_id=user.id,
-            item_type="question",
-            title=title,
-            content=mistake.content,
-            source="quiz",
-        )
-        db.add(item)
-        created.append(item)
+        item, added = save_question(db, user.id, title, mistake.content)
+        if added:
+            created.append(item)
 
     db.commit()
     for item in created:

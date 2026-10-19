@@ -184,6 +184,7 @@
                 </div>
               </div>
               <div class="lib-ops">
+                <el-button link type="primary" @click="openMistake(c)">答案与解析</el-button>
                 <el-button link type="danger" @click="onRemoveCollection(c)">移除</el-button>
               </div>
             </div>
@@ -247,6 +248,9 @@
       </el-table>
     </el-card>
 
+    <el-dialog v-model="mistakeVisible" :title="mistakeTitle" width="640px" style="max-width: calc(100vw - 32px)">
+      <QuizFeedback v-if="mistakeDetail" :item="mistakeDetail" />
+    </el-dialog>
     <el-dialog v-model="previewVisible" :title="previewTitle" width="680px">
       <div class="preview-box" v-loading="previewLoading">
         <pre>{{ previewText || '（无解析文本，可能是解析失败或文件为扫描图片）' }}</pre>
@@ -309,19 +313,24 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { collectionApi, examApi, materialApi } from '../api'
-import { USE_MOCK } from '../mock/dashboard'
+import { USE_MOCK, mockStudySession } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
+import { mockNotebook as mockCollections } from '../mock/quizzes'
+import { readMistake } from '../utils/quiz'
+import QuizFeedback from '../components/QuizFeedback.vue'
 
 const sourceTypes = ['历年题', '老师重点', '平时作业', '课堂笔记', '教材章节', '实验报告', '练习题', '其他']
 
+const route = useRoute()
 const exams = ref([])
 const materials = ref([])
 const loading = ref(false)
 const file = ref(null)
 const uploading = ref(false)
-const viewMode = ref('library') // library=按科目归档成资料库，list=平铺列表
+const viewMode = ref(route.query.view === 'collection' ? 'collection' : 'library')
 
 const uploadForm = reactive({ title: '', exam_id: null, source_type: '其他', description: '' })
 const filter = reactive({
@@ -353,10 +362,15 @@ watch(viewMode, () => {
 const collections = ref([])
 const collectionOpen = ref(['fav', 'wrong'])
 // 静态演示模式（无后端）下用本地数组假装收藏本，真实模式走后端
-const mockCollections = ref([
-  { id: 1, item_type: 'material', material_id: 2, title: '极限与连续 老师标注重点', content: '', source: 'manual', created_at: '2026-10-12T10:00:00' },
-  { id: 2, item_type: 'question', material_id: null, title: '极限的四则运算与等价无穷小替换', content: '', source: 'quiz', created_at: '2026-10-13T20:00:00' },
-])
+const mistakeVisible = ref(false)
+const mistakeTitle = ref('')
+const mistakeDetail = ref(null)
+const openMistake = item => {
+  mistakeTitle.value = item.title
+  mistakeDetail.value = readMistake(item.content)
+  mistakeVisible.value = true
+}
+watch(() => route.query.view, value => { if(value === 'collection') viewMode.value = 'collection' })
 
 const previewVisible = ref(false)
 const previewLoading = ref(false)
@@ -410,7 +424,7 @@ const wrongQuestions = computed(() => collections.value.filter((c) => c.item_typ
 
 const loadExams = async () => {
   if (USE_MOCK) {
-    exams.value = mockExams
+    exams.value = structuredClone(mockStudySession.exams)
     return
   }
   exams.value = await examApi.list()
@@ -755,9 +769,16 @@ const exportAs = async (format) => {
 }
 
 onMounted(() => {
+  const requested = Number(route.query.exam)
+  if (requested > 0) { filter.exam_id = requested; uploadForm.exam_id = requested }
   loadExams()
   load()
   loadCollections()
+})
+watch(() => route.query.exam, value => {
+  filter.exam_id = Number(value) || null
+  uploadForm.exam_id = filter.exam_id
+  load()
 })
 </script>
 

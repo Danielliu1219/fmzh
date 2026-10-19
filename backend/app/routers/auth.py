@@ -9,13 +9,17 @@
 """
 from datetime import datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select, union_all
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import UPLOAD_DIR
-from ..database import get_db
-from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, Task, User, UserProfile
+from ..database import Base, get_db
+from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, StudySetting, Task, User, UserProfile
+from ..models.models import Notification, NotificationPreference, Reminder, Collection, MoodRecord, QuizAttempt
 from ..schemas.schemas import (
     ChangePasswordRequest,
     ResetConfirmRequest,
@@ -43,7 +47,7 @@ LOCK_MINUTES = 30
 
 
 def _token_response(user: User) -> TokenResponse:
-    return TokenResponse(access_token=create_access_token(user.id), user=UserOut.model_validate(user))
+    return TokenResponse(access_token=create_access_token(user), user=UserOut.model_validate(user))
 
 
 def _locked_message(user: User) -> str:
@@ -65,8 +69,22 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
         major=payload.major,
         grade=payload.grade,
     )
-    db.add(user)
-    db.commit()
+    # 老库可能残留已注销账号的数据。新账号跳过所有业务表出现过的 ID，防继承历史孤立数据。
+    ids = union_all(select(User.id.label("used_id")), *[
+        select(table.c.user_id.label("used_id")) for table in Base.metadata.tables.values() if "user_id" in table.c
+    ]).subquery()
+    for retry in range(3):
+        user.id = (db.scalar(select(func.max(ids.c.used_id))) or 0) + 1
+        try:
+            db.add(user)
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if db.query(User).filter(User.username == payload.username).first():
+                raise HTTPException(409, "账号已存在，请换一个账号")
+            if retry == 2:
+                raise HTTPException(409, "注册请求冲突，请重试")
     db.refresh(user)
     return _token_response(user)
 
@@ -124,9 +142,13 @@ def change_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="原密码不正确")
     if payload.old_password == payload.new_password:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密码不能与原密码相同")
-    user.hashed_password = hash_password(payload.new_password)
-    user.failed_attempts = 0
-    user.locked_until = None
+    changed = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update({
+        User.hashed_password: hash_password(payload.new_password), User.auth_key: uuid4().hex,
+        User.failed_attempts: 0, User.locked_until: None,
+    }, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(401, "登录已失效，请重新登录")
     db.commit()
     db.refresh(user)
     return user
@@ -138,7 +160,7 @@ def reset_verify(payload: ResetVerifyRequest, db: Session = Depends(get_db)):
     if user is None or not user.student_no or user.student_no != payload.student_no.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="账号与学号不匹配，验证失败")
     return {
-        "reset_token": create_reset_token(user.id),
+        "reset_token": create_reset_token(user),
         "nickname": user.nickname or user.username,
         "locked": user.locked_until is not None and datetime.now() < user.locked_until,
         "message": "身份验证通过，请设置新密码（10 分钟内有效）",
@@ -147,15 +169,26 @@ def reset_verify(payload: ResetVerifyRequest, db: Session = Depends(get_db)):
 
 @router.post("/reset-password/confirm", summary="找回密码第二步：重置密码并解锁账号（1.4）")
 def reset_confirm(payload: ResetConfirmRequest, db: Session = Depends(get_db)):
-    user_id = decode_reset_token(payload.reset_token)
-    user = db.get(User, user_id)
-    if user is None:
+    user = decode_reset_token(payload.reset_token, db)
+    changed = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update({
+        User.hashed_password: hash_password(payload.new_password), User.auth_key: uuid4().hex,
+        User.failed_attempts: 0, User.locked_until: None,
+    }, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="找回链接已失效，请重新验证")
-    user.hashed_password = hash_password(payload.new_password)
-    user.failed_attempts = 0
-    user.locked_until = None  # 重置成功后立即解锁
     db.commit()
     return {"ok": True, "message": "密码重置成功，账号已解锁，请使用新密码登录"}
+
+
+@router.post("/logout", summary="退出并撤销该账号已有登录与找回凭证")
+def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    changed = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update({User.auth_key: uuid4().hex}, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(401, "登录已失效，请重新登录")
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/me", response_model=UserOut, summary="获取当前用户信息")
@@ -178,16 +211,31 @@ def update_me(
 
 @router.delete("/me", summary="注销账号（1.7：二次确认后清理全部个人数据，含上传文件）")
 def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 上传文件存绝对路径，直接删除；空目录一并清理
+    # 先锁定并核对账号身份，防注销与 ID 重建并发时误删新账号。
+    owned = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update({User.auth_key: user.auth_key}, synchronize_session=False)
+    if owned != 1:
+        db.rollback()
+        raise HTTPException(401, "登录已失效，请重新登录")
+    # 只删除上传根目录内、属于该账号的文件，异常路径不允许越界删除。
     materials = db.query(Material).filter(Material.user_id == user.id).all()
+    root = UPLOAD_DIR.resolve()
+    paths = []
     for material in materials:
-        Path(material.file_path).unlink(missing_ok=True)
+        path = Path(material.file_path).resolve()
+        if not path.is_relative_to(root) or path == root:
+            raise HTTPException(409, "上传文件路径异常，请联系管理员处理")
+        if path.exists() and not path.is_file():
+            raise HTTPException(409, "上传文件路径异常，请联系管理员处理")
+        if db.query(Material).filter(Material.file_path == material.file_path, Material.user_id != user.id).first() is None:
+            paths.append(path)  # 演示库可能多用户共用同一文件，仍有引用时保留。
+    for path in paths:
+        path.unlink(missing_ok=True)
     user_dir = UPLOAD_DIR / str(user.id)
     if user_dir.exists() and not any(user_dir.iterdir()):
         user_dir.rmdir()
 
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
-    for model in (FocusSession, FocusGoal, Task, Analysis, UserProfile):
+    for model in (Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
         db.query(model).filter(model.user_id == user.id).delete()
     db.query(Material).filter(Material.user_id == user.id).delete()
     db.query(Exam).filter(Exam.user_id == user.id).delete()

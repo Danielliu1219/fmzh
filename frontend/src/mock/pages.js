@@ -4,7 +4,7 @@
 // 与首页同一套演示数据（高数 5 天后 / 英语 11 天后 / 数据结构 14 天后）。
 // 仅界面预览用；联调与答辩演示请以真实后端为准（USE_MOCK = false）。
 // ============================================================
-import { mockDashboard, getToday } from './dashboard'
+import { mockDashboard, getToday, mockStudySession } from './dashboard'
 
 // 考试列表（与首页 mock 同源；note 为页面补充字段）
 export const mockExams = mockDashboard.exams.map((e) => ({ ...e, note: '' }))
@@ -85,7 +85,7 @@ export const mockAnalysis = {
 // 学习统计总览（与 StatsOverviewOut 同构；锚定 getToday()，与首页 mock 同一天）
 const round3 = (x) => Math.round(x * 1000) / 1000
 // 30 天每日专注分钟（最后 7 天合计 225，对齐 mockDashboard.extras.focus_minutes）
-const MINUTES_30 = [30, 0, 45, 20, 0, 35, 50, 0, 25, 40, 0, 30, 15, 0, 20, 35, 0, 40, 25, 0, 30, 20, 0, 25, 0, 25, 30, 40, 60, 45]
+const MINUTES_30 = [30, 0, 45, 20, 0, 35, 50, 0, 25, 40, 0, 30, 15, 0, 20, 35, 0, 40, 25, 0, 30, 20, 0, 25, 0, 25, 30, 40, 30, 75]
 
 const buildStats = (days) => {
   const base = new Date(`${getToday()}T00:00:00`)
@@ -94,7 +94,7 @@ const buildStats = (days) => {
     const d = new Date(base)
     d.setDate(base.getDate() - (days - 1 - i))
     const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    const minutes = MINUTES_30[30 - days + i] ?? 0
+    const minutes = i === days - 1 ? mockStudySession.focus.total_minutes : (MINUTES_30[30 - days + i] ?? 0)
     const total = minutes > 0 ? (minutes >= 40 ? 3 : 2) : 0
     const done = total > 0 ? total - 1 : 0
     daily.push({ date, minutes, total, done, rate: total ? round3(done / total) : 0 })
@@ -107,6 +107,13 @@ const buildStats = (days) => {
     { exam_id: 2, subject: '大学英语', minutes: eng, total_tasks: 3, done_tasks: 1, rate: 0.333, exam_date: '2026-09-18', days_left: 11 },
     { exam_id: 3, subject: '数据结构', minutes: 0, total_tasks: 0, done_tasks: 0, rate: 0, exam_date: '2026-09-21', days_left: 14 },
   ]
+  for (const subject of subjects) {
+    const tasks = mockStudySession.tasks.filter(t=>t.exam_id===subject.exam_id)
+    subject.total_tasks=tasks.length
+    subject.done_tasks=tasks.filter(t=>t.is_done).length
+    subject.rate=tasks.length?round3(subject.done_tasks/tasks.length):0
+  }
+  const totalTasks=mockStudySession.tasks.length,doneTasks=mockStudySession.tasks.filter(t=>t.is_done).length
   const free = totalMinutes - gao - eng
   if (free > 0) {
     subjects.push({ exam_id: null, subject: '未指定科目', minutes: free, total_tasks: 0, done_tasks: 0, rate: 0, exam_date: null, days_left: null })
@@ -116,9 +123,9 @@ const buildStats = (days) => {
     start_date: daily[0]?.date ?? '',
     end_date: daily[daily.length - 1]?.date ?? '',
     total_minutes: totalMinutes,
-    total_tasks: 8,
-    done_tasks: 3,
-    rate: 0.375,
+    total_tasks: totalTasks,
+    done_tasks: doneTasks,
+    rate: totalTasks?round3(doneTasks/totalTasks):0,
     subjects,
     days: daily,
   }
@@ -126,3 +133,151 @@ const buildStats = (days) => {
 
 export const mockStatsOverview = (days = 7) =>
   new Promise((resolve) => setTimeout(() => resolve(structuredClone(buildStats(days))), 600))
+
+// 备考周报（5.3）：默认最近 7 天，数据与 mockStudySession / mockStatsOverview 同源
+const pad2 = (n) => String(n).padStart(2, '0')
+const asDate = (s) => new Date(`${s}T00:00:00`)
+const fmtDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+const addDays = (s, n) => {
+  const d = asDate(s)
+  d.setDate(d.getDate() + n)
+  return fmtDate(d)
+}
+
+const weeklyLevel = (score) =>
+  score >= 85 ? '优秀' : score >= 70 ? '良好' : score >= 55 ? '一般' : '薄弱'
+
+const weeklyMastery = (rate, minutes) =>
+  Math.max(0, Math.min(100, Math.round(40 + rate * 45 + Math.min(minutes / 240, 1) * 15)))
+
+const evaluateWeeklySubject = ({ rate, minutes, days_left }) => {
+  const mastery = weeklyMastery(rate, minutes)
+  const level = weeklyLevel(mastery)
+  let comment
+  let suggestions
+  if (rate >= 0.8 && minutes >= 180) {
+    comment = `本周节奏稳定，完成率 ${Math.round(rate * 100)}%，专注 ${minutes} 分钟，基础掌握较扎实，可以开始挑战综合题。`
+    suggestions = ['保持当前节奏，穿插综合题与易错点复盘，避免只做熟悉题型。']
+  } else if (rate >= 0.5) {
+    comment = `本周完成率 ${Math.round(rate * 100)}%，专注 ${minutes} 分钟，进度基本可控，但仍有一定提升空间。`
+    suggestions = ['把未完成任务拆成 30~45 分钟的小块，优先补齐高权重知识点。']
+  } else {
+    comment = `本周完成率仅 ${Math.round(rate * 100)}%，专注 ${minutes} 分钟，推进偏慢，需要及时调整复习计划。`
+    suggestions = ['先保证每天至少 1 个番茄钟，恢复稳定节奏。', '优先完成高优先级任务，避免任务堆积到考前。']
+  }
+  if (days_left != null && days_left <= 7) suggestions.push(`距离考试仅剩 ${days_left} 天，建议以真题和高频考点为主。`)
+  if (rate >= 1) suggestions.push('本周任务已全部完成，可增加一次自测检验真实掌握程度。')
+  return { mastery, level, comment, suggestions: suggestions.slice(0, 3) }
+}
+
+const buildWeeklyReport = (weekStart) => {
+  const today = getToday()
+  const start = weekStart || addDays(today, -6)
+  const candidateEnd = addDays(start, 6)
+  const end = candidateEnd > today ? today : candidateEnd
+  const dates = []
+  for (let d = start; d <= end; d = addDays(d, 1)) dates.push(d)
+  const isCurrentWindow = end === today
+
+  // 当前窗口用与统计页一致的每日专注分钟；更早的窗口演示为无记录
+  const focusPattern = [25, 0, 25, 30, 40, 30, mockStudySession.focus.total_minutes]
+  const windowTasks = mockStudySession.tasks.filter((t) => t.plan_date >= start && t.plan_date <= end)
+  const days = dates.map((date, index) => {
+    const tasks = windowTasks.filter((t) => t.plan_date === date)
+    const done = tasks.filter((t) => t.is_done).length
+    return {
+      date,
+      minutes: isCurrentWindow ? (focusPattern[index] ?? 0) : 0,
+      total: tasks.length,
+      done,
+      rate: tasks.length ? round3(done / tasks.length) : 0,
+    }
+  })
+  const totalMinutes = days.reduce((sum, d) => sum + d.minutes, 0)
+  const totalTasks = windowTasks.length
+  const doneTasks = windowTasks.filter((t) => t.is_done).length
+
+  const shares = { 1: 0.55, 2: 0.3, 3: 0 }
+  let assigned = 0
+  const subjects = mockStudySession.exams.map((exam) => {
+    const tasks = windowTasks.filter((t) => t.exam_id === exam.id)
+    const done = tasks.filter((t) => t.is_done).length
+    const minutes = Math.round(totalMinutes * (shares[exam.id] ?? 0))
+    assigned += minutes
+    const rate = tasks.length ? round3(done / tasks.length) : 0
+    return {
+      exam_id: exam.id,
+      subject: exam.subject,
+      minutes,
+      total_tasks: tasks.length,
+      done_tasks: done,
+      rate,
+      exam_date: exam.exam_date,
+      days_left: exam.days_left,
+      ...evaluateWeeklySubject({ rate, minutes, days_left: exam.days_left }),
+    }
+  })
+  const freeMinutes = totalMinutes - assigned
+  if (freeMinutes > 0) {
+    subjects.push({
+      exam_id: null,
+      subject: '未指定科目',
+      minutes: freeMinutes,
+      total_tasks: 0,
+      done_tasks: 0,
+      rate: 0,
+      exam_date: null,
+      days_left: null,
+      mastery: null,
+      level: '',
+      comment: '',
+      suggestions: [],
+    })
+  }
+
+  const scored = subjects.filter((s) => s.exam_id !== null)
+  const overall = scored.length
+    ? Math.round(scored.reduce((sum, s) => sum + s.mastery, 0) / scored.length)
+    : null
+  const best = scored.length ? scored.reduce((a, b) => (b.mastery > a.mastery ? b : a)) : null
+  const weakest = scored.length ? scored.reduce((a, b) => (b.mastery < a.mastery ? b : a)) : null
+  const rate = totalTasks ? round3(doneTasks / totalTasks) : 0
+  let summary = `（Mock）本周共学习 ${totalMinutes} 分钟，完成任务 ${doneTasks}/${totalTasks}（完成率 ${Math.round(rate * 100)}%）。`
+  if (best && weakest) {
+    summary +=
+      best === weakest
+        ? `${best.subject}是本周主要复习科目，建议继续巩固并补充自测。`
+        : `${best.subject}掌握最好（${best.mastery} 分），${weakest.subject}相对薄弱（${weakest.mastery} 分），下周建议向后者适当倾斜时间。`
+  }
+
+  const highlights = []
+  if (best) highlights.push(`${best.subject}掌握度最高：${best.mastery} 分（${best.level}）`)
+  if (totalMinutes) highlights.push(`本周累计专注 ${totalMinutes} 分钟`)
+  if (totalTasks) highlights.push(`任务完成率 ${Math.round(rate * 100)}%（${doneTasks}/${totalTasks}）`)
+
+  const advice = []
+  if (weakest && weakest.mastery < 70) advice.push(`${weakest.subject}优先补薄弱章节，每天安排 1 个专项番茄钟。`)
+  advice.push('保持每天复盘 10 分钟，把错题与未完成任务及时清理。')
+  advice.push('下周至少完成一次整卷或整套自测，检验真实掌握程度。')
+
+  return {
+    week_start: start,
+    week_end: end,
+    generated_at: `${today}T21:30:00`,
+    total_minutes: totalMinutes,
+    total_tasks: totalTasks,
+    done_tasks: doneTasks,
+    rate,
+    active_days: days.filter((d) => d.minutes > 0).length,
+    overall_mastery: overall,
+    summary,
+    highlights,
+    next_week_advice: advice,
+    subjects,
+    days,
+    note: subjects.length ? '' : '该区间还没有学习记录，完成一些任务或用番茄钟专注一次后再生成周报。',
+  }
+}
+
+export const mockWeeklyReport = (weekStart) =>
+  new Promise((resolve) => setTimeout(() => resolve(structuredClone(buildWeeklyReport(weekStart))), 600))

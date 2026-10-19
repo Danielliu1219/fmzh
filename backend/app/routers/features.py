@@ -4,7 +4,7 @@
 import json
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -457,25 +457,20 @@ def timeslots(user: User = Depends(get_current_user), db: Session = Depends(get_
 def compute_relief(db: Session, user: User, option: str) -> dict:
     """低情绪减负：把今日（含逾期）未完成任务在约束下重排到后续日期
 
-    约束：① 不晚于该任务所属考试的日期；② 每日不超过画像的每日可用时长
+    约束：① 不晚于该任务所属考试的日期；② 每日不超过全科共享的每日可用时长
     （暂停半天时今日容量取 0，减轻当日取一半）；③ 按任务优先级从高到低优先安排。
     排不下的任务进 conflicts 明确提示取舍，不硬塞到后续日期。
     """
     if option not in ("lighten", "halfday"):
-        option = "lighten"
+        raise HTTPException(422, "不支持的减负选项")
     today = date.today()
 
-    profile = (
-        db.query(UserProfile)
-        .filter(UserProfile.user_id == user.id)
-        .order_by(UserProfile.id.desc())
-        .first()
-    )
-    daily_hours = profile.daily_hours if profile and profile.daily_hours else _DEFAULT_DAILY_HOURS
-    daily_minutes = int(daily_hours * 60)
+    from ..services.study_planner import daily_budget
+    daily_minutes = daily_budget(db, user.id)
     today_cap = 0 if option == "halfday" else daily_minutes // 2
 
-    tasks = db.query(Task).filter(Task.user_id == user.id, Task.is_done.is_(False)).all()
+    all_tasks = db.query(Task).filter(Task.user_id == user.id).all()
+    tasks = [t for t in all_tasks if not t.is_done]
     exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
 
     movable = [t for t in tasks if t.plan_date <= today]
@@ -485,6 +480,9 @@ def compute_relief(db: Session, user: User, option: str) -> dict:
     load: dict[date, int] = {}
     for t in frozen:
         load[t.plan_date] = load.get(t.plan_date, 0) + t.estimated_minutes
+    for t in all_tasks:
+        if t.is_done and t.plan_date >= today:
+            load[t.plan_date] = load.get(t.plan_date, 0) + t.estimated_minutes
 
     def sort_key(t: Task):
         exam = exams.get(t.exam_id)
@@ -495,17 +493,16 @@ def compute_relief(db: Session, user: User, option: str) -> dict:
     moves, conflicts = [], []
     for t in movable:
         exam = exams.get(t.exam_id)
-        deadline = exam.exam_date if exam else None
+        deadline = exam.exam_date if exam else today + timedelta(days=365)
         placed = None
         d = today
-        while deadline is None or d <= deadline:
+        while d <= deadline:
             if d == today and today_cap == 0:
                 d += timedelta(days=1)
                 continue
             cap = today_cap if d == today else daily_minutes
             used = load.get(d, 0)
-            # 空的一天允许放单个超长任务，避免排不下时死循环
-            if used + t.estimated_minutes <= cap or (used == 0 and cap > 0):
+            if used + t.estimated_minutes <= cap:
                 placed = d
                 break
             d += timedelta(days=1)
@@ -541,7 +538,7 @@ def compute_relief(db: Session, user: User, option: str) -> dict:
 
     return {
         "option": option,
-        "daily_hours": daily_hours,
+        "daily_hours": daily_minutes / 60,
         "today_capacity": today_cap,
         "moves": moves,
         "conflicts": conflicts,
@@ -565,6 +562,8 @@ def relief_apply(
     db: Session = Depends(get_db),
 ):
     plan = compute_relief(db, user, payload.option)
+    if plan['conflicts']:
+        raise HTTPException(409, "仍有任务无法安排，请先调整任务或每日时间")
     moves = {m["task_id"]: m["to_date"] for m in plan["moves"]}
     if moves:
         for t in (

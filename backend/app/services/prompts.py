@@ -6,6 +6,7 @@
 
 LLM_MOCK=true 时使用本文件的启发式提取器/示例数据，无需 API Key。
 """
+import json
 import re
 from datetime import date, timedelta
 
@@ -126,7 +127,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
     {"day": 1, "date": "2026-09-08", "title": "当天复习主题", "estimated_minutes": 180, "priority": 1, "detail": "具体做什么"}
   ],
   "quiz": [
-    {"question": "题目", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": "B", "analysis": "解析", "knowledge_point": "对应知识点"}
+    {"kind": "single", "question": "题目", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": "B", "analysis": "解析", "knowledge_point": "对应知识点", "accepted_answers": []}
   ]
 }
 
@@ -135,7 +136,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
 2. level 只取 must（必考）/common（常考）。
 3. 所有推荐必须基于用户上传的资料内容，并注明 source（出自哪类资料）；资料里没有的依据不要编造，可以在 summary 中说明资料不足。
 4. review_plan 必须严格按用户画像定制：目标为 pass 且基础 weak 时，优先高频基础内容、适当压缩任务量；目标为 high 时加入综合题、难题和易错点。计划天数不超过 available_days，每天任务量不超过 daily_hours*60 分钟。
-5. 自测题 3~5 道，尽量贴合资料内容。
+5. 自测题 3~5 道，贴合历年题型与资料内容。kind 只取 single（单选）、multiple（多选）、boolean（判断）、fill（填空）；单/多选 options 按 A/B/C 顺序，answer 为选项字母，多选用 A,C 格式；判断答案为 true 或 false；填空答案必须确定，accepted_answers 可列明确等价写法。不要生成需要主观评分的题。
 6. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
 
 
@@ -228,4 +229,140 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
             for i in range(days)
         ],
         "quiz": quiz_templates,
+    }
+
+
+# ==================== 备考周报（FMZH-SRS-5.3.0） ====================
+
+WEEKLY_REPORT_SYSTEM_PROMPT = """你是"期末周别慌"系统的备考周报助手。请根据本周的任务完成率与专注时长，给各科目做掌握程度评测。
+
+输出要求（严格 JSON，不要输出任何其他文字）：
+{
+  "summary": "本周整体总结，一两句话",
+  "overall_mastery": 72,
+  "highlights": ["本周值得肯定的地方", "..."],
+  "next_week_advice": ["下周具体可执行的建议", "..."],
+  "subjects": [
+    {"subject": "高等数学", "mastery": 75, "level": "良好", "comment": "掌握情况简评", "suggestions": ["具体建议", "..."]}
+  ]
+}
+
+约束：
+1. mastery 为 0~100 的整数；level 只取 优秀（>=85）/ 良好（>=70）/ 一般（>=55）/ 薄弱（<55）。
+2. 只评价输入 JSON 中出现的科目，不要编造科目；每个科目都必须给出评测。
+3. 评分综合任务完成率、专注时长、距离考试天数判断；数据少时不要给出过高分，并在 comment 中说明依据有限。
+4. suggestions 和 next_week_advice 要具体可执行（例如优先补哪类内容、每天投入多久），不要空泛。
+5. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
+
+
+def build_weekly_report_user_prompt(week_start: str, week_end: str, metrics: list[dict]) -> str:
+    return (
+        f"统计区间：{week_start} ~ {week_end}\n"
+        "本周各科数据（JSON；rate 为任务完成率，days_left 为距考试天数）：\n"
+        f"{json.dumps(metrics, ensure_ascii=False, indent=2)}\n"
+        "请按系统要求输出 JSON。"
+    )
+
+
+def _weekly_level(score: int) -> str:
+    if score >= 85:
+        return "优秀"
+    if score >= 70:
+        return "良好"
+    if score >= 55:
+        return "一般"
+    return "薄弱"
+
+
+def mock_subject_evaluation(metric: dict) -> dict:
+    """Mock 单科评测：按完成率与专注时长给出稳定的掌握度评分"""
+    subject = str(metric.get("subject") or "")
+    minutes = int(metric.get("minutes") or 0)
+    rate = float(metric.get("rate") or 0)
+    done = int(metric.get("done_tasks") or 0)
+    total = int(metric.get("total_tasks") or 0)
+
+    # 40 分基础 + 完成率最多 45 分 + 专注投入最多 15 分
+    score = int(round(40 + rate * 45 + min(minutes / 240, 1) * 15))
+    score = max(0, min(100, score))
+    level = _weekly_level(score)
+
+    if rate >= 0.8 and minutes >= 180:
+        comment = f"本周节奏稳定，完成率 {rate:.0%}，专注 {minutes} 分钟，基础掌握较扎实，可以开始挑战综合题。"
+        suggestions = ["保持当前节奏，穿插综合题与易错点复盘，避免只做熟悉题型。"]
+    elif rate >= 0.5:
+        comment = f"本周完成率 {rate:.0%}，专注 {minutes} 分钟，进度基本可控，但仍有一定提升空间。"
+        suggestions = ["把未完成任务拆成 30~45 分钟的小块，优先补齐高权重知识点。"]
+    else:
+        comment = f"本周完成率仅 {rate:.0%}，专注 {minutes} 分钟，推进偏慢，需要及时调整复习计划。"
+        suggestions = [
+            "先保证每天至少 1 个番茄钟，恢复稳定节奏。",
+            "优先完成高优先级任务，避免任务堆积到考前。",
+        ]
+
+    try:
+        days_left = int(metric.get("days_left"))
+    except (TypeError, ValueError):
+        days_left = None
+    if days_left is not None and days_left <= 7:
+        suggestions.append(f"距离考试仅剩 {days_left} 天，建议以真题和高频考点为主。")
+    if total and done >= total:
+        suggestions.append("本周任务已全部完成，可增加一次自测检验真实掌握程度。")
+
+    return {
+        "subject": subject,
+        "mastery": score,
+        "level": level,
+        "comment": comment,
+        "suggestions": suggestions[:3],
+    }
+
+
+def mock_generate_weekly_report(metrics: list[dict]) -> dict:
+    """Mock 周报：汇总各科数据并生成掌握度评测与建议"""
+    items = [mock_subject_evaluation(m) for m in metrics if m.get("subject")]
+    scores = [item["mastery"] for item in items]
+    overall = int(round(sum(scores) / len(scores))) if scores else None
+
+    total_minutes = sum(int(m.get("minutes") or 0) for m in metrics)
+    total_tasks = sum(int(m.get("total_tasks") or 0) for m in metrics)
+    done_tasks = sum(int(m.get("done_tasks") or 0) for m in metrics)
+    rate = done_tasks / total_tasks if total_tasks else 0.0
+
+    summary = (
+        f"（Mock）本周共学习 {total_minutes} 分钟，完成任务 {done_tasks}/{total_tasks}"
+        f"（完成率 {rate:.0%}）。"
+    )
+    best = max(items, key=lambda x: x["mastery"]) if items else None
+    weakest = min(items, key=lambda x: x["mastery"]) if items else None
+    if best and weakest:
+        if best["subject"] == weakest["subject"]:
+            summary += f"{best['subject']}是本周主要复习科目，建议继续巩固并补充自测。"
+        else:
+            summary += (
+                f"{best['subject']}掌握最好（{best['mastery']} 分），"
+                f"{weakest['subject']}相对薄弱（{weakest['mastery']} 分），"
+                "下周建议向后者适当倾斜时间。"
+            )
+
+    highlights = []
+    if best:
+        highlights.append(f"{best['subject']}掌握度最高：{best['mastery']} 分（{best['level']}）")
+    if total_minutes:
+        highlights.append(f"本周累计专注 {total_minutes} 分钟")
+    if total_tasks:
+        highlights.append(f"任务完成率 {rate:.0%}（{done_tasks}/{total_tasks}）")
+
+    advice = []
+    if weakest and weakest["mastery"] < 70:
+        advice.append(f"{weakest['subject']}优先补薄弱章节，每天安排 1 个专项番茄钟。")
+    advice.append("保持每天复盘 10 分钟，把错题与未完成任务及时清理。")
+    advice.append("下周至少完成一次整卷或整套自测，检验真实掌握程度。")
+
+    return {
+        "summary": summary,
+        "overall_mastery": overall,
+        "highlights": highlights[:4],
+        "next_week_advice": advice[:4],
+        "subjects": items,
     }
