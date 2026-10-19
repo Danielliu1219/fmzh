@@ -10,7 +10,7 @@
         :auto-upload="false"
         :limit="1"
         :on-change="onFileChange"
-        :on-remove="() => (file = null)"
+        :on-remove="onFileRemove"
         accept=".txt,.pdf,.docx"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
@@ -26,13 +26,44 @@
         <el-select v-model="uploadForm.exam_id" placeholder="所属科目（选填）" clearable>
           <el-option v-for="e in exams" :key="e.id" :label="e.subject" :value="e.id" />
         </el-select>
-        <el-select v-model="uploadForm.source_type" placeholder="来源类型">
-          <el-option v-for="s in sourceTypes" :key="s" :label="s" :value="s" />
+        <el-select
+          v-model="uploadForm.source_type"
+          placeholder="来源类型"
+          @change="sourceTouched = true"
+        >
+          <el-option v-for="s in sourceTypes" :key="s" :label="`${s}（${sourceLevelLabel(s)}）`" :value="s" />
         </el-select>
         <el-input v-model="uploadForm.description" placeholder="说明（选填）" />
         <el-button type="primary" :loading="uploading" :disabled="!file" @click="onUpload">
           上传并解析
         </el-button>
+      </div>
+      <div v-if="suggestingSource" class="source-suggest">正在识别资料来源…</div>
+      <div v-else-if="sourceSuggestion" class="source-suggest">
+        <span>
+          系统建议来源：<b>{{ sourceSuggestion.source_type }}</b>
+          <el-tag size="small" effect="plain" class="source-conf">
+            {{ confidenceText(sourceSuggestion.confidence) }}置信度
+          </el-tag>
+          <span class="source-reason">{{ sourceSuggestion.reason }}</span>
+        </span>
+        <el-tag
+          v-if="uploadForm.source_type === sourceSuggestion.source_type"
+          size="small"
+          type="success"
+          effect="plain"
+        >
+          已采用
+        </el-tag>
+        <el-button v-else link type="primary" size="small" @click="applySuggestion">
+          采用建议
+        </el-button>
+      </div>
+      <div class="upload-weight-hint">
+        资料权重将按来源「{{ uploadForm.source_type }}」默认
+        {{ Math.round(sourceWeight(uploadForm.source_type) * 100) }}%（档位：{{
+          sourceLevelLabel(uploadForm.source_type)
+        }}），上传后可在编辑里手动调整
       </div>
     </el-card>
 
@@ -111,6 +142,11 @@
                   <b class="lib-title">{{ row.title }}</b>
                   <el-tag :type="sourceTagType(row.source_type)" effect="plain" size="small">
                     {{ row.source_type }}
+                  </el-tag>
+                  <el-tag size="small" type="warning" effect="plain">
+                    权重 {{ Math.round((row.weight ?? 0.5) * 100) }}%（{{
+                      row.weight_level ?? weightLevel(row.weight ?? 0.5)
+                    }}）
                   </el-tag>
                   <el-tag size="small" type="info">{{ row.file_type.toUpperCase() }}</el-tag>
                   <el-tag size="small" :type="row.parse_status === 'done' ? 'success' : 'danger'">
@@ -215,6 +251,18 @@
             <el-tag :type="sourceTagType(row.source_type)" effect="plain">{{ row.source_type }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="资料权重" width="170">
+          <template #default="{ row }">
+            <div class="weight-cell">
+              <el-progress
+                :percentage="Math.round((row.weight ?? 0.5) * 100)"
+                :stroke-width="8"
+                :color="weightColor(row.weight ?? 0.5)"
+              />
+              <span class="weight-hint">{{ weightHint(row) }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="file_type" label="格式" width="80">
           <template #default="{ row }">
             <el-tag size="small" type="info">{{ row.file_type.toUpperCase() }}</el-tag>
@@ -272,6 +320,33 @@
             <el-option v-for="s in sourceTypes" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
+        <el-form-item label="资料权重">
+          <div class="weight-edit">
+            <el-slider
+              v-model="editForm.weightPercent"
+              :min="0"
+              :max="100"
+              :step="1"
+              show-input
+              @change="editForm.weightTouched = true"
+            />
+            <div class="weight-edit-hint">
+              <span>
+                来源「{{ editForm.source_type }}」默认 {{ editDefaultPercent }}%（档位：{{
+                  weightLevel(editForm.weightPercent / 100)
+                }}）
+              </span>
+              <el-button
+                link
+                type="primary"
+                :disabled="editForm.weightPercent === editDefaultPercent"
+                @click="resetEditWeight"
+              >
+                恢复默认
+              </el-button>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item label="标签">
           <el-input v-model="editForm.tags" placeholder="多个标签用逗号分隔（选填）" />
         </el-form-item>
@@ -325,12 +400,65 @@ import QuizFeedback from '../components/QuizFeedback.vue'
 const sourceTypes = ['历年题', '老师重点', '平时作业', '课堂笔记', '教材章节', '实验报告', '练习题', '其他']
 
 const route = useRoute()
+// 资料权重默认层级（用例 4.2，与 backend/app/services/material_weight.py 保持一致）
+const SOURCE_WEIGHTS = {
+  老师重点: 1.0,
+  历年题: 0.85,
+  练习题: 0.85,
+  平时作业: 0.7,
+  课堂笔记: 0.7,
+  教材章节: 0.55,
+  实验报告: 0.55,
+  其他: 0.5,
+}
+const sourceWeight = (sourceType) => SOURCE_WEIGHTS[sourceType] ?? 0.5
+// 权重档位（用例 3.2，与 backend/app/services/material_weight.py 一致）
+const weightLevel = (w) => (w >= 0.85 ? '高' : w >= 0.7 ? '中' : '低')
+const sourceLevelLabel = (sourceType) => weightLevel(sourceWeight(sourceType))
+const confidenceText = (c) => ({ high: '高', medium: '中', low: '低' })[c] || '低'
+const weightColor = (w) => (w >= 0.85 ? '#e05d5d' : w >= 0.7 ? '#e6a23c' : '#3fa97a')
+const weightHint = (row) => {
+  const weight = row.weight ?? 0.5
+  const isDefault = Math.abs(weight - (row.default_weight ?? sourceWeight(row.source_type))) < 1e-6
+  const level = row.weight_level ?? weightLevel(weight)
+  return `${isDefault ? '来源默认' : '已手动调整'} · ${level}`
+}
+
+// 静态演示模式下的来源建议（真实模式走后端解析正文，更准确）
+const MOCK_SOURCE_RULES = [
+  ['实验报告', ['实验报告', '实验', '报告']],
+  ['老师重点', ['老师重点', '重点', '考点', '提纲', '讲义', '标注']],
+  ['历年题', ['历年', '真题', '考题', '试卷', '试题', '期末考']],
+  ['课堂笔记', ['课堂笔记', '笔记', '听课', '课堂记录']],
+  ['平时作业', ['平时作业', '作业', '课后作业', 'homework']],
+  ['教材章节', ['教材', '课本', '章节', '课件', 'ppt']],
+  ['练习题', ['练习题', '练习', '习题', '题库', '刷题', 'exercise']],
+]
+const suggestSourceLocal = (filename) => {
+  const name = (filename || '').toLowerCase()
+  for (const [type, keywords] of MOCK_SOURCE_RULES) {
+    const hit = keywords.find((k) => name.includes(k.toLowerCase()))
+    if (hit) {
+      return { source_type: type, confidence: 'medium', reason: `文件名含「${hit}」` }
+    }
+  }
+  return {
+    source_type: '其他',
+    confidence: 'low',
+    reason: '未识别到明显的来源特征，默认归为「其他」，可手动选择',
+  }
+}
+
 const exams = ref([])
 const materials = ref([])
 const loading = ref(false)
 const file = ref(null)
 const uploading = ref(false)
 const viewMode = ref(route.query.view === 'collection' ? 'collection' : 'library')
+// 系统辅助识别来源建议（用例 3.2）
+const sourceSuggestion = ref(null)
+const suggestingSource = ref(false)
+const sourceTouched = ref(false) // 学生是否手动改过来源类型
 
 const uploadForm = reactive({ title: '', exam_id: null, source_type: '其他', description: '' })
 const filter = reactive({
@@ -344,7 +472,21 @@ const filter = reactive({
 
 const editVisible = ref(false)
 const editSaving = ref(false)
-const editForm = reactive({ id: null, title: '', exam_id: null, source_type: '其他', description: '', tags: '' })
+const editForm = reactive({
+  id: null,
+  title: '',
+  exam_id: null,
+  source_type: '其他',
+  description: '',
+  tags: '',
+  weightPercent: 50, // 资料权重（用例 4.2），界面用百分比
+  weightTouched: false, // 学生是否手动拖动过滑块
+})
+const editDefaultPercent = computed(() => Math.round(sourceWeight(editForm.source_type) * 100))
+const resetEditWeight = () => {
+  editForm.weightPercent = editDefaultPercent.value
+  editForm.weightTouched = false
+}
 
 // 合并导出复习笔记（用例 3.6）
 const selectedIds = ref([])
@@ -485,9 +627,47 @@ const loadCollections = async () => {
   collections.value = await collectionApi.list()
 }
 
+// 选文件后请求来源建议；失败不影响正常上传
+const requestSourceSuggestion = async (rawFile) => {
+  sourceSuggestion.value = null
+  if (!rawFile) return
+  suggestingSource.value = true
+  try {
+    let suggestion
+    if (USE_MOCK) {
+      suggestion = suggestSourceLocal(rawFile.name)
+    } else {
+      const formData = new FormData()
+      formData.append('file', rawFile)
+      suggestion = await materialApi.suggestSource(formData)
+    }
+    sourceSuggestion.value = suggestion
+    // 学生还没手动选过来源时，自动采用系统建议
+    if (suggestion && !sourceTouched.value) {
+      uploadForm.source_type = suggestion.source_type
+    }
+  } catch (e) {
+    sourceSuggestion.value = null
+  } finally {
+    suggestingSource.value = false
+  }
+}
+
 const onFileChange = (uploadFile) => {
   file.value = uploadFile.raw
   if (!uploadForm.title) uploadForm.title = uploadFile.name.replace(/\.[^.]+$/, '')
+  requestSourceSuggestion(uploadFile.raw)
+}
+
+const onFileRemove = () => {
+  file.value = null
+  sourceSuggestion.value = null
+}
+
+const applySuggestion = () => {
+  if (!sourceSuggestion.value) return
+  uploadForm.source_type = sourceSuggestion.value.source_type
+  sourceTouched.value = false
 }
 
 const onUpload = async () => {
@@ -504,6 +684,8 @@ const onUpload = async () => {
         file_type: (file.value.name.split('.').pop() || 'txt').toLowerCase(),
         parse_status: 'done',
         description: uploadForm.description,
+        weight: sourceWeight(uploadForm.source_type),
+        default_weight: sourceWeight(uploadForm.source_type),
         text_preview: '（静态演示文本）上传文件在真实后端下会解析出文本，此处为预览占位。',
       })
     } else {
@@ -519,6 +701,8 @@ const onUpload = async () => {
     file.value = null
     uploadForm.title = ''
     uploadForm.description = ''
+    sourceSuggestion.value = null
+    sourceTouched.value = false
     load()
   } finally {
     uploading.value = false
@@ -562,6 +746,10 @@ const onEdit = (row) => {
   editForm.source_type = row.source_type
   editForm.description = row.description || ''
   editForm.tags = row.tags || ''
+  const weight = row.weight ?? sourceWeight(row.source_type)
+  const defaultWeight = row.default_weight ?? sourceWeight(row.source_type)
+  editForm.weightPercent = Math.round(weight * 100)
+  editForm.weightTouched = Math.abs(weight - defaultWeight) > 1e-6
   editVisible.value = true
 }
 
@@ -581,9 +769,15 @@ const onEditSave = async () => {
       description: editForm.description,
       tags: editForm.tags,
     }
+    // 只有学生手动调过权重才传 weight；没动过时后端会按（可能已改的）来源类型恢复默认
+    if (editForm.weightTouched) payload.weight = editForm.weightPercent / 100
     if (USE_MOCK) {
       const target = mockMaterials.find((m) => m.id === editForm.id)
-      if (target) Object.assign(target, payload)
+      if (target) {
+        Object.assign(target, payload)
+        if (payload.weight == null) target.weight = sourceWeight(target.source_type)
+        target.default_weight = sourceWeight(target.source_type)
+      }
     } else {
       await materialApi.update(editForm.id, payload)
     }
@@ -874,5 +1068,47 @@ watch(() => route.query.exam, value => {
 }
 .lib-ops {
   flex: none;
+}
+.weight-cell {
+  display: flex;
+  flex-direction: column;
+}
+.weight-hint {
+  font-size: 12px;
+  color: var(--text-mid);
+}
+.weight-edit {
+  width: 100%;
+}
+.weight-edit-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-mid);
+}
+.upload-weight-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-mid);
+}
+.source-suggest {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-hi);
+  background: var(--bg-soft, #f7f4ee);
+  border-radius: 6px;
+}
+.source-conf {
+  margin: 0 8px;
+}
+.source-reason {
+  color: var(--text-mid);
+  font-size: 12px;
 }
 </style>

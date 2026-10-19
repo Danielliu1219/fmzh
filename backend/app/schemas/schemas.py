@@ -121,12 +121,23 @@ class MaterialOut(BaseModel):
     parse_status: str
     description: str
     tags: str
+    weight: float = 0.5  # 资料权重（用例 4.2），学生可手动调整
+    default_weight: float = 0.5  # 当前来源类型对应的默认权重，供「恢复默认」使用
+    weight_level: str = "中"  # 权重档位（用例 3.2）：高 / 中 / 低
     created_at: datetime
     snippet: str = ""  # 全文搜索命中片段（用例 3.4），仅带 keyword 查询时返回
 
 
 class MaterialDetailOut(MaterialOut):
     text_preview: str = ""  # 解析文本前 1000 字
+
+
+class SourceSuggestionOut(BaseModel):
+    """系统辅助识别资料来源类型的建议（用例 3.2）"""
+
+    source_type: str  # 七类来源之一，未识别时为「其他」
+    confidence: str  # high / medium / low
+    reason: str = ""  # 命中的文件名/正文关键词说明
 
 
 class MaterialUpdate(BaseModel):
@@ -137,6 +148,7 @@ class MaterialUpdate(BaseModel):
     source_type: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[str] = None
+    weight: Optional[float] = Field(None, ge=0, le=1)  # 资料权重手动调整（用例 4.2）
 
 
 class MaterialMergeIn(BaseModel):
@@ -214,6 +226,36 @@ class ProfileOut(BaseModel):
     missing_fields: list[str] = []
 
 
+# ==================== 资料问答（用例 4.5） ====================
+
+
+class QaMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    role: str  # user / assistant
+    content: str
+    created_at: datetime
+
+
+class QaConversationOut(BaseModel):
+    id: int
+    exam_id: int
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    messages: list[QaMessageOut] = []
+
+
+class QaConversationCreate(BaseModel):
+    exam_id: int
+    title: str = ""
+
+
+class QaAskIn(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+
+
 # ==================== AI 分析（第二次调用） ====================
 
 
@@ -231,6 +273,17 @@ class ExamFocus(BaseModel):
     level: str = "must"  # must 必考 / common 常考
     basis: str = ""
     source: str = ""
+    frequency: int = 0  # 出现次数 / 年份数（用例 4.7，用于高频排序）
+
+
+class QuestionTypeStat(BaseModel):
+    """常考题型分布（用例 4.7）"""
+
+    type: str  # 选择题 / 填空题 / 计算题 / 证明题 / 应用题 / 简答题 / 综合题
+    count: int = 0  # 资料中可识别的题数 / 出现次数
+    frequency: float = Field(0, ge=0, le=1)  # 占比 0~1
+    basis: str = ""  # 统计依据
+    source: str = ""  # 依据来源
 
 
 class PlanItem(BaseModel):
@@ -257,12 +310,72 @@ class AnalysisResult(BaseModel):
     summary: str = ""
     knowledge_points: list[KnowledgePoint] = []
     exam_focus: list[ExamFocus] = []
+    question_types: list[QuestionTypeStat] = []  # 常考题型分布（用例 4.7）
     review_plan: list[PlanItem] = []
     quiz: list[QuizItem] = []
 
 
 class AnalyzeRequest(BaseModel):
     exam_id: int
+
+
+# ==================== 动态调整计划与权重（用例 4.12） ====================
+
+
+class ReplanIn(BaseModel):
+    apply: bool = False  # false=只预览，true=写回分析结果并重建未完成任务
+    fingerprint: Optional[str] = None  # 确认须携带最近一次预览的快照标识
+
+
+class WeightChange(BaseModel):
+    name: str
+    old_weight: float
+    new_weight: float
+    reason: str = ""
+
+
+class ReplanOut(BaseModel):
+    exam_id: int
+    days_left: int
+    done_tasks: int
+    total_tasks: int
+    completion_rate: float  # 0~1
+    wrong_questions: int  # 错题本中的自测错题数
+    weights: list[WeightChange] = []
+    plan: list[PlanItem] = []
+    applied: bool = False
+    task_count: int = 0  # 应用后新建的任务数
+    note: str = ""
+    fingerprint: str = ""
+    scheduling: dict[str, Any] = {}  # 全科安排、每日容量及冲突
+
+
+class MindmapNode(BaseModel):
+    """思维导图节点（用例 4.4）"""
+
+    name: str
+    value: Optional[float] = None  # 知识点权重
+    level: str = ""  # high / medium / low / must / common
+    source: str = ""
+    children: list["MindmapNode"] = []
+
+
+class MemoryCard(BaseModel):
+    """记忆卡片（用例 4.4）：正面提示，背面资料依据"""
+
+    id: int
+    front: str
+    back: str
+    hint: str = ""
+    knowledge_point: str = ""
+    source: str = ""
+
+
+class MindmapOut(BaseModel):
+    exam_id: int
+    course: str
+    mindmap: MindmapNode
+    cards: list[MemoryCard] = []
 
 
 class AnalysisOut(BaseModel):
