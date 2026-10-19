@@ -1,4 +1,5 @@
 """复习资料接口：上传（含解析）/ 列表筛选 / 详情预览 / 编辑移动分类 / 删除"""
+import tempfile
 import uuid
 from datetime import date, datetime, time
 from pathlib import Path
@@ -15,8 +16,11 @@ from ..schemas.schemas import (
     MaterialMergeOut,
     MaterialOut,
     MaterialUpdate,
+    SourceSuggestionOut,
 )
 from ..services.file_parser import parse_file
+from ..services.material_weight import default_weight_for
+from ..services.source_recognition import suggest_source
 from ..services.upload_guard import (
     UploadRejected,
     check_content_head,
@@ -131,11 +135,53 @@ async def upload_material(
         parse_status=parse_status,
         description=description,
         tags=tags,
+        # 资料权重（用例 4.2）：先按来源层级给默认值，学生可再手动调整
+        weight=default_weight_for(source_type),
     )
     db.add(material)
     db.commit()
     db.refresh(material)
     return material
+
+
+@router.post(
+    "/source-suggestion",
+    response_model=SourceSuggestionOut,
+    summary="系统辅助识别资料来源类型建议（用例 3.2）",
+)
+async def suggest_material_source(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """上传前按文件名 + 解析正文给出来源建议，学生可确认或改选；解析失败不影响建议"""
+    try:
+        ext = check_extension(file.filename or "", ALLOWED_TYPES)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    content = await file.read(max_bytes + 1)
+    try:
+        check_size(content, settings.MAX_UPLOAD_SIZE_MB)
+        check_content_head(content, ext)
+    except UploadRejected as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    # 解析正文用于识别；临时文件用完即删，不占用用户上传目录
+    text = ""
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+        text = parse_file(tmp_path, ext)
+    except Exception:
+        text = ""
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    return SourceSuggestionOut(**suggest_source(file.filename or "", text))
 
 
 @router.get("", response_model=list[MaterialOut], summary="资料列表（全文搜索 + 科目/来源/标签/日期筛选 + 排序）")
@@ -201,6 +247,9 @@ def update_material(
 ):
     material = _get_own_material(db, user, material_id)
     data = payload.model_dump(exclude_unset=True)  # 只处理请求里出现的字段
+    # weight 传 null 视为「未调整」，避免把已有的权重清空
+    if data.get("weight", 0) is None:
+        data.pop("weight")
 
     if "title" in data:
         title = (data["title"] or "").strip()
@@ -209,6 +258,9 @@ def update_material(
         data["title"] = title
     if "source_type" in data:
         _check_source_type(data["source_type"])
+        # 改了来源类型但没显式给权重时，回到新来源层级的默认权重（用例 4.2）
+        if "weight" not in data:
+            data["weight"] = default_weight_for(data["source_type"])
     if data.get("exam_id") is not None:
         exam = db.query(Exam).filter(Exam.id == data["exam_id"], Exam.user_id == user.id).first()
         if exam is None:
@@ -265,7 +317,8 @@ def merge_materials(
         material = by_id[material_id]
         lines += [f"## {index}. {material.title}", ""]
 
-        meta = [f"来源类型：{material.source_type}"]
+        weight = material.weight if material.weight is not None else default_weight_for(material.source_type)
+        meta = [f"来源类型：{material.source_type}", f"资料权重：{weight:.2f}"]
         if material.exam_id in subjects:
             meta.append(f"所属科目：{subjects[material.exam_id]}")
         if material.tags:

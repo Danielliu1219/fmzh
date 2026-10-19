@@ -1,4 +1,4 @@
-"""数据库表模型（共 11 张表）
+"""数据库表模型（共 13 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -81,7 +81,23 @@ class Material(Base):
     parse_status = Column(String(16), default="done")  # done / failed
     description = Column(String(512), default="")
     tags = Column(String(256), default="")
+    # 资料权重（用例 4.2）：上传时按来源层级给默认值，学生可手动调整（0~1）
+    weight = Column(Float, default=0.5)
     created_at = Column(DateTime, default=datetime.now)
+
+    @property
+    def default_weight(self) -> float:
+        """当前来源类型对应的默认权重，供前端「恢复默认」使用"""
+        from ..services.material_weight import default_weight_for
+
+        return default_weight_for(self.source_type)
+
+    @property
+    def weight_level(self) -> str:
+        """权重档位（用例 3.2）：高 / 中 / 低"""
+        from ..services.material_weight import weight_level_for
+
+        return weight_level_for(self.weight if self.weight is not None else self.default_weight)
 
 
 class UserProfile(Base):
@@ -180,6 +196,33 @@ class Collection(Base):
     title = Column(String(256), default="")  # 展示用：资料标题或题干
     content = Column(Text, default="")  # 题目详情 JSON（选项/答案/解析/知识点）
     source = Column(String(16), default="manual")  # manual=学生手动收藏 / quiz=自测答错自动入本
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class QaConversation(Base):
+    """资料问答会话（用例 4.5）：一个会话对应一个科目的多轮问答"""
+
+    __tablename__ = "qa_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
+    title = Column(String(128), default="")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class QaMessage(Base):
+    """资料问答消息（用例 4.5）：role=user / assistant，按 id 顺序构成多轮对话"""
+
+    __tablename__ = "qa_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(
+        Integer, ForeignKey("qa_conversations.id"), index=True, nullable=False
+    )
+    role = Column(String(16), nullable=False)  # user / assistant
+    content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.now)
 
 
