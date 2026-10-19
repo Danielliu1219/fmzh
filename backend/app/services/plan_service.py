@@ -9,8 +9,12 @@ from ..models.models import Task
 def create_tasks_from_plan(
     db: Session, user_id: int, exam_id: int, analysis_id: int, plan_items: list
 ) -> int:
-    """删除该考试旧的 AI 任务，按新计划重建，返回任务数量"""
-    db.query(Task).filter(Task.exam_id == exam_id, Task.source == "ai").delete()
+    """替换该考试旧的未完成 AI 任务，按新计划重建；已完成打卡记录保留"""
+    db.query(Task).filter(
+        Task.exam_id == exam_id,
+        Task.source == "ai",
+        Task.is_done.is_(False),
+    ).delete(synchronize_session="fetch")
 
     today = date.today()
     count = 0

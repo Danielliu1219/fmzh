@@ -156,9 +156,16 @@ ANALYSIS_RESULT = {
         {"name": "空间解析几何", "weight": 0.25, "importance": "low", "recommend_reason": "分值低，时间紧可略过", "source": "历年题", "suggest_hours": 1},
     ],
     "exam_focus": [
-        {"content": "两个重要极限与等价无穷小替换", "level": "must", "basis": "近五年每年必考，常以填空+计算出现", "source": "历年题"},
-        {"content": "洛必达法则求极限", "level": "must", "basis": "高频题型，你目前不会，优先补", "source": "老师重点"},
-        {"content": "中值定理证明", "level": "frequent", "basis": "隔年出现，时间充裕再练", "source": "课堂笔记"},
+        {"content": "两个重要极限与等价无穷小替换", "level": "must", "basis": "近五年每年必考，常以填空+计算出现", "source": "历年题", "frequency": 5},
+        {"content": "洛必达法则求极限", "level": "must", "basis": "高频题型，你目前不会，优先补", "source": "老师重点", "frequency": 4},
+        {"content": "中值定理证明", "level": "frequent", "basis": "隔年出现，时间充裕再练", "source": "课堂笔记", "frequency": 2},
+    ],
+    "question_types": [
+        {"type": "选择题", "count": 8, "frequency": 0.2, "basis": "历年题选择题约占两成", "source": "历年题"},
+        {"type": "填空题", "count": 8, "frequency": 0.2, "basis": "历年题填空题稳定出现", "source": "历年题"},
+        {"type": "计算题", "count": 16, "frequency": 0.4, "basis": "历年题计算题占比最高", "source": "历年题"},
+        {"type": "证明题", "count": 4, "frequency": 0.1, "basis": "历年题证明题隔年出现", "source": "历年题"},
+        {"type": "应用题", "count": 4, "frequency": 0.1, "basis": "历年题末段常应用题", "source": "历年题"},
     ],
     "review_plan": [
         {"day": 1, "date": ds(0), "title": "核心概念与定义", "estimated_minutes": 90, "priority": 1, "detail": "极限定义、两个重要极限，配套 10 道基础题"},

@@ -15,7 +15,18 @@ from sqlalchemy.orm import Session
 
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, Task, User, UserProfile
+from ..models.models import (
+    Analysis,
+    Exam,
+    FocusGoal,
+    FocusSession,
+    Material,
+    QaConversation,
+    QaMessage,
+    Task,
+    User,
+    UserProfile,
+)
 from ..schemas.schemas import (
     ChangePasswordRequest,
     ResetConfirmRequest,
@@ -189,6 +200,16 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
     for model in (FocusSession, FocusGoal, Task, Analysis, UserProfile):
         db.query(model).filter(model.user_id == user.id).delete()
+    # 资料问答（4.5）：先删消息再删会话
+    conversation_ids = [
+        row[0]
+        for row in db.query(QaConversation.id).filter(QaConversation.user_id == user.id).all()
+    ]
+    if conversation_ids:
+        db.query(QaMessage).filter(QaMessage.conversation_id.in_(conversation_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(QaConversation).filter(QaConversation.user_id == user.id).delete()
     db.query(Material).filter(Material.user_id == user.id).delete()
     db.query(Exam).filter(Exam.user_id == user.id).delete()
     db.delete(user)  # users 表记录随注销删除，同账号名可重新注册
