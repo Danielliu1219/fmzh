@@ -117,10 +117,13 @@ def add_mistakes(
 ):
     """判分后把答错的题写进错题本；同一用户下题干相同的题只记一次（不重复堆积）"""
     created: list[Collection] = []
+    seen: set[str] = set()
     for mistake in payload.mistakes:
         title = mistake.title.strip()
-        if not title:
+        if not title or title in seen:
             continue
+        # 本批新加的 item 尚未 flush，查库看不到彼此，用集合兜住同请求内的重复题干
+        seen.add(title)
         exists = (
             db.query(Collection)
             .filter(
