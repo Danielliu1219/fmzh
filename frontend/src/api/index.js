@@ -32,6 +32,7 @@ export const examApi = {
 }
 
 export const materialApi = {
+  excerpt: (id, params) => request.get(`/materials/${id}/excerpt`, { params }),
   list: (params) => request.get('/materials', { params }),
   upload: (formData) =>
     request.post('/materials', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
@@ -55,6 +56,7 @@ export const collectionApi = {
 }
 
 export const aiApi = {
+  evidence: (examId, data) => request.post(`/ai/analyses/${examId}/evidence`, data),
   mastery: (examId) => request.get(`/ai/analyses/${examId}/mastery`),
   profile: (data) => request.post('/ai/profile', data),
   savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),

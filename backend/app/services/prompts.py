@@ -119,13 +119,13 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
   "course": "课程名",
   "summary": "一段话总评，说明总体策略（例如：基础薄弱求及格，优先高频基础内容）",
   "knowledge_points": [
-    {"name": "知识点名", "weight": 0.9, "importance": "high", "recommend_reason": "推荐理由", "source": "历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他", "suggest_hours": 6}
+    {"name": "知识点名", "weight": 0.9, "importance": "high", "recommend_reason": "推荐理由", "source": "历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他", "suggest_hours": 6, "citations": [{"material_id": 1, "quote": "该资料中支持推荐的连续原文"}]}
   ],
   "exam_focus": [
-    {"content": "必考/常考内容描述", "level": "must", "basis": "判断依据", "source": "历年题", "frequency": 4}
+    {"content": "必考/常考内容描述", "level": "must", "basis": "判断依据", "source": "历年题", "frequency": 4, "citations": [{"material_id": 1, "quote": "支持判断的连续原文"}]}
   ],
   "question_types": [
-    {"type": "计算题", "count": 8, "frequency": 0.4, "basis": "近 4 年每年约 2 道", "source": "历年题"}
+    {"type": "计算题", "count": 8, "frequency": 0.4, "basis": "近 4 年每年约 2 道", "source": "历年题", "citations": []}
   ],
   "review_plan": [
     {"day": 1, "date": "2026-09-08", "title": "当天复习主题", "estimated_minutes": 180, "priority": 1, "detail": "具体做什么"}
@@ -143,7 +143,8 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
 5. 自测题 3~5 道，贴合历年题型与资料内容。kind 只取 single（单选）、multiple（多选）、boolean（判断）、fill（填空）；单/多选 options 按 A/B/C 顺序，answer 为选项字母，多选用 A,C 格式；判断答案为 true 或 false；填空答案必须确定，accepted_answers 可列明确等价写法。不要生成需要主观评分的题。
 6. question_types 必须基于历年题/练习题等资料统计题型分布：type 取选择题/填空题/计算题/证明题/应用题/简答题/综合题；count 为可识别的题数或出现次数，frequency 为占比 0~1；没有可核实题型数据时返回空列表并说明资料不足，不能编造题数。exam_focus.frequency 只填写可核实的出现次数/年份数。
 7. recommend_reason 和 exam_focus.basis 必须写明依据来源（例如「历年题近 3 年每年出现」「老师标注重点」「画像中的薄弱章节」），不能只写“重要/常考”这类空话；每个结论都要让学生看得出依据是什么。
-8. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
+8. citations 引用资料头部的真实资料编号，quote 必须逐字摘录该资料的连续原文，建议每条不超过80字，每项最多3条。没有原文支持时返回空数组并说明不足；不要编造编号、页码或引文，不能只因关键词相同便认定必考或频次。
+9. 生成内容仅供复习参考，提示用户结合教材与课堂要求。"""
 
 
 def build_analyze_user_prompt(profile_text: str, materials_text: str) -> str:

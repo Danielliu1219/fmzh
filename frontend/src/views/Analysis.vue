@@ -305,6 +305,7 @@
                   ><span v-if="kp.suggest_hours"
                     >建议 {{ kp.suggest_hours }} 小时</span
                   >
+                  <el-button link type="primary" @click="openEvidence('knowledge', kp)">查看原文依据</el-button>
                 </div>
               </div>
               <strong class="knowledge-weight"
@@ -359,7 +360,7 @@
               label="推荐理由"
               min-width="160"
             />
-            <el-table-column prop="source" label="依据来源" width="100">
+            <el-table-column prop="source" label="依据来源" min-width="150">
               <template #default="{ row }">
                 <el-tag
                   v-if="row.source"
@@ -368,6 +369,7 @@
                   effect="plain"
                   >{{ row.source }}</el-tag
                 >
+                <el-button link type="primary" @click="openEvidence('knowledge', row)">查看原文</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -468,7 +470,9 @@
                 <template #default="{ row }">{{ Math.round(row.frequency * 100) }}%</template>
               </el-table-column>
               <el-table-column prop="basis" label="统计依据" min-width="180" />
-              <el-table-column prop="source" label="来源" width="100" />
+              <el-table-column prop="source" label="来源" min-width="150">
+                <template #default="{ row }">{{ row.source }} <el-button link type="primary" @click="openEvidence('question_type', row)">查看原文</el-button></template>
+              </el-table-column>
             </el-table>
           </div>
           <el-divider v-if="result.question_types?.length" />
@@ -492,6 +496,7 @@
               {{ f.content }}
               <div class="focus-basis">
                 依据：{{ f.basis }}（{{ f.source }}）
+                <el-button link type="primary" @click="openEvidence('focus', f)">查看原文依据</el-button>
               </div>
             </el-timeline-item>
           </el-timeline>
@@ -609,6 +614,19 @@
         </template>
       </el-dialog>
 
+      <el-dialog v-model="evidenceVisible" :title="evidenceData?.item_title ? `${evidenceData.item_title} · 原文依据` : '原文依据'" width="min(760px, 94vw)">
+        <div v-loading="evidenceLoading" class="evidence-content">
+          <el-alert v-if="evidenceError" :title="evidenceError" type="warning" :closable="false" />
+          <template v-if="evidenceData">
+            <p class="mastery-note">{{ evidenceData.note }}</p>
+            <SourceExcerpt v-for="(reference, index) in evidenceData.items" :key="index" :reference="reference">
+              <router-link v-if="sourceRoute(reference, evidenceData.exam_id)" :to="sourceRoute(reference, evidenceData.exam_id)">在资料库中查看 →</router-link>
+            </SourceExcerpt>
+          </template>
+        </div>
+        <template #footer><el-button @click="evidenceVisible = false">关闭</el-button></template>
+      </el-dialog>
+
       <!-- 分析中提示 -->
       <el-card v-if="step === 2 && analyzing" shadow="never" class="step-card">
         <el-result
@@ -653,7 +671,9 @@ import { aiApi, examApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
-import { mockProfile, mockAnalysis } from '../mock/pages'
+import { mockProfile, mockAnalysis, mockMaterials } from '../mock/pages'
+import SourceExcerpt from '../components/SourceExcerpt.vue'
+import { mockEvidence, sourceRoute } from '../utils/sourceEvidence.js'
 import QuizPanel from '../components/QuizPanel.vue'
 import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail, mockMastery } from '../mock/quizzes'
 import { masteryLabels, masteryTypes } from '../utils/mastery'
@@ -698,6 +718,28 @@ const profileLoading = ref(false)
 const analyzing = ref(false)
 const analyzeError = ref('')
 const schedulingNote = ref('')
+const evidenceVisible = ref(false)
+const evidenceData = ref(null)
+const evidenceLoading = ref(false)
+const evidenceError = ref('')
+let evidenceRequest = 0
+const openEvidence = async (kind, item) => {
+  const requestId = ++evidenceRequest
+  const collection = { knowledge: result.value.knowledge_points, focus: result.value.exam_focus, question_type: result.value.question_types }[kind]
+  const itemIndex = collection.indexOf(item)
+  evidenceVisible.value = true
+  evidenceData.value = null
+  evidenceError.value = ''
+  evidenceLoading.value = true
+  try {
+    const data = USE_MOCK ? mockEvidence(item, examId.value, mockMaterials)
+      : await aiApi.evidence(examId.value, { analysis_id: analysisId.value, kind, item_index: itemIndex })
+    if (requestId === evidenceRequest) evidenceData.value = data
+  } catch {
+    if (requestId === evidenceRequest) evidenceError.value = '原文依据暂时无法获取，请关闭后重试；资料可能已变化。'
+  } finally { if (requestId === evidenceRequest) evidenceLoading.value = false }
+}
+watch(evidenceVisible, value => { if (!value) { evidenceRequest++; evidenceLoading.value = false } })
 const mastery = ref([])
 const masteryLoading = ref(false)
 const masteryError = ref('')
@@ -1441,6 +1483,7 @@ const onExamChange = async () => {
 }
 
 watch([examId, analysisId], loadMastery)
+watch([examId, analysisId], () => { evidenceVisible.value = false; evidenceData.value = null })
 
 onMounted(async () => {
   window.addEventListener('resize', resizeMindmap)

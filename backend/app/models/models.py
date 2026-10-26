@@ -81,6 +81,7 @@ class Material(Base):
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(16), nullable=False)  # txt / pdf / docx
     text_content = Column(Text, default="")  # 解析出的纯文本，AI 分析的数据源
+    text_locations = Column(Text, nullable=False, default="[]")  # 页/段落/行 → 解析文本偏移
     parse_status = Column(String(16), default="done")  # done / failed
     description = Column(String(512), default="")
     tags = Column(String(256), default="")

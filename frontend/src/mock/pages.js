@@ -23,7 +23,7 @@ export const mockMaterials = [
     id: 2, title: '极限与连续 老师标注重点', exam_id: 1, source_type: '老师重点',
     file_type: 'docx', parse_status: 'done', description: '',
     weight: 1.0, default_weight: 1.0,
-    text_preview: '（静态演示文本）老师标注重点：1. 极限的四则运算与等价无穷小；2. 连续性与间断点分类；3. 闭区间连续函数性质。',
+    text_preview: '（静态演示文本）极限与连续\n老师标注重点：1. 极限的四则运算与等价无穷小；2. 连续性与间断点分类；3. 闭区间连续函数性质。',
   },
   {
     id: 3, title: '高数课堂笔记 第 1-6 章', exam_id: 1, source_type: '课堂笔记',

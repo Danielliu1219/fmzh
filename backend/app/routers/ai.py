@@ -43,6 +43,8 @@ from ..schemas.schemas import (
     ReplanIn,
     ReplanOut,
     WeightChange,
+    EvidenceRequest,
+    EvidenceOut,
 )
 from ..services import prompts
 from ..services.llm_client import LLMError, chat_json, chat_text
@@ -52,6 +54,7 @@ from ..services.study_planner import daily_budget
 from ..services.quizzes import public_analysis, prepare_questions
 from ..services.score_targets import band_strategy, band_text
 from ..services.study_cards import build_cards, build_mindmap
+from ..services.source_evidence import attach_references, references_for, excerpt_for, item_title
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -255,7 +258,7 @@ def _build_materials_text(materials: list[Material]) -> str:
         if total + len(text) > TOTAL_MATERIALS_LIMIT:
             text = text[: TOTAL_MATERIALS_LIMIT - total]
         weight = m.weight if m.weight is not None else default_weight_for(m.source_type)
-        parts.append(f"【{m.title}】[{m.source_type}｜资料权重 {weight:.2f}]\n{text}")
+        parts.append(f"【资料编号 {m.id}｜{m.title}】[{m.source_type}｜资料权重 {weight:.2f}]\n{text}")
         total += len(text)
         if total >= TOTAL_MATERIALS_LIMIT:
             break
@@ -431,6 +434,7 @@ def analyze(
     apply_tier_strategy(result, planning_profile)
     ensure_recommendation_basis(result)
     ensure_question_type_analysis(result)
+    attach_references(result, materials)
 
     analysis = Analysis(
         user_id=user.id,
@@ -482,6 +486,28 @@ def latest_analysis(
         result=public_analysis(result),
         created_at=analysis.created_at,
     )
+
+
+@router.post("/analyses/{exam_id}/evidence", response_model=EvidenceOut, summary="查看推荐对应的资料原文与位置（只读）")
+def analysis_evidence(exam_id: int, payload: EvidenceRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_own_exam(db, user, exam_id)
+    analysis = db.query(Analysis).filter(Analysis.id == payload.analysis_id, Analysis.user_id == user.id, Analysis.exam_id == exam_id).first()
+    if analysis is None:
+        raise HTTPException(404, '分析不存在或不属于当前科目')
+    try:
+        result = AnalysisResult.model_validate_json(analysis.result_json)
+    except ValueError:
+        raise HTTPException(500, '历史分析数据损坏')
+    items = {'knowledge': result.knowledge_points, 'focus': result.exam_focus, 'question_type': result.question_types}[payload.kind]
+    if payload.item_index >= len(items):
+        raise HTTPException(404, '推荐条目不存在')
+    item = items[payload.item_index]
+    materials = db.query(Material).filter(Material.user_id == user.id, Material.exam_id == exam_id, Material.parse_status == 'done').order_by(Material.id).all()
+    by_id = {material.id: material for material in materials}
+    references = item.citations or references_for(item, materials)
+    excerpts = [excerpt_for(by_id.get(ref.material_id), ref) for ref in references[:3]]
+    return EvidenceOut(analysis_id=analysis.id, exam_id=exam_id, item_title=item_title(item), items=excerpts,
+                       note='请结合原文核对推荐理由；匹配片段本身不证明必考或出现次数。' if excerpts else '资料中未找到可核验原文，暂不展示出处；请核对原始资料或重新生成分析。')
 
 
 @router.get("/analyses/{exam_id}/mastery", response_model=MasteryOut, summary="知识点自测掌握状态与作答依据")

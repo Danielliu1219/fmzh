@@ -1,10 +1,11 @@
 """复习资料接口：上传（含解析）/ 列表筛选 / 详情预览 / 编辑移动分类 / 删除"""
 import tempfile
 import uuid
+import json
 from datetime import date, datetime, time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from ..config import UPLOAD_DIR, settings
@@ -17,8 +18,10 @@ from ..schemas.schemas import (
     MaterialOut,
     MaterialUpdate,
     SourceSuggestionOut,
+    SourceReference,
+    SourceExcerpt,
 )
-from ..services.file_parser import parse_file
+from ..services.file_parser import parse_file, parse_document
 from ..services.material_weight import default_weight_for
 from ..services.source_recognition import suggest_source
 from ..services.upload_guard import (
@@ -117,9 +120,10 @@ async def upload_material(
 
     # 解析正文
     text_content = ""
+    text_locations = []
     parse_status = "done"
     try:
-        text_content = parse_file(stored_path, ext)
+        text_content, text_locations = parse_document(stored_path, ext)
     except Exception:
         # 解析失败不阻断上传：资料仍保存，标记为 failed，前端展示提示
         parse_status = "failed"
@@ -132,6 +136,7 @@ async def upload_material(
         file_path=str(stored_path),  # 存绝对路径，删除文件时不依赖启动目录
         file_type=ext,
         text_content=text_content,
+        text_locations=json.dumps(text_locations, ensure_ascii=False),
         parse_status=parse_status,
         description=description,
         tags=tags,
@@ -236,6 +241,24 @@ def get_material(
     out = MaterialDetailOut.model_validate(material)
     out.text_preview = material.text_content[:1000]
     return out
+
+
+@router.get("/{material_id}/excerpt", response_model=SourceExcerpt, summary="按已校验的位置查看资料原文")
+def material_excerpt(
+    material_id: int, start: int = Query(..., ge=0, le=200000), end: int = Query(..., ge=1, le=200000),
+    content_hash: str = Query(..., pattern='^[0-9a-f]{64}$'),
+    material_created_at: datetime = Query(...),
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    material = _get_own_material(db, user, material_id)
+    if not start < end <= len(material.text_content or '') or end-start > 800:
+        raise HTTPException(416, '原文位置无效')
+    from ..services.source_evidence import excerpt_for
+    reference = SourceReference(material_id=material.id, quote=material.text_content[start:end], start=start, end=end, content_hash=content_hash, material_created_at=material_created_at)
+    output = excerpt_for(material, reference)
+    if output['status'] != 'available':
+        raise HTTPException(409, output['note'])
+    return output
 
 
 @router.put("/{material_id}", response_model=MaterialOut, summary="编辑资料 / 移动分类（用例 3.3）")
