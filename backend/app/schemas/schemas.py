@@ -259,6 +259,49 @@ class QaAskIn(BaseModel):
 # ==================== AI 分析（第二次调用） ====================
 
 
+class SourceReference(BaseModel):
+    material_id: int
+    quote: str = Field(default="", max_length=2000)
+    start: Optional[int] = None
+    end: Optional[int] = None
+    content_hash: str = ""
+    match: str = "quote"
+    material_created_at: Optional[datetime] = None
+
+
+class SourceExcerpt(BaseModel):
+    material_id: int
+    material_title: str = ""
+    source_type: str = ""
+    file_type: str = ""
+    status: str  # available / changed / unavailable
+    note: str = ""
+    location: str = ""
+    page: Optional[int] = None
+    start: Optional[int] = None
+    end: Optional[int] = None
+    content_hash: str = ""
+    context: str = ""
+    highlight_start: int = 0
+    highlight_end: int = 0
+    match: str = "quote"
+    material_created_at: Optional[datetime] = None
+
+
+class EvidenceRequest(BaseModel):
+    analysis_id: int = Field(ge=1)
+    kind: str = Field(pattern="^(knowledge|focus|question_type)$")
+    item_index: int = Field(ge=0, le=500)
+
+
+class EvidenceOut(BaseModel):
+    analysis_id: int
+    exam_id: int
+    item_title: str
+    items: list[SourceExcerpt]
+    note: str
+
+
 class KnowledgePoint(BaseModel):
     name: str
     weight: float = Field(ge=0, le=1)
@@ -266,6 +309,7 @@ class KnowledgePoint(BaseModel):
     recommend_reason: str = ""
     source: str = ""  # 推荐依据来自哪类资料
     suggest_hours: int = 0
+    citations: list[SourceReference] = []
 
 
 class MasteryEvidence(BaseModel):
@@ -297,6 +341,7 @@ class ExamFocus(BaseModel):
     basis: str = ""
     source: str = ""
     frequency: int = 0  # 出现次数 / 年份数（用例 4.7，用于高频排序）
+    citations: list[SourceReference] = []
 
 
 class QuestionTypeStat(BaseModel):
@@ -307,6 +352,7 @@ class QuestionTypeStat(BaseModel):
     frequency: float = Field(0, ge=0, le=1)  # 占比 0~1
     basis: str = ""  # 统计依据
     source: str = ""  # 依据来源
+    citations: list[SourceReference] = []
 
 
 class PlanItem(BaseModel):

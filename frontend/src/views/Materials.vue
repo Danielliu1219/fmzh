@@ -299,9 +299,11 @@
     <el-dialog v-model="mistakeVisible" :title="mistakeTitle" width="640px" style="max-width: calc(100vw - 32px)">
       <QuizFeedback v-if="mistakeDetail" :item="mistakeDetail" />
     </el-dialog>
-    <el-dialog v-model="previewVisible" :title="previewTitle" width="680px">
+    <el-dialog v-model="previewVisible" :title="previewTitle" width="min(760px, 94vw)">
       <div class="preview-box" v-loading="previewLoading">
-        <pre>{{ previewText || '（无解析文本，可能是解析失败或文件为扫描图片）' }}</pre>
+        <el-alert v-if="previewError" :title="previewError" type="warning" :closable="false" />
+        <SourceExcerpt v-else-if="linkedExcerpt" :reference="linkedExcerpt" />
+        <pre v-else>{{ previewText || '（无解析文本，可能是解析失败或文件为扫描图片）' }}</pre>
       </div>
     </el-dialog>
 
@@ -393,6 +395,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { collectionApi, examApi, materialApi } from '../api'
 import { USE_MOCK, mockStudySession } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
+import SourceExcerpt from '../components/SourceExcerpt.vue'
 import { mockNotebook as mockCollections } from '../mock/quizzes'
 import { readMistake } from '../utils/quiz'
 import QuizFeedback from '../components/QuizFeedback.vue'
@@ -518,6 +521,9 @@ const previewVisible = ref(false)
 const previewLoading = ref(false)
 const previewTitle = ref('')
 const previewText = ref('')
+const previewError = ref('')
+const linkedExcerpt = ref(null)
+let previewRequest = 0
 
 const examName = (id) => exams.value.find((e) => e.id === id)?.subject || '未归类'
 const sourceTagType = (s) =>
@@ -710,8 +716,12 @@ const onUpload = async () => {
 }
 
 const onPreview = async (row) => {
+  const requestId = ++previewRequest
   previewVisible.value = true
   previewTitle.value = row.title
+  previewText.value = ''
+  previewError.value = ''
+  linkedExcerpt.value = null
   if (USE_MOCK) {
     previewText.value = row.text_preview || ''
     return
@@ -719,11 +729,41 @@ const onPreview = async (row) => {
   previewLoading.value = true
   try {
     const detail = await materialApi.detail(row.id)
-    previewText.value = detail.text_preview || ''
+    if (requestId === previewRequest) previewText.value = detail.text_preview || ''
   } finally {
-    previewLoading.value = false
+    if (requestId === previewRequest) previewLoading.value = false
   }
 }
+
+const openLinkedExcerpt = async () => {
+  const id = Number(route.query.material)
+  if (!Number.isInteger(id) || id < 1) return
+  const requestId = ++previewRequest
+  previewVisible.value = true
+  previewTitle.value = '引用原文'
+  previewText.value = ''
+  previewError.value = ''
+  linkedExcerpt.value = null
+  previewLoading.value = true
+  try {
+    const start = Number(route.query.start), end = Number(route.query.end)
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) throw new Error('无效位置')
+    let reference
+    if (USE_MOCK) {
+      const row = mockMaterials.find(material => material.id === id && material.exam_id === Number(route.query.exam))
+      if (!row || end > (row.text_preview || '').length) throw new Error('演示资料未找到')
+      reference = { material_id: row.id, material_title: row.title, source_type: row.source_type, file_type: row.file_type,
+        status: 'available', location: '演示解析文本片段', context: row.text_preview, highlight_start: start,
+        highlight_end: end, note: '演示原文定位，真实模式会核对资料内容是否变化。' }
+    } else {
+      reference = await materialApi.excerpt(id, { start, end, content_hash: String(route.query.hash || ''), material_created_at: String(route.query.created_at || '') })
+    }
+    if (requestId === previewRequest) { linkedExcerpt.value = reference; previewTitle.value = reference.material_title }
+  } catch {
+    if (requestId === previewRequest) previewError.value = '无法打开这条引用，资料可能已删除或内容变化。请返回分析页重新定位。'
+  } finally { if (requestId === previewRequest) previewLoading.value = false }
+}
+watch(previewVisible, value => { if (!value) { previewRequest++; previewLoading.value = false } })
 
 const onDelete = async (row) => {
   await ElMessageBox.confirm(`确定删除「${row.title}」吗？解析文本也会被删除。`, '删除确认', { type: 'warning' })
@@ -969,7 +1009,9 @@ onMounted(() => {
   loadExams()
   load()
   loadCollections()
+  openLinkedExcerpt()
 })
+watch(() => [route.query.material, route.query.start, route.query.end, route.query.hash, route.query.created_at], openLinkedExcerpt)
 watch(() => route.query.exam, value => {
   filter.exam_id = Number(value) || null
   uploadForm.exam_id = filter.exam_id

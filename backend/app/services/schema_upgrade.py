@@ -23,6 +23,8 @@ def upgrade_schema(engine):
         if inspect(conn).has_table("materials"):
             from .material_weight import DEFAULT_SOURCE_WEIGHT, DEFAULT_WEIGHT
             columns = {c["name"] for c in inspect(conn).get_columns("materials")}
+            if "text_locations" not in columns:
+                conn.execute(text("ALTER TABLE materials ADD COLUMN text_locations TEXT NOT NULL DEFAULT '[]'"))
             if "weight" not in columns:
                 conn.execute(text("ALTER TABLE materials ADD COLUMN weight FLOAT"))
             for source, weight in DEFAULT_SOURCE_WEIGHT.items():
