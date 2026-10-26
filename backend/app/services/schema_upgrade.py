@@ -1,4 +1,4 @@
-"""非破坏性补列：兼容已有 SQLite 数据；不删库、不改旧记录内容。"""
+"""兼容已有 SQLite 数据：补列和索引，保留分钟数并解绑历史孤立考试引用。"""
 from uuid import uuid4
 
 from sqlalchemy import inspect, text
@@ -9,6 +9,17 @@ from ..models.models import Collection
 
 def upgrade_schema(engine):
     with engine.begin() as conn:
+        if inspect(conn).has_table("focus_sessions"):
+            columns = {c["name"] for c in inspect(conn).get_columns("focus_sessions")}
+            if "subject_snapshot" not in columns:
+                conn.execute(text("ALTER TABLE focus_sessions ADD COLUMN subject_snapshot VARCHAR(64) NOT NULL DEFAULT ''"))
+            conn.execute(text("""UPDATE focus_sessions SET subject_snapshot = COALESCE(
+                (SELECT subject FROM exams WHERE exams.id=focus_sessions.exam_id
+                 AND exams.user_id=focus_sessions.user_id), '已删除考试')
+                WHERE exam_id IS NOT NULL AND subject_snapshot = ''"""))
+            conn.execute(text("""UPDATE focus_sessions SET exam_id=NULL WHERE exam_id IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM exams WHERE exams.id=focus_sessions.exam_id
+                AND exams.user_id=focus_sessions.user_id)"""))
         if inspect(conn).has_table("materials"):
             from .material_weight import DEFAULT_SOURCE_WEIGHT, DEFAULT_WEIGHT
             columns = {c["name"] for c in inspect(conn).get_columns("materials")}

@@ -2,12 +2,15 @@
 
 所有接口均要求管理员身份（依赖 get_current_admin）。
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.models import Course, Exam, Material, User
+from ..models.models import Course, Exam, Material, OperationLog, User
 from ..schemas.schemas import (
     AdminMaterialOut,
     AdminUserOut,
@@ -18,6 +21,39 @@ from ..schemas.schemas import (
 from ..utils.security import get_current_admin
 
 router = APIRouter()
+
+
+@router.get("/operation-logs", summary="管理员分页查询关键操作日志")
+def operation_logs(
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    actor: str = Query('', max_length=64), action: str = Query('', max_length=48),
+    outcome: str = Query('', pattern='^(success|failure)?$'),
+    date_from: date | None = None, date_to: date | None = None,
+    _: User = Depends(get_current_admin), db: Session = Depends(get_db),
+):
+    from ..services.audit import ACTION_LABELS
+    if action and action not in ACTION_LABELS:
+        raise HTTPException(422, "未知操作类型")
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "起始日期不能晚于结束日期")
+    query = db.query(OperationLog)
+    if actor.strip(): query = query.filter(OperationLog.actor_name.contains(actor.strip(), autoescape=True))
+    if action: query = query.filter(OperationLog.action == action)
+    if outcome == 'success': query = query.filter(OperationLog.status_code < 400)
+    if outcome == 'failure': query = query.filter(OperationLog.status_code >= 400)
+    def boundary(day):
+        return datetime.combine(day, time.min, tzinfo=ZoneInfo('Asia/Shanghai')).astimezone(timezone.utc).replace(tzinfo=None)
+    if date_from: query = query.filter(OperationLog.created_at >= boundary(date_from))
+    if date_to: query = query.filter(OperationLog.created_at < boundary(date_to + timedelta(days=1)))
+    total = query.count()
+    rows = query.order_by(OperationLog.id.desc()).offset((page-1)*page_size).limit(page_size).all()
+    return dict(total=total, page=page, page_size=page_size,
+                actions=[dict(value=key, label=value) for key, value in ACTION_LABELS.items()],
+                items=[dict(id=row.id, actor_id=row.actor_id, actor_name=row.actor_name,
+                            action=row.action, label=ACTION_LABELS.get(row.action, row.action), target_id=row.target_id,
+                            method=row.method, path=row.path, status_code=row.status_code,
+                            outcome='success' if row.status_code < 400 else 'failure',
+                            created_at=row.created_at.replace(tzinfo=timezone.utc)) for row in rows])
 
 
 # ==================== 8.1 课程/科目维护 ====================
@@ -166,9 +202,11 @@ def delete_material(
     _: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    material = db.get(Material, material_id)
-    if material is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="资料不存在")
-    db.delete(material)
-    db.commit()
-    return {"ok": True}
+    from ..services.deletion import delete_material as remove
+    return remove(db, material_id)
+
+
+@router.post("/file-cleanups/retry", summary="重试提交后尚未完成的上传文件清理")
+def retry_cleanups(_: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+    from ..services.deletion import retry_file_cleanup
+    return retry_file_cleanup(db)

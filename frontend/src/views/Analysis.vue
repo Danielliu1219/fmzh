@@ -263,6 +263,10 @@
               >
             </div></template
           >
+          <p class="mastery-note">按最近一次覆盖该知识点的自测计算，正确率 ≥80% 标记已掌握，无记录显示未测。
+            <el-button link :loading="masteryLoading" @click="loadMastery">更新掌握状态</el-button>
+          </p>
+          <el-alert v-if="masteryError" :title="masteryError" type="warning" :closable="false" />
           <div v-if="knowledgeView === 'visual'" class="knowledge-list">
             <article v-for="(kp, i) in sortedKnowledge" :key="kp.name">
               <span class="knowledge-order">{{
@@ -287,6 +291,15 @@
                   ></i>
                 </div>
                 <p>{{ kp.recommend_reason }}</p>
+                <div v-if="masteryFor(kp.name)" class="mastery-line">
+                  <el-tag size="small" :type="masteryTypes[masteryFor(kp.name).status]">{{ masteryLabels[masteryFor(kp.name).status] }}</el-tag>
+                  <span v-if="masteryFor(kp.name).total">最近自测 {{ masteryFor(kp.name).correct }}/{{ masteryFor(kp.name).total }} 题正确 · {{ masteryFor(kp.name).score }}%</span>
+                  <span v-else>完成该知识点的自测后更新</span>
+                </div>
+                <details v-if="masteryFor(kp.name)?.total" class="mastery-evidence">
+                  <summary>查看作答依据 · {{ masteryFor(kp.name).last_submitted_at?.replace('T', ' ').slice(0, 16) }}</summary>
+                  <p v-for="(item, index) in masteryFor(kp.name).evidence" :key="index">{{ item.correct ? '答对' : item.unanswered ? '未答' : '答错' }} · {{ item.question }}</p>
+                </details>
                 <div class="knowledge-source">
                   <span v-if="kp.source">依据 · {{ kp.source }}</span
                   ><span v-if="kp.suggest_hours"
@@ -325,6 +338,15 @@
                 >
                   {{ { high: '高', medium: '中', low: '低' }[row.importance] }}
                 </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="掌握状态" min-width="140">
+              <template #default="{ row }">
+                <template v-if="masteryFor(row.name)">
+                  <el-tag :type="masteryTypes[masteryFor(row.name).status]">{{ masteryLabels[masteryFor(row.name).status] }}</el-tag>
+                  <small v-if="masteryFor(row.name).total"> {{ masteryFor(row.name).correct }}/{{ masteryFor(row.name).total }} 题</small>
+                </template>
+                <span v-else>{{ masteryLoading ? '更新中' : '暂未加载' }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="suggest_hours" label="建议投入" width="90">
@@ -520,7 +542,7 @@
           </el-table>
         </el-card>
 
-        <QuizPanel v-if="analysisId && result.quiz?.length" :key="analysisId" :analysis-id="analysisId" :questions="result.quiz" :subject="result.course" />
+        <QuizPanel v-if="analysisId && result.quiz?.length" :key="analysisId" :analysis-id="analysisId" :questions="result.quiz" :subject="result.course" @submitted="loadMastery" />
 
         <!-- 动态调整计划与权重（用例 4.12） -->
         <el-card shadow="never" class="result-card">
@@ -633,7 +655,8 @@ import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
 import { mockProfile, mockAnalysis } from '../mock/pages'
 import QuizPanel from '../components/QuizPanel.vue'
-import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail } from '../mock/quizzes'
+import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail, mockMastery } from '../mock/quizzes'
+import { masteryLabels, masteryTypes } from '../utils/mastery'
 import { feedbackReplan } from '../utils/replan'
 import ScoreGoalSlider from '../components/ScoreGoalSlider.vue'
 import { scoreBand, scoreBandText } from '../utils/scoreTargets'
@@ -675,6 +698,26 @@ const profileLoading = ref(false)
 const analyzing = ref(false)
 const analyzeError = ref('')
 const schedulingNote = ref('')
+const mastery = ref([])
+const masteryLoading = ref(false)
+const masteryError = ref('')
+const masteryFor = (name) => mastery.value.find(point => point.name === name)
+let masteryRequest = 0
+const loadMastery = async () => {
+  const requestId = ++masteryRequest
+  mastery.value = []
+  masteryError.value = ''
+  if (!examId.value || !analysisId.value || !result.value) { masteryLoading.value = false; return }
+  masteryLoading.value = true
+  try {
+    const points = USE_MOCK
+      ? mockMastery(result.value.course, result.value.knowledge_points.map(point => point.name))
+      : (await aiApi.mastery(examId.value)).points
+    if (requestId === masteryRequest) mastery.value = points
+  } catch {
+    if (requestId === masteryRequest) masteryError.value = '掌握状态暂未获取，请点击更新重试；自测和复习计划仍可使用。'
+  } finally { if (requestId === masteryRequest) masteryLoading.value = false }
+}
 
 const completeForm = reactive({
   target_band: 'D',
@@ -1397,6 +1440,8 @@ const onExamChange = async () => {
   } finally { courseLoading.value = false }
 }
 
+watch([examId, analysisId], loadMastery)
+
 onMounted(async () => {
   window.addEventListener('resize', resizeMindmap)
   if (USE_MOCK) {
@@ -1949,6 +1994,11 @@ onBeforeUnmount(() => {
   color: var(--red);
   font-weight: 600;
 }
+.mastery-note { font-size: 12px; line-height: 1.8; color: var(--ink-3); }
+.mastery-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
+.mastery-evidence { margin-top: 10px; font-size: 12px; line-height: 1.8; color: var(--ink-2); }
+.mastery-evidence summary { cursor: pointer; }
+.mastery-evidence p { overflow-wrap: anywhere; }
 .weight-down {
   color: var(--green);
   font-weight: 600;

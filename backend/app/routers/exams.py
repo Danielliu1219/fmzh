@@ -13,17 +13,22 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..config import settings
 from ..models.models import Exam, Task, User
 from ..schemas.schemas import (
     ExamCreate,
     ExamOut,
     ExamUpdate,
     IcsImportResult,
+    IcsImportPreview,
+    IcsImportConfirm,
     ScheduleGenerateOut,
     ScheduleGenerateRequest,
 )
 from ..services import schedule_service
-from ..services.schedule_service import DEFAULT_DAILY_LIMIT_MINUTES, parse_ics
+from ..services import deletion
+from ..services import ics_import
+from ..services.calendar_io import export_calendar
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -89,9 +94,7 @@ def delete_exam(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exam = _get_own_exam(db, user, exam_id)
-    db.delete(exam)
-    db.commit()
+    deletion.delete_exam(db, user.id, exam_id)
     return {"ok": True}
 
 
@@ -116,121 +119,51 @@ def generate_schedule(
     return ScheduleGenerateOut(**result)
 
 
-@router.post("/import-ics", response_model=IcsImportResult, summary="ICS 导入：解析为学习任务并合并（2.12）")
+@router.post("/import-ics", response_model=IcsImportPreview, summary="ICS 导入预览（不写库）")
 async def import_ics(
     file: UploadFile = File(...),
     exam_id: int = Form(...),
-    daily_limit_minutes: int = Form(DEFAULT_DAILY_LIMIT_MINUTES),
+    daily_limit_minutes: int | None = Form(None, ge=30, le=960),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """解析 ICS 文件中的 VEVENT 为该科目学习任务；合并前按天做冲突检测，超限日期在结果中提醒"""
     exam = _get_own_exam(db, user, exam_id)
-    raw = await file.read()
+    if not (file.filename or "").lower().endswith(".ics"):
+        raise HTTPException(400, "请选择 .ics 日历文件")
+    limit = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    raw = await file.read(limit + 1)
+    if len(raw) > limit:
+        raise HTTPException(413, "日历文件超过允许大小")
+    if not raw or b"\x00" in raw:
+        raise HTTPException(400, "日历文件为空或不是有效文本")
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        text = raw.decode("gbk", errors="replace")
-
-    events = parse_ics(text)
-    if not events:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未从文件中解析到有效的日历事件（VEVENT）")
-
-    imported, skipped, conflict_map = 0, 0, {}
-    for event in events:
-        if not event["title"]:
-            skipped += 1
-            continue
-        existing = schedule_service.day_total_minutes(db, user.id, event["day"])
-        if existing + event["minutes"] > daily_limit_minutes:
-            info = conflict_map.setdefault(
-                event["day"].isoformat(),
-                {
-                    "date": event["day"].isoformat(),
-                    "existing_minutes": existing,
-                    "planned_minutes": existing,
-                    "limit_minutes": daily_limit_minutes,
-                    "titles": [],
-                },
-            )
-            info["planned_minutes"] += event["minutes"]
-            info["titles"].append(event["title"])
-        db.add(
-            Task(
-                user_id=user.id,
-                exam_id=exam.id,
-                title=f"【ICS】{event['title']}",
-                plan_date=event["day"],
-                estimated_minutes=event["minutes"],
-                priority=2,
-                sort_order=0,
-                source="manual",
-            )
-        )
-        imported += 1
-    db.commit()
-    return IcsImportResult(imported=imported, skipped=skipped, conflicts=list(conflict_map.values()))
+        try:
+            text = raw.decode("gb18030")
+        except UnicodeDecodeError:
+            raise HTTPException(400, "日历文件需要 UTF-8 或 GB18030 编码")
+    return ics_import.preview_import(db, user, exam, text, daily_limit_minutes)
 
 
-@router.get("/export-ics", summary="ICS 导出：考试与任务导出为日历文件（2.13）")
+@router.post("/import-ics/confirm", response_model=IcsImportResult, summary="确认导入预览中的日历任务")
+def confirm_ics(
+    payload: IcsImportConfirm,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return ics_import.confirm_import(db, user, payload.preview_token)
+
+
+@router.get("/export-ics", summary="导出标准日历（含文本转义和 UTF-8 折行）")
 def export_ics(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exams = db.query(Exam).filter(Exam.user_id == user.id).order_by(Exam.exam_date).all()
-    tasks = (
-        db.query(Task)
-        .filter(Task.user_id == user.id)
-        .order_by(Task.plan_date, Task.id)
-        .all()
-    )
-    subject_by_id = {exam.id: exam.subject for exam in exams}
-
-    lines = [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//fmzh//期末周别慌！//CN",
-        "CALSCALE:GREGORIAN",
-        "X-WR-CALNAME:期末周别慌！备考日历",
-    ]
-    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
-
-    def _fmt(day: date, minutes: int) -> tuple[str, str]:
-        start = datetime.combine(day, datetime.min.time()) + timedelta(hours=8)
-        end = start + timedelta(minutes=minutes)
-        return start.strftime("%Y%m%dT%H%M%S"), end.strftime("%Y%m%dT%H%M%S")
-
-    # 考试安排 → 全天事件（考试当天）
-    for exam in exams:
-        lines += [
-            "BEGIN:VEVENT",
-            f"UID:exam-{exam.id}-{user.id}@fmzh",
-            f"DTSTAMP:{stamp}",
-            f"DTSTART;VALUE=DATE:{exam.exam_date.strftime('%Y%m%d')}",
-            f"SUMMARY:【考试】{exam.subject}",
-            f"DESCRIPTION:{exam.location or '地点待定'}｜时长 {exam.duration_minutes} 分钟{('｜' + exam.note) if exam.note else ''}",
-            "END:VEVENT",
-        ]
-    # 学习任务 → 按时长生成时间段事件（任务日上午 8 点起）
-    for task in tasks:
-        start, end = _fmt(task.plan_date, task.estimated_minutes)
-        subject = subject_by_id.get(task.exam_id, "")
-        lines += [
-            "BEGIN:VEVENT",
-            f"UID:task-{task.id}-{user.id}@fmzh",
-            f"DTSTAMP:{stamp}",
-            f"DTSTART:{start}",
-            f"DTEND:{end}",
-            f"SUMMARY:【任务】{subject + '·' if subject else ''}{task.title}",
-            f"DESCRIPTION:{'已完成' if task.is_done else '未完成'}｜预计 {task.estimated_minutes} 分钟",
-            "END:VEVENT",
-        ]
-    lines.append("END:VCALENDAR")
-
-    content = "\r\n".join(lines)
-    filename = f"fmzh_{datetime.now().strftime('%Y%m%d')}.ics"
+    exams = db.query(Exam).filter(Exam.user_id == user.id).order_by(Exam.exam_date, Exam.id).all()
+    tasks = db.query(Task).filter(Task.user_id == user.id).order_by(Task.plan_date, Task.id).all()
     return Response(
-        content=content,
+        content=export_calendar(exams, tasks, user.id),
         media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="fmzh_{date.today():%Y%m%d}.ics"'},
     )

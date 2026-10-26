@@ -734,8 +734,9 @@ const onDelete = async (row) => {
     load()
     return
   }
-  await materialApi.remove(row.id)
-  ElMessage.success('已删除')
+  const result = await materialApi.remove(row.id)
+  if (result.cleanup_pending) ElMessage.warning('资料已删除，文件清理待重试，可由管理员重试清理')
+  else ElMessage.success('已删除')
   load()
 }
 

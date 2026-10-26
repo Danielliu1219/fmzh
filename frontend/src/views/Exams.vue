@@ -253,6 +253,26 @@
     </el-dialog>
 
     <ReminderDialog v-model="reminderVisible" :kind="reminderKind" :target-id="reminderTarget" />
+    <el-dialog v-model="icsPreviewVisible" title="确认日历导入" width="min(680px, 94vw)"
+      :close-on-click-modal="!icsSaving" :close-on-press-escape="!icsSaving" :show-close="!icsSaving">
+      <template v-if="icsPreview">
+        <p>将新增 {{ icsPreview.count }} 项任务，跳过 {{ icsPreview.skipped }} 项重复或已取消事件。全科每日预算为 {{ icsPreview.daily_limit_minutes }} 分钟。</p>
+        <el-alert :title="icsPreview.note" type="info" :closable="false" />
+        <el-alert v-if="icsPreview.already_imported" title="这批事件已经导入，无需重复保存。" type="success" :closable="false" />
+        <el-alert v-for="(conflict, i) in icsPreview.conflicts" :key="i" type="warning" :closable="false"
+          :title="`${conflict.date}：${conflict.reason}${conflict.planned_minutes ? `（${conflict.planned_minutes}/${conflict.limit_minutes} 分钟）` : ''}`" />
+        <el-table :data="icsPreview.events" max-height="320" style="margin-top: 16px">
+          <el-table-column prop="day" label="日期" width="115" />
+          <el-table-column prop="title" label="任务" min-width="180" />
+          <el-table-column prop="minutes" label="分钟" width="80" />
+        </el-table>
+      </template>
+      <template #footer>
+        <el-button :disabled="icsSaving" @click="icsPreviewVisible = false">取消</el-button>
+        <el-button type="primary" :loading="icsSaving"
+          :disabled="!icsPreview || !!icsPreview.conflicts.length || icsPreview.already_imported" @click="onConfirmIcs">确认导入</el-button>
+      </template>
+    </el-dialog>
     <input ref="icsInputRef" type="file" accept=".ics,text/calendar" style="display: none" @change="onImportIcs" />
   </div>
 </template>
@@ -379,7 +399,7 @@ const onSave = async () => {
 
 const onDelete = async (row) => {
   await ElMessageBox.confirm(
-    `确定删除「${row.subject}」吗？该考试下的资料、分析和任务也会随之失效。`,
+    `确定删除「${row.subject}」吗？相关任务、分析、自测和提醒将被删除；资料保留并转为未分类，专注时长保留在历史统计中。`,
     '删除确认',
     { type: 'warning' },
   )
@@ -532,6 +552,9 @@ const onGeneratePlan = async () => {
 
 // ==================== ICS 导入（2.12）/ 导出（2.13） ====================
 const icsInputRef = ref()
+const icsPreview = ref(null)
+const icsPreviewVisible = ref(false)
+const icsSaving = ref(false)
 let icsExamId = null
 
 const onPickIcs = (row) => {
@@ -552,20 +575,23 @@ const onImportIcs = async (ev) => {
   fd.append('exam_id', String(icsExamId))
   loading.value = true
   try {
-    const res = await examApi.importIcs(fd)
-    if (res.conflicts?.length) {
-      const lines = res.conflicts.map((c) => `${c.date}：共 ${c.planned_minutes} 分钟（上限 ${c.limit_minutes}）`).join('\n')
-      await ElMessageBox.alert(
-        `导入 ${res.imported} 项任务${res.skipped ? `，跳过 ${res.skipped} 项无效事件` : ''}。以下日期合并后超上限，建议手动调整：\n${lines}`,
-        '导入完成，部分日期有冲突',
-        { type: 'warning', customStyle: { whiteSpace: 'pre-line' } },
-      )
-    } else {
-      ElMessage.success(`导入成功：${res.imported} 项任务${res.skipped ? `，跳过 ${res.skipped} 项` : ''}`)
-    }
-    loadTasks()
+    icsPreview.value = await examApi.importIcs(fd)
+    icsPreviewVisible.value = true
   } finally {
     loading.value = false
+  }
+}
+
+const onConfirmIcs = async () => {
+  if (icsSaving.value || !icsPreview.value || icsPreview.value.conflicts.length || icsPreview.value.already_imported) return
+  icsSaving.value = true
+  try {
+    const result = await examApi.confirmIcs(icsPreview.value.preview_token)
+    icsPreviewVisible.value = false
+    ElMessage.success(result.already_imported ? '这批任务已经导入' : `已导入 ${result.imported} 项任务`)
+    await loadTasks()
+  } finally {
+    icsSaving.value = false
   }
 }
 

@@ -268,6 +268,29 @@ class KnowledgePoint(BaseModel):
     suggest_hours: int = 0
 
 
+class MasteryEvidence(BaseModel):
+    question: str
+    correct: bool
+    unanswered: bool
+
+
+class KnowledgeMastery(BaseModel):
+    name: str
+    status: str
+    total: int
+    correct: int
+    score: Optional[float]
+    attempt_id: Optional[str] = None
+    last_submitted_at: Optional[datetime] = None
+    evidence: list[MasteryEvidence]
+
+
+class MasteryOut(BaseModel):
+    exam_id: int
+    points: list[KnowledgeMastery]
+    note: str = "按最近一次覆盖该知识点的已交卷自测计算，正确率达到 80% 标记已掌握；未作答计错，无记录显示未测。仅供复习参考。"
+
+
 class ExamFocus(BaseModel):
     content: str
     level: str = "must"  # must 必考 / common 常考
@@ -470,6 +493,19 @@ class IcsImportResult(BaseModel):
     imported: int  # 成功导入任务数
     skipped: int  # 跳过数（无标题/结束早于开始等）
     conflicts: list[dict[str, Any]] = []  # 合并前冲突检测：当天超上限的日期
+    already_imported: bool = False
+
+
+class IcsImportPreview(IcsImportResult):
+    count: int
+    events: list[dict[str, Any]]
+    daily_limit_minutes: int
+    preview_token: str
+    note: str
+
+
+class IcsImportConfirm(BaseModel):
+    preview_token: str = Field(min_length=1, max_length=2000000)
 
 
 # ==================== 首页 / 统计 ====================
@@ -694,6 +730,7 @@ class AdminMaterialOut(BaseModel):
 class SubjectStat(BaseModel):
     exam_id: Optional[int] = None  # None 表示未指定科目的自由专注
     subject: str
+    archived: bool = False
     minutes: int  # 番茄钟聚合时长（受 days 窗口限制）
     total_tasks: int  # 全量课程进度（与首页口径一致）
     done_tasks: int
@@ -736,6 +773,7 @@ class FocusSessionOut(BaseModel):
     id: int
     exam_id: Optional[int] = None
     subject: str  # 由 exam_id 关联得到；无科目时为空串
+    archived: bool = False
     duration_minutes: int
     start_time: datetime
     end_time: datetime
@@ -745,6 +783,7 @@ class FocusSessionOut(BaseModel):
 class FocusExamStat(BaseModel):
     exam_id: Optional[int] = None
     subject: str
+    archived: bool = False
     minutes: int
 
 
@@ -779,6 +818,7 @@ class WeeklyReportRequest(BaseModel):
 class WeeklySubjectOut(BaseModel):
     exam_id: Optional[int] = None  # None 表示「未指定科目」的自由专注
     subject: str
+    archived: bool = False
     minutes: int
     total_tasks: int
     done_tasks: int

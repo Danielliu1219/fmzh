@@ -204,18 +204,23 @@ r = client.post(
 )
 check("倒推生成备考时间表", r.status_code == 200 and r.json()["created"] >= 1, r.text)
 
+# 独立 QA 账号为日历导入留出全科容量；不得对真实演示库运行本脚本。
+r = client.put(f"{BASE}/api/study/settings", headers=headers, json={"daily_minutes": 960})
+check("ICS 验收预算", r.status_code == 200, r.text)
+ics_day1 = (date.today() + timedelta(days=2)).strftime('%Y%m%d')
+ics_day2 = (date.today() + timedelta(days=3)).strftime('%Y%m%d')
 ics_body = "\r\n".join(
     [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "BEGIN:VEVENT",
         "SUMMARY:极限与连续复习",
-        "DTSTART:20261020T090000",
-        "DTEND:20261020T103000",
+        f"DTSTART:{ics_day1}T090000",
+        f"DTEND:{ics_day1}T103000",
         "END:VEVENT",
         "BEGIN:VEVENT",
         "SUMMARY:历年题一套",
-        "DTSTART;VALUE=DATE:20261021",
+        f"DTSTART;VALUE=DATE:{ics_day2}",
         "END:VEVENT",
         "END:VCALENDAR",
     ]
@@ -226,7 +231,12 @@ r = client.post(
     files={"file": ("导入.ics", io.BytesIO(ics_body.encode("utf-8")), "text/calendar")},
     data={"exam_id": str(exam_id)},
 )
-check("ICS 导入", r.status_code == 200 and r.json()["imported"] == 2, r.text)
+check("ICS 预览不导入", r.status_code == 200 and r.json()["imported"] == 0 and r.json()["count"] == 2, r.text)
+preview_token = r.json()['preview_token']
+r = client.post(f"{BASE}/api/exams/import-ics/confirm", headers=headers, json={"preview_token": preview_token})
+check("ICS 确认导入", r.status_code == 200 and r.json()["imported"] == 2, r.text)
+r = client.post(f"{BASE}/api/exams/import-ics/confirm", headers=headers, json={"preview_token": preview_token})
+check("ICS 重复确认幂等", r.status_code == 200 and r.json()["already_imported"], r.text)
 
 r = client.get(f"{BASE}/api/exams/export-ics", headers=headers)
 check(

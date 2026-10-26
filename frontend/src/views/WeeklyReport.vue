@@ -101,7 +101,7 @@
       </section>
 
       <!-- ===== 各科掌握程度 ===== -->
-      <section v-if="subjectCards.length" class="panel">
+      <section v-if="data.subjects.length" class="panel">
         <div class="panel-head">
           <h2>各科掌握程度</h2>
           <span class="panel-sub">评分范围 0~100，由大模型结合本周数据评测</span>
@@ -149,6 +149,9 @@
         <div v-if="freeSubject" class="free-note">
           <el-icon><Timer /></el-icon>
           「未指定科目」的自由专注共 <b class="num">{{ freeSubject.minutes }}</b> 分钟，绑定科目后可获得掌握度评测。
+        </div>
+        <div v-for="s in archivedSubjects" :key="s.subject" class="free-note">
+          {{ s.subject }}：<b class="num">{{ s.minutes }}</b> 分钟，已计入学习总时长。
         </div>
       </section>
 
@@ -260,7 +263,8 @@ const kpiTiles = computed(() => {
 
 const hasScored = computed(() => !!data.value?.subjects.some((s) => s.exam_id !== null))
 const subjectCards = computed(() => data.value?.subjects.filter((s) => s.exam_id !== null) ?? [])
-const freeSubject = computed(() => data.value?.subjects.find((s) => s.exam_id === null) || null)
+const freeSubject = computed(() => data.value?.subjects.find((s) => s.exam_id === null && !s.archived) || null)
+const archivedSubjects = computed(() => data.value?.subjects.filter((s) => s.archived) ?? [])
 const dailyRows = computed(() => [...(data.value?.days ?? [])].reverse())
 
 const load = async () => {

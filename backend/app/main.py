@@ -7,6 +7,7 @@ from .config import UPLOAD_DIR
 from .database import Base, engine
 from .routers import admin, ai, auth, collections, dashboard, exams, features, focus, materials, notifications, study, tasks, quizzes
 from .services.schema_upgrade import upgrade_schema
+from .services.audit import AuditMiddleware
 
 # 创建缺失的表；新增预算 / 提醒表无需清空数据库或修改已有表的列。
 Base.metadata.create_all(bind=engine)
@@ -22,6 +23,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuditMiddleware)
 
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(exams.router, prefix="/api/exams", tags=["考试"])
