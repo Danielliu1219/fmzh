@@ -1,5 +1,6 @@
 // 静态 Pages 演示：仅在当前会话保存，与真实后端判分分开。
 import { ref } from 'vue'
+import { buildMastery } from '../utils/mastery.js'
 
 export const mockNotebook = ref([
   { id: 1, item_type: 'material', material_id: 2, title: '极限与连续 老师标注重点', content: '', source: 'manual', created_at: '2026-10-12T10:00:00' },
@@ -13,6 +14,9 @@ export function mockQuizHistory(analysisId) {
   return [...attempts.values()].filter(a => a.analysis_id === analysisId).reverse().map(a => ({ id: a.id, status: a.status, created_at: a.created_at, score: a.result?.score ?? null }))
 }
 export function mockQuizDetail(id) { return structuredClone(publicAttempt(attempts.get(id))) }
+export function mockMastery(subject, names) {
+  return buildMastery(names, [...attempts.values()].filter(attempt => attempt.subject === subject))
+}
 export function saveMockQuizDraft(id, answers) {
   const attempt = attempts.get(id)
   if (attempt?.status === 'active') attempt.draft_answers = JSON.parse(JSON.stringify(answers))
@@ -51,6 +55,7 @@ export function submitMockQuiz(id, answers) {
   })
   const correct = items.filter(q => q.correct).length
   a.status = 'submitted'
+  a.submitted_at = new Date().toISOString()
   a.result = { total: items.length, correct, wrong: items.length-correct, unanswered: items.filter(q => q.unanswered).length, score: Math.round(correct/items.length*1000)/10, mistakes_added: added, items }
   return mockQuizDetail(id)
 }

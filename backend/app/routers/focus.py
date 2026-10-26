@@ -40,7 +40,8 @@ def _to_out(session: FocusSession, subject: str) -> FocusSessionOut:
     return FocusSessionOut(
         id=session.id,
         exam_id=session.exam_id,
-        subject=subject,
+        subject=subject or session.subject_snapshot,
+        archived=session.exam_id is None and bool(session.subject_snapshot),
         duration_minutes=session.duration_minutes,
         start_time=session.start_time,
         end_time=session.end_time,
@@ -74,6 +75,7 @@ def create_session(
     session = FocusSession(
         user_id=user.id,
         exam_id=payload.exam_id,
+        subject_snapshot=exam.subject if payload.exam_id is not None else "",
         start_time=start_time,
         end_time=end_time,
         duration_minutes=payload.duration_minutes,
@@ -109,18 +111,20 @@ def today_summary(user: User = Depends(get_current_user), db: Session = Depends(
     goal_minutes = goal.target_minutes if goal else daily_budget(db, user.id)
 
     # 按科目聚合
-    minutes_by_exam: dict[int | None, int] = {}
+    minutes_by_exam = {}
     for s in sessions:
-        minutes_by_exam[s.exam_id] = minutes_by_exam.get(s.exam_id, 0) + s.duration_minutes
+        key = (s.exam_id, s.subject_snapshot if s.exam_id is None else "")
+        minutes_by_exam[key] = minutes_by_exam.get(key, 0) + s.duration_minutes
 
-    subjects = _subject_map(db, user, {eid for eid in minutes_by_exam if eid is not None})
+    subjects = _subject_map(db, user, {eid for eid, _ in minutes_by_exam if eid is not None})
     by_exam = [
         FocusExamStat(
             exam_id=eid,
-            subject=subjects.get(eid, "") if eid is not None else "未指定科目",
+            subject=subjects.get(eid, "") if eid is not None else (f"{snapshot}（已删除考试）" if snapshot else "未指定科目"),
+            archived=eid is None and bool(snapshot),
             minutes=minutes,
         )
-        for eid, minutes in minutes_by_exam.items()
+        for (eid, snapshot), minutes in minutes_by_exam.items()
     ]
 
     total_minutes = sum(minutes_by_exam.values())

@@ -359,16 +359,5 @@ def delete_material(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    material = _get_own_material(db, user, material_id)
-    # 删除磁盘文件（失败不影响数据库删除）
-    try:
-        Path(material.file_path).unlink(missing_ok=True)
-    except Exception:
-        pass
-    # 连带清掉指向这份资料的收藏，避免收藏本里留下空壳（用例 3.5）
-    db.query(Collection).filter(
-        Collection.user_id == user.id, Collection.material_id == material_id
-    ).delete(synchronize_session=False)
-    db.delete(material)
-    db.commit()
-    return {"ok": True}
+    from ..services.deletion import delete_material as remove
+    return remove(db, material_id, owner_id=user.id)

@@ -1,0 +1,90 @@
+"""无写入的签名预览，确认时重新校验并原子保存任务和幂等凭据。"""
+import hashlib
+import json
+from datetime import date, datetime, timedelta, timezone
+
+import jwt
+from fastapi import HTTPException
+
+from ..config import settings
+from ..models.models import Exam, IcsImportReceipt, Task, User
+from .calendar_io import parse_events
+from .study_planner import daily_budget, preview as plan_preview
+
+
+def validate(db, user, exam, events, requested_limit=None):
+    budget = daily_budget(db, user.id)
+    limit = min(budget, requested_limit) if requested_limit is not None else budget
+    if not 30 <= limit <= 960:
+        raise HTTPException(422, "每日预算需在 30～960 分钟之间")
+    totals, additions, conflicts = {}, {}, []
+    for task in db.query(Task).filter(Task.user_id == user.id).all():
+        key = task.plan_date.isoformat()
+        totals[key] = totals.get(key, 0) + task.estimated_minutes
+    deadline = max(date.today(), exam.exam_date - timedelta(days=1))
+    for event in events:
+        day = date.fromisoformat(event['day'])
+        if day < date.today() or exam.exam_date < date.today() or day > deadline:
+            conflicts.append(dict(date=event['day'], reason="事件不在今天至考前的可复习日期内"))
+        additions[event['day']] = additions.get(event['day'], 0) + event['minutes']
+    for day, minutes in sorted(additions.items()):
+        existing = totals.get(day, 0)
+        if existing + minutes > limit:
+            conflicts.append(dict(date=day, existing_minutes=existing, planned_minutes=existing + minutes,
+                                  limit_minutes=limit, reason="全科每日总时长超出预算"))
+    return limit, conflicts
+
+
+def preview_import(db, user, exam, text, requested_limit=None):
+    try:
+        events, skipped = parse_events(text)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(400, str(exc))
+    events.sort(key=lambda item: (item['day'], item['title'], item['minutes']))
+    key = hashlib.sha256(json.dumps([user.id, exam.id, exam.created_at.isoformat(), events], sort_keys=True).encode()).hexdigest()
+    receipt = db.get(IcsImportReceipt, key)
+    limit, conflicts = validate(db, user, exam, events, requested_limit)
+    payload = dict(typ='ics_preview', sub=str(user.id), sid=user.auth_key, exam_id=exam.id,
+                   events=events, skipped=skipped, limit=requested_limit, import_key=key,
+                   fingerprint=plan_preview(db, user.id)['fingerprint'],
+                   exp=datetime.now(timezone.utc) + timedelta(minutes=10))
+    return dict(imported=0, count=len(events), skipped=skipped, conflicts=conflicts,
+                events=events, daily_limit_minutes=limit, already_imported=receipt is not None,
+                preview_token=jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256'),
+                note="时间按上海日期合并为每日任务；全天事件按 60 分钟导入。预览不会保存任务，10 分钟内确认有效。")
+
+
+def confirm_import(db, user, token):
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'], options={'require': ['sub', 'sid', 'typ', 'exp']})
+        if payload['typ'] != 'ics_preview' or payload['sub'] != str(user.id) or payload['sid'] != user.auth_key:
+            raise ValueError('wrong preview owner/purpose')
+    except (jwt.InvalidTokenError, ValueError, KeyError):
+        raise HTTPException(409, "导入预览已失效，请重新选择文件预览")
+    try:
+        locked = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update(
+            {User.auth_key: user.auth_key}, synchronize_session=False)
+        if not locked:
+            raise HTTPException(401, "登录已失效")
+        receipt = db.get(IcsImportReceipt, payload['import_key'])
+        if receipt:
+            db.rollback()
+            return dict(imported=receipt.imported, skipped=payload['skipped'], conflicts=[], already_imported=True)
+        exam = db.query(Exam).filter(Exam.id == payload['exam_id'], Exam.user_id == user.id).first()
+        if exam is None:
+            raise HTTPException(404, "考试不存在")
+        if payload['fingerprint'] != plan_preview(db, user.id)['fingerprint']:
+            raise HTTPException(409, "任务、考试或预算已经变化，请重新预览")
+        _, conflicts = validate(db, user, exam, payload['events'], payload['limit'])
+        if conflicts:
+            raise HTTPException(409, "存在预算或考试日期冲突，请调整后重新预览")
+        for index, item in enumerate(payload['events']):
+            db.add(Task(user_id=user.id, exam_id=exam.id, title='【ICS】' + item['title'],
+                        plan_date=date.fromisoformat(item['day']), estimated_minutes=item['minutes'],
+                        source='manual', priority=2, sort_order=index))
+        db.add(IcsImportReceipt(id=payload['import_key'], user_id=user.id, exam_id=exam.id, imported=len(payload['events'])))
+        db.commit()
+        return dict(imported=len(payload['events']), skipped=payload['skipped'], conflicts=[], already_imported=False)
+    except Exception:
+        db.rollback()
+        raise

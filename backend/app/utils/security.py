@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -58,6 +58,7 @@ def decode_reset_token(token: str, db: Session) -> User:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
@@ -78,6 +79,7 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None or not isinstance(payload["sid"], str) or not compare_digest(payload["sid"], user.auth_key or ""):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录已失效，请重新登录")
+    request.state.audit_actor = {"id": user.id, "name": user.username}
     if user.locked_until is not None and datetime.now() < user.locked_until:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已锁定，请找回密码或等待解锁")
     if user.is_banned:

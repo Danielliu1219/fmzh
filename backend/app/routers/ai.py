@@ -31,6 +31,7 @@ from ..schemas.schemas import (
     AnalysisResult,
     AnalyzeRequest,
     MindmapOut,
+    MasteryOut,
     PlanItem,
     ProfileOut,
     ProfileRequest,
@@ -481,6 +482,20 @@ def latest_analysis(
         result=public_analysis(result),
         created_at=analysis.created_at,
     )
+
+
+@router.get("/analyses/{exam_id}/mastery", response_model=MasteryOut, summary="知识点自测掌握状态与作答依据")
+def analysis_mastery(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _get_own_exam(db, user, exam_id)
+    analysis = db.query(Analysis).filter(Analysis.user_id == user.id, Analysis.exam_id == exam_id).order_by(Analysis.id.desc()).first()
+    if analysis is None:
+        raise HTTPException(404, "该科目还没有分析结果")
+    try:
+        result = AnalysisResult.model_validate_json(analysis.result_json)
+    except ValueError:
+        raise HTTPException(500, "历史分析数据损坏")
+    from ..services.mastery import knowledge_mastery
+    return MasteryOut(exam_id=exam_id, points=knowledge_mastery(db, user.id, exam_id, [point.name for point in result.knowledge_points]))
 
 
 @router.get(

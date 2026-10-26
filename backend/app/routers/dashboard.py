@@ -23,6 +23,7 @@ from ..schemas.schemas import (
     WeeklySubjectOut,
 )
 from ..services import prompts
+from ..services.focus_history import archived_subjects
 from ..services.llm_client import LLMError, chat_json
 from ..utils.security import get_current_user
 
@@ -197,7 +198,8 @@ def weekly_report(
                 days_left=_days_left(exam.exam_date),
             )
         )
-    free_minutes = minutes_by_exam.get(None, 0)
+    subjects.extend(WeeklySubjectOut(**item) for item in archived_subjects(sessions))
+    free_minutes = sum(s.duration_minutes for s in sessions if s.exam_id is None and not s.subject_snapshot)
     if free_minutes:
         subjects.append(
             WeeklySubjectOut(
@@ -304,7 +306,7 @@ def weekly_report(
     if not subjects:
         note = "该区间还没有学习记录，完成一些任务或用番茄钟专注一次后再生成周报。"
     elif not metrics:
-        note = "只有未指定科目的专注记录，绑定科目后才能获得掌握度评测。"
+        note = "该区间只有自由专注或已删除考试的历史时长，保留分钟数，不生成当前科目掌握度评测。"
 
     # 每日序列：窗口内每天补一条，保证报表连续
     daily: list[WeeklyDayOut] = []
@@ -432,7 +434,8 @@ def stats_overview(
                 days_left=_days_left(exam.exam_date),
             )
         )
-    free_minutes = minutes_by_exam.get(None, 0)
+    subjects.extend(SubjectStat(**item) for item in archived_subjects(sessions))
+    free_minutes = sum(s.duration_minutes for s in sessions if s.exam_id is None and not s.subject_snapshot)
     if free_minutes:
         subjects.append(
             SubjectStat(

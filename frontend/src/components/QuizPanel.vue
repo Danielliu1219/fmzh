@@ -50,6 +50,7 @@ import { readSession } from '../utils/session'
 import QuizFeedback from './QuizFeedback.vue'
 
 const props = defineProps({ analysisId: { type: [Number,String], required:true }, questions: { type:Array, default:()=>[] }, subject: { type:String, default:'' } })
+const emit = defineEmits(['submitted'])
 const attempt=ref(null), answers=ref([]), current=ref(0), busy=ref(false), error=ref(''), history=ref([])
 const active=computed(()=>attempt.value?.questions[current.value])
 const hasAnswer=a=>Array.isArray(a) ? a.length>0 : typeof a==='string' && a.trim().length>0
@@ -89,7 +90,7 @@ const submit=async()=>{
     try {await ElMessageBox.confirm(`还有 ${attempt.value.questions.length-answered.value} 道未作答，提交后将按答错计入错题本。确认提交？`,'提交自测',{confirmButtonText:'确认提交',cancelButtonText:'继续作答'})} catch {return}
   }
   busy.value=true; error.value=''
-  try {const result=USE_MOCK ? submitMockQuiz(attempt.value.id,answers.value) : await quizApi.submit(attempt.value.id,answers.value); localStorage.removeItem(draftKey()); restore(result); await refreshHistory()} catch {error.value='提交暂未完成，作答已保留。请重试；重复提交不会重复记分或添加错题。'} finally {busy.value=false}
+  try {const result=USE_MOCK ? submitMockQuiz(attempt.value.id,answers.value) : await quizApi.submit(attempt.value.id,answers.value); localStorage.removeItem(draftKey()); restore(result); await refreshHistory(); emit('submitted')} catch {error.value='提交暂未完成，作答已保留。请重试；重复提交不会重复记分或添加错题。'} finally {busy.value=false}
 }
 onMounted(loadHistory)
 </script>

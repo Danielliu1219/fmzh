@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ from ..config import UPLOAD_DIR
 from ..database import Base, get_db
 from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, StudySetting, Task, User, UserProfile
 from ..models.models import Notification, NotificationPreference, Reminder, Collection, MoodRecord, QuizAttempt
-from ..models.models import QaConversation, QaMessage
+from ..models.models import QaConversation, QaMessage, IcsImportReceipt
 from ..schemas.schemas import (
     ChangePasswordRequest,
     ResetConfirmRequest,
@@ -58,7 +58,7 @@ def _locked_message(user: User) -> str:
 
 
 @router.post("/register", response_model=TokenResponse, summary="注册（成功即自动登录）")
-def register(payload: UserRegister, db: Session = Depends(get_db)):
+def register(payload: UserRegister, request: Request, db: Session = Depends(get_db)):
     exists = db.query(User).filter(User.username == payload.username).first()
     if exists:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="账号已存在，请换一个账号")
@@ -87,11 +87,13 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
             if retry == 2:
                 raise HTTPException(409, "注册请求冲突，请重试")
     db.refresh(user)
+    request.state.audit_actor = {"id": user.id, "name": user.username}
     return _token_response(user)
 
 
 @router.post("/login", response_model=TokenResponse, summary="登录（连续 3 次失败锁定 30 分钟）")
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+def login(payload: UserLogin, request: Request, db: Session = Depends(get_db)):
+    request.state.audit_actor = {"name": payload.username}
     user = db.query(User).filter(User.username == payload.username).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
@@ -130,6 +132,7 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
     user.failed_attempts = 0
     user.locked_until = None
     db.commit()
+    request.state.audit_actor = {"id": user.id, "name": user.username}
     return _token_response(user)
 
 
@@ -236,7 +239,7 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
         user_dir.rmdir()
 
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
-    for model in (Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
+    for model in (IcsImportReceipt, Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
         db.query(model).filter(model.user_id == user.id).delete()
     # 资料问答（4.5）：先删消息再删会话
     conversation_ids = [

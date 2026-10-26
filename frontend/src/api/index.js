@@ -26,6 +26,7 @@ export const examApi = {
   // 2.12 ICS 导入（multipart：file + exam_id）
   importIcs: (formData) =>
     request.post('/exams/import-ics', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  confirmIcs: (preview_token) => request.post('/exams/import-ics/confirm', { preview_token }),
   // 2.13 ICS 导出（返回文件流，由调用方触发下载）
   exportIcs: () => request.get('/exams/export-ics', { responseType: 'blob' }),
 }
@@ -54,6 +55,7 @@ export const collectionApi = {
 }
 
 export const aiApi = {
+  mastery: (examId) => request.get(`/ai/analyses/${examId}/mastery`),
   profile: (data) => request.post('/ai/profile', data),
   savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),
   analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),
@@ -119,6 +121,8 @@ export const featureApi = {
 }
 
 export const adminApi = {
+  operationLogs: (params) => request.get('/admin/operation-logs', { params }),
+  retryFileCleanup: () => request.post('/admin/file-cleanups/retry'),
   courses: () => request.get('/admin/courses'),
   createCourse: (data) => request.post('/admin/courses', data),
   updateCourse: (id, data) => request.put(`/admin/courses/${id}`, data),

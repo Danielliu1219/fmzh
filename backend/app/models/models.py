@@ -1,4 +1,4 @@
-"""数据库表模型（共 18 张表）
+"""数据库表模型（共 21 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -260,6 +260,7 @@ class FocusSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=True)
+    subject_snapshot = Column(String(64), nullable=False, default="")
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     duration_minutes = Column(Integer, nullable=False)  # 1~180，单个默认 25
@@ -325,3 +326,40 @@ class Notification(Base):
     created_at = Column(DateTime, nullable=False)  # UTC，实际打开页面生成的时间
     is_read = Column(Boolean, nullable=False, default=False)
     deleted_at = Column(DateTime, nullable=True)  # 保留去重凭据，删除后刷新不会再生成
+
+
+class FileCleanupJob(Base):
+    """数据库删除提交后重试文件清理，账号删除后也能继续处理。"""
+
+    __tablename__ = "file_cleanup_jobs"
+    id = Column(String(32), primary_key=True, default=lambda: uuid4().hex)
+    file_path = Column(String(512), unique=True, nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(80), nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
+class IcsImportReceipt(Base):
+    """只在确认导入时写入的幂等凭据；预览不写数据库。"""
+
+    __tablename__ = "ics_import_receipts"
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
+    imported = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+
+class OperationLog(Base):
+    """不可通过业务接口编辑；保留操作者快照，不依赖已注销账号。"""
+
+    __tablename__ = "operation_logs"
+    id = Column(Integer, primary_key=True)
+    actor_id = Column(Integer, nullable=True, index=True)
+    actor_name = Column(String(64), nullable=False, default="")
+    action = Column(String(48), nullable=False, index=True)
+    target_id = Column(String(64), nullable=False, default="")
+    method = Column(String(8), nullable=False)
+    path = Column(String(160), nullable=False)
+    status_code = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, index=True)
