@@ -10,10 +10,14 @@ from ..schemas.schemas import (
     ConflictCheckOut,
     ConflictCheckRequest,
     TaskCreate,
+    TaskCreateOut,
+    TaskPreviewRequest,
+    TaskPreviewOut,
     TaskOut,
     TaskUpdate,
 )
 from ..services.schedule_service import check_conflict
+from ..services import task_service
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -51,22 +55,18 @@ def list_tasks(
     return query.order_by(Task.plan_date, Task.is_done, Task.priority, Task.sort_order).all()
 
 
-@router.post("", response_model=TaskOut, summary="手动添加任务")
+@router.post('/preview', response_model=TaskPreviewOut, summary='预览任务日期、重复次数及全科预算提醒（只读）')
+def preview_task(payload: TaskPreviewRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return task_service.preview_tasks(db, user.id, payload)
+
+
+@router.post("", response_model=TaskCreateOut, summary="手动添加任务或有限重复任务")
 def create_task(
     payload: TaskCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    exam = (
-        db.query(Exam).filter(Exam.id == payload.exam_id, Exam.user_id == user.id).first()
-    )
-    if exam is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="考试不存在")
-    task = Task(user_id=user.id, source="manual", **payload.model_dump())
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-    return task
+    return task_service.create_tasks(db, user.id, payload)
 
 
 @router.post("/check-conflict", response_model=ConflictCheckOut, summary="任务冲突检测（2.8：同一天总时长超上限提醒）")
@@ -93,21 +93,7 @@ def update_task(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = _get_own_task(db, user, task_id)
-    data = payload.model_dump(exclude_none=True)
-    if "exam_id" in data:
-        exam = (
-            db.query(Exam)
-            .filter(Exam.id == data["exam_id"], Exam.user_id == user.id)
-            .first()
-        )
-        if exam is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="考试不存在")
-    for field, value in data.items():
-        setattr(task, field, value)
-    db.commit()
-    db.refresh(task)
-    return task
+    return task_service.update_task(db, user.id, task_id, payload)
 
 
 @router.post("/{task_id}/checkin", response_model=TaskOut, summary="打卡完成")
@@ -145,7 +131,9 @@ def delete_task(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = _get_own_task(db, user, task_id)
-    db.delete(task)
-    db.commit()
-    return {"ok": True}
+    return task_service.delete_tasks(db, user.id, task_id)
+
+
+@router.delete('/{task_id}/series', summary='删除从本次日期起未完成的重复任务，保留完成记录')
+def delete_remaining_series(task_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return task_service.delete_tasks(db, user.id, task_id, remaining_series=True)

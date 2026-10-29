@@ -24,6 +24,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 
@@ -153,6 +154,14 @@ class Task(Base):
     title = Column(String(256), nullable=False)
     plan_date = Column(Date, index=True, nullable=False)
     estimated_minutes = Column(Integer, default=60)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
+    location = Column(String(120), nullable=False, default='')
+    difficulty = Column(String(16), nullable=False, default='medium')
+    detail = Column(Text, nullable=False, default='')
+    repeat_rule = Column(String(16), nullable=False, default='none')
+    repeat_until = Column(Date, nullable=True)
+    repeat_group_id = Column(String(32), nullable=True, index=True)
     priority = Column(Integer, default=2)  # 1 高 / 2 中 / 3 低
     sort_order = Column(Integer, default=0)
     is_done = Column(Boolean, default=False)

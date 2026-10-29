@@ -34,6 +34,7 @@ ACTIONS = {
     ('POST', '/api/tasks'): ('task.create', '新增任务'),
     ('PUT', '/api/tasks/{task_id}'): ('task.update', '修改任务'),
     ('DELETE', '/api/tasks/{task_id}'): ('task.delete', '删除任务'),
+    ('DELETE', '/api/tasks/{task_id}/series'): ('task.series.delete', '删除后续未完成重复任务'),
     ('POST', '/api/tasks/{task_id}/checkin'): ('task.checkin', '任务打卡'),
     ('DELETE', '/api/tasks/{task_id}/checkin'): ('task.uncheckin', '撤销打卡'),
     ('POST', '/api/admin/courses'): ('admin.course.create', '新增课程'),

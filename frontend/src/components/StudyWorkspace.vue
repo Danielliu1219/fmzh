@@ -182,6 +182,7 @@
                     }}</small
                   ><small>{{ deadline(task.exam_id) }}</small></span
                 >
+                <small v-if="task.start_time" class="task-schedule">{{ taskTimeLabel(task) }} · {{ task.location || '地点待定' }}</small>
               </button>
               <span v-if="pendingIds.has(task.id)" class="task-saving"
                 >保存中</span
@@ -212,6 +213,8 @@
                 : '从左侧任务清单选择，也可以自由计时。'
             }}
           </p>
+          <p v-if="selected">{{ taskTimeLabel(selected) }} · {{ selected.location || '地点待定' }} · {{ difficultyLabels[selected.difficulty || 'medium'] }}</p>
+          <details v-if="selected?.detail" class="selected-detail"><summary>查看复习内容</summary><p>{{ selected.detail }}</p></details>
         </div>
         <slot name="focus"></slot>
         <div class="task-resources">
@@ -239,6 +242,7 @@
 import { computed, ref, watch } from 'vue'
 import { examColor } from '../utils/subjectColor'
 import { daysUntil } from '../utils/studyProgress'
+import { difficultyLabels, taskTimeLabel } from '../utils/taskDetails'
 const props = defineProps({
   tasks: Array,
   exams: Array,
@@ -745,6 +749,10 @@ a:focus-visible {
   display: flex;
   flex-direction: column;
 }
+.task-schedule { display: block; margin-top: 6px; color: var(--text-low); font-size: 11px; }
+.selected-detail { margin: 12px 0; color: var(--text-low); font-size: 12px; }
+.selected-detail summary { cursor: pointer; }
+.selected-detail p { max-height: 180px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .current-task {
   padding-bottom: 10px;
 }

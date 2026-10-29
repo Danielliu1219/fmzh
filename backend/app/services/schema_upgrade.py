@@ -4,11 +4,27 @@ from uuid import uuid4
 from sqlalchemy import inspect, text
 
 from .mistakes import question_key
-from ..models.models import Collection
+from ..models.models import Collection, Task
 
 
 def upgrade_schema(engine):
     with engine.begin() as conn:
+        if inspect(conn).has_table('tasks'):
+            columns = {c['name'] for c in inspect(conn).get_columns('tasks')}
+            additions = {
+                'start_time': 'TIME', 'end_time': 'TIME',
+                'location': "VARCHAR(120) NOT NULL DEFAULT ''",
+                'difficulty': "VARCHAR(16) NOT NULL DEFAULT 'medium'",
+                'detail': "TEXT NOT NULL DEFAULT ''",
+                'repeat_rule': "VARCHAR(16) NOT NULL DEFAULT 'none'",
+                'repeat_until': 'DATE', 'repeat_group_id': 'VARCHAR(32)',
+            }
+            for name, sql_type in additions.items():
+                if name not in columns:
+                    conn.execute(text(f'ALTER TABLE tasks ADD COLUMN {name} {sql_type}'))
+            for index in Task.__table__.indexes:
+                if index.name == 'ix_tasks_repeat_group_id':
+                    index.create(conn, checkfirst=True)
         if inspect(conn).has_table("focus_sessions"):
             columns = {c["name"] for c in inspect(conn).get_columns("focus_sessions")}
             if "subject_snapshot" not in columns:

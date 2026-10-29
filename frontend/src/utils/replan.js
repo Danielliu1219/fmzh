@@ -48,5 +48,11 @@ export function feedbackReplan(result, examId, tasks, exams, dailyMinutes, today
     priority: candidate.find(t => t.id === a.task_id)?.priority || 2,
     detail: '依据当前学习反馈在全科共享预算内调整',
   }))
+  plan.push(...own.filter(t => !t.is_done && t.start_time).map(t => ({
+    day: Math.round((Date.parse(t.plan_date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000)+1,
+    date: t.plan_date, title: t.title, estimated_minutes: t.estimated_minutes, priority: priorities[t.id] || t.priority,
+    detail: `保留固定时段 ${t.start_time}–${t.end_time}；${t.detail || ''}`,
+  })))
+  plan.sort((a, b) => a.date.localeCompare(b.date) || a.priority-b.priority)
   return { exam_id: examId, days_left: daysLeft, weights, plan, scheduling, fingerprint, priorities, base, candidate, feedbackKey, done_tasks: done, total_tasks: own.length, completion_rate: own.length ? done / own.length : 0, wrong_questions: Object.values(counts).reduce((a, b) => a + b, 0), applied: false, note: '演示预览：保留手动与已完成任务，按反馈追加针对性练习，统一校验全科容量；同一批反馈不会重复追加，有冲突时不能应用。' }
 }

@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from ..models.models import Exam, StudySetting, Task, UserProfile
+from .task_details import DETAIL_FIELDS, SNAPSHOT_FIELDS
 
 
 def daily_budget(db: Session, user_id: int) -> int:
@@ -26,8 +27,10 @@ def distribute(tasks: list[dict], exams: dict, budget: int, today: date) -> dict
     for task in tasks:
         day = date.fromisoformat(str(task['plan_date']))
         minutes = max(0, int(task['estimated_minutes'] or 0))
-        if task['is_done'] or task['source'] != 'ai':
+        if task['is_done'] or task['source'] != 'ai' or task.get('start_time') is not None:
             fixed[day] += minutes
+            if task.get('start_time') is not None and not task['is_done'] and day < today:
+                conflicts.append({'task_id': task['id'], 'title': task['title'], 'minutes': minutes, 'reason': '固定时段已过，请手动改期或打卡；系统不会自动移动固定时段'})
             continue
         exam = exams.get(task['exam_id'])
         deadline = date.fromisoformat(str(exam['exam_date'])) if exam else today - timedelta(days=1)
@@ -38,7 +41,7 @@ def distribute(tasks: list[dict], exams: dict, budget: int, today: date) -> dict
         if day >= today and minutes > budget:
             conflicts.append({'date': day.isoformat(), 'minutes': minutes - budget, 'reason': '已完成与手动任务已超过当日预算，请先调整手动任务或预算'})
     # 规划最多一年，防止异常远期日期导致无界计算。
-    end = min(max((j['deadline'] for j in jobs), default=today), today + timedelta(days=365))
+    end = min(max([j['deadline'] for j in jobs] + [d for d in fixed if d >= today], default=today), today + timedelta(days=365))
     day = today
     while day <= end:
         capacity = max(0, budget - fixed[day])
@@ -97,7 +100,7 @@ def distribute(tasks: list[dict], exams: dict, budget: int, today: date) -> dict
 
 def preview(db: Session, user_id: int) -> dict:
     rows = db.query(Task).filter(Task.user_id == user_id).order_by(Task.id).all()
-    tasks = [{key: getattr(t, key) for key in ('id', 'exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', 'source', 'is_done')} for t in rows]
+    tasks = [{key: getattr(t, key) for key in SNAPSHOT_FIELDS} for t in rows]
     exams = {e.id: {'exam_date': e.exam_date, 'subject': e.subject} for e in db.query(Exam).filter(Exam.user_id == user_id).all()}
     budget = daily_budget(db, user_id)
     fingerprint = hashlib.sha256(json.dumps([date.today(), budget, tasks, exams], default=str, sort_keys=True).encode()).hexdigest()
@@ -113,7 +116,7 @@ def apply(db: Session, user_id: int, plan: dict, *, commit: bool = True):
     for task_id, items in grouped.items():
         task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id, Task.is_done.is_(False), Task.source == 'ai').one()
         title = re.sub(r'（分段 \d+/\d+）$', '', task.title)
-        original = {key: getattr(task, key) for key in ('user_id', 'exam_id', 'analysis_id', 'priority', 'sort_order', 'source')}
+        original = {key: getattr(task, key) for key in ('user_id', 'exam_id', 'analysis_id', 'priority', 'sort_order', 'source', *DETAIL_FIELDS)}
         for index, item in enumerate(items):
             row = task if index == 0 else Task(**original)
             row.plan_date = date.fromisoformat(item['date'])
