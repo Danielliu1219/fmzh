@@ -308,7 +308,9 @@ class KnowledgePoint(BaseModel):
     importance: str = "medium"  # high / medium / low
     recommend_reason: str = ""
     source: str = ""  # 推荐依据来自哪类资料
-    suggest_hours: int = 0
+    suggest_hours: float = 0  # 兼容旧客户端；精确分配以分钟为准
+    suggest_minutes: Optional[int] = None
+    practice_hint: str = ""
     citations: list[SourceReference] = []
 
 
@@ -355,6 +357,35 @@ class QuestionTypeStat(BaseModel):
     citations: list[SourceReference] = []
 
 
+class PlanActivity(BaseModel):
+    phase: str
+    label: str
+    minutes: int = Field(ge=0)
+    detail: str = ""
+
+
+class StudyPhase(BaseModel):
+    phase: str
+    label: str
+    percent: int = Field(ge=0, le=100)
+    minutes: int = Field(default=0, ge=0)
+    detail: str = ""
+
+
+class StudyStrategy(BaseModel):
+    target_band: Optional[ScoreBand] = None
+    target_label: str
+    learning_status: str
+    available_days: int
+    daily_minutes: int
+    available_minutes: int
+    planned_minutes: int = 0
+    deferred_minutes: int = 0
+    weak_chapters: list[str] = []
+    phases: list[StudyPhase]
+    notes: list[str] = []
+
+
 class PlanItem(BaseModel):
     day: int
     date: str  # YYYY-MM-DD
@@ -362,6 +393,7 @@ class PlanItem(BaseModel):
     estimated_minutes: int = 60
     priority: int = 2  # 1 高 / 2 中 / 3 低
     detail: str = ""
+    activities: list[PlanActivity] = []  # 同一项任务内部拆分，总和等于 estimated_minutes
 
 
 class QuizItem(BaseModel):
@@ -382,6 +414,7 @@ class AnalysisResult(BaseModel):
     question_types: list[QuestionTypeStat] = []  # 常考题型分布（用例 4.7）
     review_plan: list[PlanItem] = []
     quiz: list[QuizItem] = []
+    strategy: Optional[StudyStrategy] = None  # 旧分析没有此字段，读取时不伪造新结果
 
 
 class AnalyzeRequest(BaseModel):
@@ -640,7 +673,8 @@ class ReviewItem(BaseModel):
     name: str               # 知识点名称
     weight: float           # 权重 0~1
     importance: str = "medium"  # high / medium / low
-    suggest_hours: int = 0  # 建议复习时长（小时）
+    suggest_hours: float = 0  # 兼容历史小时值，新分析优先显示精确分钟
+    suggest_minutes: Optional[int] = None
     source: str = ""        # 依据来源
     basis: str = ""         # 推荐依据说明
 

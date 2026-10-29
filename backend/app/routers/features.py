@@ -302,6 +302,7 @@ def compute_review(db: Session, user: User, exam_id: int | None = None) -> dict 
             "weight": k.get("weight", 0),
             "importance": k.get("importance", "medium"),
             "suggest_hours": k.get("suggest_hours", 0),
+            "suggest_minutes": k.get("suggest_minutes"),
             "source": k.get("source", ""),
             "basis": k.get("recommend_reason", ""),
         }

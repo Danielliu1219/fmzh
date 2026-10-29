@@ -10,6 +10,7 @@ from ..models.models import Analysis, Collection, Exam, QuizAttempt, Task, User
 from ..schemas.schemas import AnalysisResult, PlanItem, ReplanOut, WeightChange
 from . import study_planner
 from .mistakes import normalized_title
+from .recommendation_strategy import refresh_strategy
 
 
 def feedback(db, user_id, exam_id):
@@ -164,6 +165,9 @@ def replan(db, user, exam_id, payload):
         data['replan_base_weights'] = base
         data['replan_feedback_key'] = feedback_key
         data['review_plan'] = [p.model_dump() for p in output.plan]
+        updated_result = AnalysisResult.model_validate(data)
+        refresh_strategy(updated_result)
+        data.update(updated_result.model_dump(mode='json'))
         analysis.result_json = json.dumps(data, ensure_ascii=False)
         db.flush()
         output.task_count = db.query(Task).filter(Task.user_id == user.id, Task.exam_id == exam_id, Task.source == 'ai', Task.is_done.is_(False)).count()

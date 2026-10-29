@@ -246,6 +246,20 @@
           </p>
         </el-card>
 
+        <el-card v-if="result.strategy" shadow="never" class="result-card">
+          <template #header><b>这轮怎样复习</b><span class="hint">{{ result.strategy.target_label }}</span></template>
+          <p class="mastery-note">计划共 {{ result.strategy.planned_minutes }} 分钟，下面是同一份时间的拆分；知识点建议时长也计在其中。</p>
+          <div class="strategy-phases">
+            <article v-for="phase in result.strategy.phases" :key="phase.phase">
+              <b>{{ phase.label }} <span>{{ phase.percent }}%</span></b>
+              <strong>{{ phase.minutes }} <small>分钟</small></strong>
+              <p>{{ phase.detail }}</p>
+            </article>
+          </div>
+          <p v-if="result.strategy.weak_chapters.length" class="mastery-note">优先补缺：{{ result.strategy.weak_chapters.join('、') }}</p>
+          <p v-for="note in result.strategy.notes" :key="note" class="mastery-note">{{ note }}</p>
+        </el-card>
+
         <el-card shadow="never" class="result-card">
           <template #header
             ><div class="knowledge-head">
@@ -291,6 +305,7 @@
                   ></i>
                 </div>
                 <p>{{ kp.recommend_reason }}</p>
+                <p v-if="kp.practice_hint">{{ kp.practice_hint }}</p>
                 <div v-if="masteryFor(kp.name)" class="mastery-line">
                   <el-tag size="small" :type="masteryTypes[masteryFor(kp.name).status]">{{ masteryLabels[masteryFor(kp.name).status] }}</el-tag>
                   <span v-if="masteryFor(kp.name).total">最近自测 {{ masteryFor(kp.name).correct }}/{{ masteryFor(kp.name).total }} 题正确 · {{ masteryFor(kp.name).score }}%</span>
@@ -302,8 +317,8 @@
                 </details>
                 <div class="knowledge-source">
                   <span v-if="kp.source">依据 · {{ kp.source }}</span
-                  ><span v-if="kp.suggest_hours"
-                    >建议 {{ kp.suggest_hours }} 小时</span
+                  ><span
+                    >建议投入 · {{ suggestedTime(kp) }}</span
                   >
                   <el-button link type="primary" @click="openEvidence('knowledge', kp)">查看原文依据</el-button>
                 </div>
@@ -352,7 +367,7 @@
             </el-table-column>
             <el-table-column prop="suggest_hours" label="建议投入" width="90">
               <template #default="{ row }"
-                >{{ row.suggest_hours }} 小时</template
+                >{{ suggestedTime(row) }}</template
               >
             </el-table-column>
             <el-table-column
@@ -543,7 +558,12 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="detail" label="具体内容" min-width="200" />
+            <el-table-column label="具体内容" min-width="260">
+              <template #default="{ row }">
+                <p>{{ row.detail }}</p>
+                <p v-for="activity in row.activities || []" :key="activity.phase" class="plan-activity">{{ activity.label }} {{ activity.minutes }} 分钟 · {{ activity.detail }}</p>
+              </template>
+            </el-table-column>
           </el-table>
         </el-card>
 
@@ -672,6 +692,7 @@ import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
 import { mockProfile, mockAnalysis, mockMaterials } from '../mock/pages'
+import { applyRecommendationStrategy, refreshStrategy, suggestedTime } from '../utils/recommendationStrategy'
 import SourceExcerpt from '../components/SourceExcerpt.vue'
 import { mockEvidence, sourceRoute } from '../utils/sourceEvidence.js'
 import QuizPanel from '../components/QuizPanel.vue'
@@ -933,12 +954,6 @@ const previewAnalysis = () => {
     ...p,
     title: names[i],
     detail: `按${band.range}目标复习${names[i]}，${band.min >= 85 ? '增加综合应用与限时训练' : band.min >= 70 ? '巩固常见题型并练习综合应用' : '优先基础题与高频考点'}，整理易错点`,
-    estimated_minutes: Math.max(
-      15,
-      Math.round(
-        (brief.daily_hours * 60) / Math.max(1, exams.value.length) / 5,
-      ) * 5,
-    ),
   }))
   if (subject.includes('英语'))
     copy.quiz = [
@@ -975,7 +990,17 @@ const previewAnalysis = () => {
         knowledge_point: '错题复盘',
       },
     ]
-  return copy
+  const today = getToday()
+  const upcoming = exams.value.filter(e => e.exam_date >= today)
+  const days = e => Math.max(1, daysUntil(e.exam_date, today))
+  const selected = upcoming.find(e => e.id === examId.value)
+  if (!selected) throw new Error('该考试已经结束，不能再生成备考任务')
+  const denominator = upcoming.reduce((sum, e) => sum + 1 / days(e), 0)
+  const share = Math.max(1, Math.floor(mockStudySession.daily_minutes / days(selected) / denominator + 1e-7))
+  return applyRecommendationStrategy(copy, {
+    ...profile.value, daily_hours: share / 60,
+    available_days: Math.min(profile.value.available_days, days(selected)),
+  }, today)
 }
 
 // 静态演示模式：从 mockAnalysis 直接构建导图与卡片
@@ -988,7 +1013,7 @@ const buildMockStudy = () => {
     source: kp.source,
     children: [
       { name: `依据：${kp.recommend_reason}` },
-      { name: `建议投入：${kp.suggest_hours} 小时` },
+      { name: `建议投入：${suggestedTime(kp)}` },
     ],
   }))
   const focusNodes = result.value.exam_focus.map((f) => ({
@@ -1012,7 +1037,7 @@ const buildMockStudy = () => {
         id: i + 1,
         front: kp.name,
         back: kp.recommend_reason,
-        hint: `依据来源：${kp.source} · 建议投入 ${kp.suggest_hours} 小时`,
+        hint: `依据来源：${kp.source} · 建议投入 ${suggestedTime(kp)}`,
         knowledge_point: kp.name,
         source: kp.source,
       })),
@@ -1170,7 +1195,7 @@ const mockQaAnswer = (question) => {
   if (kp) {
     return (
       `（Mock）「${kp.name}」权重 ${Math.round(kp.weight * 100)}%，` +
-      `推荐依据：${kp.recommend_reason}（${kp.source}），建议投入 ${kp.suggest_hours} 小时。`
+      `推荐依据：${kp.recommend_reason}（${kp.source}），建议投入 ${suggestedTime(kp)}。`
     )
   }
   const focus = result.value.exam_focus.find((item) => question.includes(item.content.slice(0, 4)))
@@ -1262,6 +1287,7 @@ const applyMockReplan = () => {
   const weightMap = Object.fromEntries(preview.weights.map(item => [item.name, item.new_weight]))
   result.value.knowledge_points = result.value.knowledge_points.map(kp => ({ ...kp, weight: weightMap[kp.name] ?? kp.weight })).sort((a, b) => b.weight-a.weight)
   result.value.review_plan = preview.plan
+  refreshStrategy(result.value)
   result.value.replan_base_weights = preview.base
   result.value.replan_feedback_key = preview.feedbackKey
   const saved = mockAnalysisSessions.get(examId.value)
@@ -2038,6 +2064,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .mastery-note { font-size: 12px; line-height: 1.8; color: var(--ink-3); }
+.strategy-phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 20px; }
+.strategy-phases article { border-top: 2px solid var(--red); padding-top: 14px; }
+.strategy-phases b { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+.strategy-phases strong { display: block; margin-top: 14px; font-size: 28px; color: var(--text-hi); }
+.strategy-phases small { font-size: 12px; font-weight: normal; }
+.strategy-phases p, .plan-activity { font-size: 12px; line-height: 1.8; color: var(--ink-2); }
 .mastery-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
 .mastery-evidence { margin-top: 10px; font-size: 12px; line-height: 1.8; color: var(--ink-2); }
 .mastery-evidence summary { cursor: pointer; }

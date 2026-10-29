@@ -10,6 +10,12 @@ import re
 CARD_BACK_LIMIT = 180
 
 
+def _suggested_time(point):
+    if point.suggest_minutes is None:
+        return f'{point.suggest_hours} 小时'
+    return f'{point.suggest_minutes} 分钟' if point.suggest_minutes else '本轮暂不安排'
+
+
 def _excerpt(text: str, keyword: str, limit: int = CARD_BACK_LIMIT) -> str:
     """在资料正文中截取关键词附近的句子，作为卡片背面内容"""
     text = (text or "").strip()
@@ -35,8 +41,8 @@ def build_mindmap(course: str, result, material_texts: list[str]) -> dict:
         children = []
         if kp.recommend_reason:
             children.append({"name": f"依据：{kp.recommend_reason}"})
-        if kp.suggest_hours:
-            children.append({"name": f"建议投入：{kp.suggest_hours} 小时"})
+        if kp.suggest_hours or kp.suggest_minutes is not None:
+            children.append({"name": f"建议投入：{_suggested_time(kp)}"})
         kp_nodes.append(
             {
                 "name": f"{kp.name}（{round(kp.weight * 100)}%）",
@@ -83,7 +89,7 @@ def build_cards(result, material_texts: list[str]) -> list[dict]:
                 "id": len(cards) + 1,
                 "front": kp.name,
                 "back": back,
-                "hint": f"依据来源：{kp.source or '所上传复习资料'} · 建议投入 {kp.suggest_hours} 小时",
+                "hint": f"依据来源：{kp.source or '所上传复习资料'} · 建议投入 {_suggested_time(kp)}",
                 "knowledge_point": kp.name,
                 "source": kp.source,
             }
