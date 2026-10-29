@@ -8,6 +8,7 @@ LLM_MOCK=true 时使用 prompts.py 中的 Mock 实现，无需 API Key。
 import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+from fractions import Fraction
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
@@ -53,6 +54,7 @@ from ..services.plan_service import create_tasks_from_plan
 from ..services.study_planner import daily_budget
 from ..services.quizzes import public_analysis, prepare_questions
 from ..services.score_targets import band_strategy, band_text
+from ..services.recommendation_strategy import apply_strategy, strategy_context
 from ..services.study_cards import build_cards, build_mindmap
 from ..services.source_evidence import attach_references, references_for, excerpt_for, item_title
 from ..utils.security import get_current_user
@@ -67,20 +69,6 @@ STATUSES = {"weak", "medium", "good"}
 # 每次拼给大模型的资料文本上限：单份 6000 字、总计 30000 字
 PER_MATERIAL_LIMIT = 6000
 TOTAL_MATERIALS_LIMIT = 30000
-
-# 三档分级推荐策略（用例 4.11）：Mock 与真实大模型共用同一套确定性收口
-TIER_LABELS = {"pass": "保及格", "medium": "稳中等", "high": "冲高分"}
-TIER_SUMMARY = {
-    "pass": "以拿到高频基础分为目标：优先必考基础内容，低频低权重知识点后置，不把时间花在偏难怪题上。",
-    "medium": "以稳定拿到中档分为目标：基础与中频考点并重，兼顾薄弱章节，适量练习常见综合题。",
-    "high": "以冲刺高分为目标：必考与常考全覆盖，加大综合题、难题和易错点训练。",
-}
-TIER_PLAN_HINT = {
-    "pass": "保及格策略：只做基础题与必得分内容，遇到偏难题先跳过",
-    "medium": "稳中等策略：基础题 + 常见综合题，薄弱章节单独加练",
-    "high": "冲高分策略：限时综合题 + 难题 + 错题复盘",
-}
-
 
 def _append_once(text: str, addition: str) -> str:
     """追加说明，已包含则不重复追加"""
@@ -99,41 +87,6 @@ def _with_basis(text: str, source: str) -> str:
     if not source:
         return _append_once(text, "依据来源：所上传复习资料")
     return _append_once(text, f"依据来源：{source}")
-
-
-def apply_tier_strategy(result: AnalysisResult, profile: UserProfile) -> None:
-    """按保及格/稳中等/冲高分三档调整推荐结果（用例 4.11）
-
-    在提示词约束之外再做一次确定性收口，保证 Mock 演示与真实大模型输出都体现三档差异。
-    """
-    target = profile.target
-    label = TIER_LABELS.get(target)
-    if label is None:
-        return
-
-    # 按权重降序展示，权重高的优先复习
-    result.knowledge_points.sort(key=lambda kp: kp.weight, reverse=True)
-    for kp in result.knowledge_points:
-        if target == "pass" and kp.weight < 0.6:
-            # 保及格：低权重知识点后置，压缩建议时长
-            kp.importance = "low"
-            kp.suggest_hours = max(1, round(kp.suggest_hours * 0.6))
-        elif target == "high" and kp.weight >= 0.6:
-            # 冲高分：高权重知识点加大投入
-            kp.suggest_hours = round(kp.suggest_hours * 1.2)
-
-    # 计划天数与每日时长不超过画像约束
-    if profile.available_days:
-        result.review_plan = result.review_plan[: profile.available_days]
-    max_minutes = max(1, int((profile.daily_hours or 3) * 60))
-    for item in result.review_plan:
-        item.estimated_minutes = max(1, min(item.estimated_minutes, max_minutes))
-    if result.review_plan:
-        result.review_plan[0].detail = _append_once(
-            result.review_plan[0].detail, TIER_PLAN_HINT[target]
-        )
-
-    result.summary = f"【{label}策略】{TIER_SUMMARY[target]}{result.summary}".strip()
 
 
 def ensure_recommendation_basis(result: AnalysisResult) -> None:
@@ -364,6 +317,8 @@ def analyze(
     db: Session = Depends(get_db),
 ):
     exam = _get_own_exam(db, user, payload.exam_id)
+    if exam.exam_date < date.today():
+        raise HTTPException(409, "该考试已经结束，不能再生成备考任务")
 
     profile = (
         db.query(UserProfile)
@@ -396,16 +351,17 @@ def analyze(
 
     # 先看所有考试再估算本科份额，避免每一科都占满同一份全科预算。
     all_exams = db.query(Exam).filter(Exam.user_id == user.id, Exam.exam_date >= date.today()).all()
-    weights = {e.id: 1 / max(1, (e.exam_date - date.today()).days) for e in all_exams}
+    weights = {e.id: Fraction(1, max(1, (e.exam_date - date.today()).days)) for e in all_exams}
     budget = daily_budget(db, user.id)
-    share = max(1, int(budget * weights.get(exam.id, 1) / max(sum(weights.values()), 1e-6)))
+    share = max(1, int(budget * weights[exam.id] / sum(weights.values())))
     remaining_days = max(1, (exam.exam_date - date.today()).days)
     planning_profile = SimpleNamespace(
         available_days=min(profile.available_days, remaining_days), daily_hours=share / 60,
         target=profile.target, learning_status=profile.learning_status,
         target_band=profile.target_band,
+        weak_chapters=profile.weak_chapters,
     )
-    context = _profile_to_text(profile) + f"\n注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
+    context = _profile_to_text(profile) + strategy_context(planning_profile) + f"\n注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
 
     # 最多尝试两次（大模型偶尔返回格式不对）
     last_err = None
@@ -430,8 +386,8 @@ def analyze(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI 生成失败：{last_err}"
         )
 
-    # 三档推荐策略（4.11）、依据来源（4.13）与题型/高频考点（4.7）在落库前统一收口
-    apply_tier_strategy(result, planning_profile)
+    # 内容/时间侧重（4.11）与原文依据在真实模型和 Mock 两条路径上统一校验。
+    apply_strategy(result, planning_profile)
     ensure_recommendation_basis(result)
     ensure_question_type_analysis(result)
     attach_references(result, materials)
