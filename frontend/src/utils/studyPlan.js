@@ -1,4 +1,5 @@
 // 静态演示采用与后端相同的“截止日保障 + 跨科轮转”规则，不调用真实接口。
+import { findTaskOverlaps } from './taskConflicts.js'
 const dayNumber = (value) =>
   Math.round(Date.parse(`${value}T00:00:00Z`) / 86400000)
 const dateString = (value) =>
@@ -7,7 +8,8 @@ export function buildStudyPlan(tasks, exams, budget, today) {
   const start = dayNumber(today),
     fixed = new Map(),
     jobs = [],
-    conflicts = []
+    conflicts = findTaskOverlaps(tasks.filter(t => t.plan_date >= today)).map(o => ({ task_id: o.second.task_id, title: o.second.title, date: o.date,
+      reason: `固定时段重叠 ${o.start_time}–${o.end_time}：${o.first.title} 与 ${o.second.title}` }))
   for (const task of tasks) {
     const day = dayNumber(task.plan_date),
       minutes = Math.max(0, task.estimated_minutes || 0)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..models.models import Exam, StudySetting, Task, UserProfile
 from .task_details import DETAIL_FIELDS, SNAPSHOT_FIELDS
+from .task_conflicts import find_overlaps
 
 
 def daily_budget(db: Session, user_id: int) -> int:
@@ -23,7 +24,9 @@ def distribute(tasks: list[dict], exams: dict, budget: int, today: date) -> dict
     """纯计算，无副作用。超长任务可跨天拆分；绝不丢弃工作量或越过考试日。"""
     fixed = defaultdict(int)
     jobs = []
-    conflicts = []
+    conflicts = [dict(task_id=o['second']['task_id'], title=o['second']['title'], date=o['date'],
+                      reason=f"固定时段重叠 {o['start_time']}–{o['end_time']}：{o['first']['title']} 与 {o['second']['title']}")
+                 for o in find_overlaps([t for t in tasks if str(t['plan_date']) >= today.isoformat()])]
     for task in tasks:
         day = date.fromisoformat(str(task['plan_date']))
         minutes = max(0, int(task['estimated_minutes'] or 0))

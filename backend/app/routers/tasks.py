@@ -18,6 +18,9 @@ from ..schemas.schemas import (
 )
 from ..services.schedule_service import check_conflict
 from ..services import task_service
+from ..services.study_planner import daily_budget
+from ..services.task_conflicts import detect_candidates, find_overlaps
+from ..services.task_details import timed_minutes
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -69,21 +72,47 @@ def create_task(
     return task_service.create_tasks(db, user.id, payload)
 
 
-@router.post("/check-conflict", response_model=ConflictCheckOut, summary="任务冲突检测（2.8：同一天总时长超上限提醒）")
+@router.post("/check-conflict", response_model=ConflictCheckOut, summary="任务固定时段重叠及全科日预算预检（2.8）")
 def check_task_conflict(
     payload: ConflictCheckRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """保存前预检：当天已有任务总时长 + 新增时长超过上限时 conflict=true，前端弹提醒（不阻止保存）"""
-    return check_conflict(
+    """只读预检：日预算和同日真实时段交集分别返回，最终写入还会重验时段。"""
+    if payload.exclude_task_id:
+        task_service.own_task(db, user.id, payload.exclude_task_id)
+    if payload.exam_id is not None:
+        task_service.own_exam(db, user.id, payload.exam_id)
+    data = payload.model_dump()
+    # 仅预检的旧请求无需科目；复用创建规则验证成对时段及实际分钟。
+    try:
+        duration = timed_minutes(payload.start_time, payload.end_time)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    limit = daily_budget(db, user.id)
+    if payload.daily_limit_minutes is not None:
+        limit = min(limit, payload.daily_limit_minutes)
+    result = check_conflict(
         db,
         user.id,
         payload.plan_date,
-        payload.estimated_minutes,
+        duration if duration is not None else payload.estimated_minutes,
         exclude_task_id=payload.exclude_task_id,
-        daily_limit_minutes=payload.daily_limit_minutes,
+        daily_limit_minutes=limit,
     )
+    overlaps = detect_candidates(db, user.id, [data], payload.exclude_task_id)
+    return {**result, 'budget_exceeded': result['conflict'], 'overlaps': overlaps,
+            'conflict': result['conflict'] or bool(overlaps)}
+
+
+@router.get('/conflicts', summary='查看当前账号固定时段的重叠任务（只读）')
+def list_conflicts(plan_date: date | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    query = db.query(Task).filter(Task.user_id == user.id)
+    if plan_date is not None:
+        query = query.filter(Task.plan_date == plan_date)
+    subjects = {e.id: e.subject for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
+    overlaps = find_overlaps(query.all(), subjects=subjects)
+    return {'count': len(overlaps), 'overlaps': overlaps, 'note': '相接时段不重叠；未定时任务只检查日预算，不推测时间。'}
 
 
 @router.put("/{task_id}", response_model=TaskOut, summary="编辑任务（2.6：修改名称/日期/时长/优先级/科目）")

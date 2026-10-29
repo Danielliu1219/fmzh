@@ -8,6 +8,7 @@ from ..models.models import Exam, Notification, Reminder, Task
 from ..schemas.schemas import TaskOut
 from .study_planner import daily_budget
 from .task_details import DETAIL_FIELDS, occurrence_dates, task_time, timed_minutes
+from .task_conflicts import detect_candidates, lock_schedule, schedule_changed
 
 
 def own_exam(db, user_id, exam_id, *, lock=False):
@@ -62,8 +63,9 @@ def expand(db, user_id, payload, *, lock=False):
 
 
 def preview_tasks(db, user_id, payload):
+    original = None
     if payload.exclude_task_id:
-        own_task(db, user_id, payload.exclude_task_id)
+        original = own_task(db, user_id, payload.exclude_task_id)
         if payload.repeat_rule != 'none':
             raise HTTPException(422, '编辑只影响本次任务，不能在编辑时重新展开重复规则')
     items = expand(db, user_id, payload)
@@ -78,12 +80,22 @@ def preview_tasks(db, user_id, payload):
     warnings = [dict(date=day.isoformat(), existing_minutes=existing[day], planned_minutes=existing[day]+minutes,
                      limit_minutes=budget, reason='全科当日总时长超过预算，请确认取舍')
                 for day, minutes in sorted(added.items()) if existing[day]+minutes > budget]
-    return dict(count=len(items), total_minutes=sum(i['estimated_minutes'] for i in items), items=items, warnings=warnings)
+    overlaps = detect_candidates(db, user_id, items, payload.exclude_task_id)
+    can_save = not overlaps or (original is not None and not schedule_changed(original, items[0]))
+    return dict(count=len(items), total_minutes=sum(i['estimated_minutes'] for i in items), items=items,
+                warnings=warnings, overlaps=overlaps, can_save=can_save)
+
+
+def reject_overlaps(overlaps):
+    if overlaps:
+        raise HTTPException(409, dict(message='任务时段重叠，请调整日期或起止时间后重试', overlaps=overlaps))
 
 
 def create_tasks(db, user_id, payload):
     try:
+        lock_schedule(db, user_id)
         items = expand(db, user_id, payload, lock=True)
+        reject_overlaps(detect_candidates(db, user_id, items))
         group = uuid4().hex if payload.repeat_rule != 'none' else None
         tasks = [Task(user_id=user_id, source='manual', repeat_group_id=group, sort_order=i, **item) for i, item in enumerate(items)]
         db.add_all(tasks)
@@ -99,6 +111,7 @@ def create_tasks(db, user_id, payload):
 
 def update_task(db, user_id, task_id, payload):
     try:
+        lock_schedule(db, user_id)
         task = own_task(db, user_id, task_id, lock=True)
         changes = payload.model_dump(exclude_unset=True)
         current = {key: getattr(task, key) for key in ('exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', *DETAIL_FIELDS)}
@@ -106,6 +119,8 @@ def update_task(db, user_id, task_id, payload):
         exam = own_exam(db, user_id, data['exam_id'], lock=True)
         if (data['plan_date'] != task.plan_date or data['exam_id'] != task.exam_id) and data['plan_date'] > exam.exam_date:
             raise HTTPException(422, '任务日期不能晚于考试日期')
+        if schedule_changed(task, data):
+            reject_overlaps(detect_candidates(db, user_id, [data], task_id))
         if task.repeat_group_id and (data['exam_id'] != task.exam_id or data['plan_date'] != task.plan_date):
             # 改期/换科目视为单次例外，避免后续组删除牵连已独立安排的任务。
             task.repeat_group_id, task.repeat_rule, task.repeat_until = None, 'none', None
@@ -121,6 +136,7 @@ def update_task(db, user_id, task_id, payload):
 
 def delete_tasks(db, user_id, task_id, *, remaining_series=False):
     try:
+        lock_schedule(db, user_id)
         task = own_task(db, user_id, task_id, lock=True)
         query = db.query(Task).filter(Task.user_id == user_id)
         if remaining_series:
