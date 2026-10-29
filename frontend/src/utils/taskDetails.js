@@ -1,3 +1,5 @@
+import { findTaskOverlaps, scheduleChanged } from './taskConflicts.js'
+
 export const difficultyLabels = { easy: '简单', medium: '适中', hard: '较难' }
 export const repeatLabels = { none: '单次', daily: '每天', weekdays: '工作日', weekly: '每周' }
 const dayNumber = day => {
@@ -65,7 +67,10 @@ export function buildTaskPreview(payload, tasks, exams, budget, excludeId = null
     const existing = tasks.filter(t => t.id !== excludeId && t.plan_date === day).reduce((sum, t) => sum + t.estimated_minutes, 0)
     return existing + item.estimated_minutes > budget ? [{ date: day, existing_minutes: existing, planned_minutes: existing + item.estimated_minutes, limit_minutes: budget, reason: '全科当日总时长超过预算，请确认取舍' }] : []
   })
-  return { count: items.length, total_minutes: items.length * item.estimated_minutes, items, warnings,
+  const overlaps = findTaskOverlaps(tasks.filter(t => t.id !== excludeId), items, exams)
+  const original = tasks.find(t => t.id === excludeId)
+  const can_save = !overlaps.length || (!!original && !scheduleChanged(original, item))
+  return { count: items.length, total_minutes: items.length * item.estimated_minutes, items, warnings, overlaps, can_save,
     note: '预览不保存；每个重复日期会生成一项任务，可单独打卡和编辑。请核对日期、时段及预算。' }
 }
 

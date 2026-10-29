@@ -19,6 +19,7 @@ request.interceptors.response.use(
   async (error) => {
     let msg = error.response?.data?.detail
     if (Array.isArray(msg)) msg = msg[0]?.msg // FastAPI 参数校验错误
+    if (msg && typeof msg === 'object') msg = msg.message || '请求未完成，请刷新并重试'
     msg = msg || error.message || '请求失败'
     if (error.response?.status === 401) {
       // 迟到的旧请求不能清除刚登录的另一个账号。

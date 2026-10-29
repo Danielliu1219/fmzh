@@ -15,6 +15,14 @@
       </el-button>
     </div>
 
+    <el-alert v-if="upcomingOverlaps.length" type="warning" :closable="false" class="overlap-banner" :title="`今日及以后有 ${upcomingOverlaps.length} 组固定时段重叠，请调整日期或时间`">
+      <p v-for="(overlap, index) in upcomingOverlaps.slice(0, 8)" :key="index">
+        {{ overlap.date }} · {{ describeOverlap(overlap) }}
+        <el-button link type="primary" @click="openTaskDialog(tasks.find(t => t.id === overlap.second.task_id))">调整任务</el-button>
+      </p>
+      <p v-if="upcomingOverlaps.length > 8">其余重叠可在对应任务编辑时查看。</p>
+    </el-alert>
+
     <!-- ==================== 科目列表视图 ==================== -->
     <template v-if="viewMode === 'list'">
       <!-- 2.4 筛选查看：科目 / 考试日期区间 -->
@@ -165,7 +173,7 @@
       </el-calendar>
       <div class="cal-legend">
         <span><i class="legend-dot" style="background: var(--coral)" /> 考试日</span>
-        <span>拖拽任务卡片到其他日期即可改期（改期时自动做冲突检测）</span>
+        <span>拖拽改期时检查固定时段重叠与全科日预算</span>
       </div>
     </el-card>
 
@@ -260,13 +268,17 @@
       <template v-if="taskPreview">
         <p>{{ preparedTask?.id ? '修改本次任务' : `将创建 ${taskPreview.count} 项任务` }}，合计 {{ taskPreview.total_minutes }} 分钟。</p>
         <p class="plan-tip">{{ taskPreview.note }}</p>
+        <el-alert v-if="taskPreview.overlaps?.length" type="error" :closable="false" :title="taskPreview.can_save ? '时段已有重叠：本次仅修改文字或科目，原时段保留' : '时段重叠：请返回修改日期或起止时间'">
+          <p v-for="(overlap, index) in taskPreview.overlaps.slice(0, 10)" :key="index">{{ overlap.date }} · {{ describeOverlap(overlap) }}，重叠 {{ overlap.overlap_minutes }} 分钟</p>
+          <p v-if="taskPreview.overlaps.length > 10">共 {{ taskPreview.overlaps.length }} 组重叠，已列出前 10 组。</p>
+        </el-alert>
         <el-alert v-for="warning in taskPreview.warnings" :key="warning.date" type="warning" :closable="false" :title="`${warning.date} 共 ${warning.planned_minutes} 分钟，超过全科预算 ${warning.limit_minutes} 分钟`" />
         <el-table :data="taskPreview.items" max-height="300">
           <el-table-column prop="plan_date" label="日期" width="115" /><el-table-column label="时段" width="140"><template #default="{ row }">{{ taskTimeLabel(row) }}</template></el-table-column>
           <el-table-column prop="estimated_minutes" label="分钟" width="75" /><el-table-column prop="title" label="任务" min-width="170" /><el-table-column prop="location" label="地点" min-width="110" />
         </el-table>
       </template>
-      <template #footer><el-button :disabled="taskSaving" @click="taskPreviewVisible = false">返回修改</el-button><el-button type="primary" :loading="taskSaving" @click="commitPreparedTask">{{ taskPreview?.warnings?.length ? '确认保留超额安排' : preparedTask?.id ? '确认修改本次' : '确认创建' }}</el-button></template>
+      <template #footer><el-button :disabled="taskSaving" @click="taskPreviewVisible = false">返回修改</el-button><el-button class="task-preview-confirm" type="primary" :disabled="taskPreview?.can_save === false" :loading="taskSaving" @click="commitPreparedTask">{{ taskPreview?.can_save === false ? '请先调整重叠时段' : taskPreview?.warnings?.length ? '确认保留超额安排' : preparedTask?.id ? '确认修改本次' : '确认创建' }}</el-button></template>
     </el-dialog>
 
     <!-- 倒推生成备考时间表（2.7） -->
@@ -295,7 +307,7 @@
         <el-alert :title="icsPreview.note" type="info" :closable="false" />
         <el-alert v-if="icsPreview.already_imported" title="这批事件已经导入，无需重复保存。" type="success" :closable="false" />
         <el-alert v-for="(conflict, i) in icsPreview.conflicts" :key="i" type="warning" :closable="false"
-          :title="`${conflict.date}：${conflict.reason}${conflict.planned_minutes ? `（${conflict.planned_minutes}/${conflict.limit_minutes} 分钟）` : ''}`" />
+          :title="`${conflict.date}：${conflict.reason}${conflict.planned_minutes ? `（${conflict.planned_minutes}/${conflict.limit_minutes} 分钟）` : ''}`" :description="conflict.kind === 'time_overlap' ? describeOverlap(conflict) : ''" />
         <el-table :data="icsPreview.events" max-height="320" style="margin-top: 16px">
           <el-table-column prop="day" label="日期" width="115" />
           <el-table-column prop="title" label="任务" min-width="180" />
@@ -323,6 +335,7 @@ import { examApi, taskApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { examColor, SUBJECT_PALETTE } from '../utils/subjectColor'
 import { buildTaskPreview, difficultyLabels, mockTaskInstances, normalizeTask, repeatLabels, taskRepeatLabel, taskTimeLabel, timeDuration } from '../utils/taskDetails'
+import { describeOverlap, findTaskOverlaps } from '../utils/taskConflicts'
 
 // 2.11 全站统一科目配色：任务/日历只有 exam_id 时先找考试再取色
 const examColorById = (examId) => examColor(exams.value.find((e) => e.id === examId))
@@ -339,6 +352,7 @@ async function revealTarget() {
 watch(() => route.fullPath, revealTarget)
 const exams = ref([])
 const tasks = ref([])
+const upcomingOverlaps = computed(() => findTaskOverlaps(tasks.value.filter(t => t.plan_date >= getToday()), null, exams.value))
 const loading = ref(false)
 const exporting = ref(false)
 const dialogVisible = ref(false)
@@ -495,13 +509,19 @@ const openTaskDialog = (task, exam) => {
 const confirmNoConflict = async (payload, excludeId) => {
   const limit = USE_MOCK ? mockStudySession.daily_minutes : (await studyApi.settings()).daily_minutes
   const existing = tasks.value.filter(t => t.plan_date === payload.plan_date && t.id !== excludeId).reduce((sum, t) => sum + t.estimated_minutes, 0)
-  const res = USE_MOCK ? { conflict: existing + payload.estimated_minutes > limit, existing_minutes: existing, planned_minutes: existing + payload.estimated_minutes, limit_minutes: limit } : await taskApi.checkConflict({
+  const overlaps = USE_MOCK ? findTaskOverlaps(tasks.value.filter(t => t.id !== excludeId), [payload], exams.value) : []
+  const res = USE_MOCK ? { budget_exceeded: existing + payload.estimated_minutes > limit, overlaps, existing_minutes: existing, planned_minutes: existing + payload.estimated_minutes, limit_minutes: limit } : await taskApi.checkConflict({
     plan_date: payload.plan_date,
     estimated_minutes: payload.estimated_minutes,
     exclude_task_id: excludeId || undefined,
     daily_limit_minutes: limit,
+    start_time: payload.start_time || null, end_time: payload.end_time || null, exam_id: payload.exam_id, title: payload.title,
   })
-  if (res.conflict) {
+  if (res.overlaps?.length) {
+    await ElMessageBox.alert(res.overlaps.slice(0, 8).map(o => `${o.date}：${describeOverlap(o)}`).join('\n'), '时段重叠，请调整', { type: 'warning', customStyle: { whiteSpace: 'pre-line' } })
+    throw new Error('时段重叠')
+  }
+  if (res.budget_exceeded) {
     await ElMessageBox.confirm(
       `「${payload.plan_date}」当天已安排 ${res.existing_minutes} 分钟，加上本任务共 ${res.planned_minutes} 分钟，超过每日上限 ${res.limit_minutes} 分钟。仍要保存吗？`,
       '日程冲突提醒',
@@ -525,7 +545,7 @@ const onSaveTask = async () => {
       : await taskApi.preview({ ...payload, exclude_task_id: taskForm.id || null })
     preparedTask.value = { id: taskForm.id, payload }
     taskPreview.value = preview
-    if (payload.repeat_rule !== 'none' || preview.warnings.length) taskPreviewVisible.value = true
+    if (payload.repeat_rule !== 'none' || preview.warnings.length || preview.overlaps?.length) taskPreviewVisible.value = true
     else { taskSaving.value = false; await commitPreparedTask() }
   } catch (error) {
     if (!error?.response) ElMessage.error(error.message || '任务校验失败')
@@ -535,7 +555,7 @@ const onSaveTask = async () => {
 }
 
 const commitPreparedTask = async () => {
-  if (taskSaving.value || !preparedTask.value) return
+  if (taskSaving.value || !preparedTask.value || taskPreview.value?.can_save === false) return
   taskSaving.value = true
   try {
     const { id } = preparedTask.value
@@ -543,6 +563,8 @@ const commitPreparedTask = async () => {
     let count = taskPreview.value.count
     if (id) { delete payload.repeat_rule; delete payload.repeat_until }
     if (USE_MOCK) {
+      const latest = buildTaskPreview(preparedTask.value.payload, tasks.value, exams.value, mockStudySession.daily_minutes, id)
+      if (!latest.can_save) { taskPreview.value = latest; taskPreviewVisible.value = true; throw new Error('日程已变化，请先处理时段重叠') }
       if (id) {
         const index = tasks.value.findIndex(t => t.id === id)
         if (index < 0) throw new Error('任务已变化，请关闭后重新打开')
@@ -558,6 +580,11 @@ const commitPreparedTask = async () => {
     preparedTask.value = null
     if (!USE_MOCK) await loadTasks()
   } catch (error) {
+    const overlaps = error?.response?.data?.detail?.overlaps
+    if (overlaps?.length && taskPreview.value) {
+      taskPreview.value = { ...taskPreview.value, overlaps, can_save: false }
+      taskPreviewVisible.value = true
+    }
     if (!error?.response) ElMessage.error(error.message || '保存失败')
   } finally { taskSaving.value = false }
 }
@@ -713,20 +740,22 @@ const onDropToDate = async (ev, day) => {
   if (!t || t.plan_date === day) return
   if (USE_MOCK) {
     if (day > exams.value.find(e => e.id === t.exam_id)?.exam_date) { ElMessage.warning('任务日期不能晚于考试日期'); return }
-    try { await confirmNoConflict({ plan_date: day, estimated_minutes: t.estimated_minutes }, t.id) } catch { return }
+    try { await confirmNoConflict({ ...t, plan_date: day }, t.id) } catch { return }
     t.plan_date = day
     t.repeat_group_id = null; t.repeat_rule = 'none'; t.repeat_until = null
     ElMessage.success(`演示：任务已改期到 ${day}`)
     return
   }
   try {
-    await confirmNoConflict({ plan_date: day, estimated_minutes: t.estimated_minutes }, t.id)
+    await confirmNoConflict({ ...t, plan_date: day }, t.id)
   } catch {
     return // 用户选择「返回调整」
   }
-  const updated = await taskApi.update(t.id, { plan_date: day })
-  Object.assign(t, updated)
-  ElMessage.success(`「${t.title.slice(0, 12)}…」已改期到 ${day}`)
+  try {
+    const updated = await taskApi.update(t.id, { plan_date: day })
+    Object.assign(t, updated)
+    ElMessage.success(`「${t.title.slice(0, 12)}…」已改期到 ${day}`)
+  } catch { /* 接口统一展示错误，保留原日期。 */ }
 }
 
 watch(tasks, value=>{if(USE_MOCK)mockStudySession.tasks=JSON.parse(JSON.stringify(value))},{deep:true,flush:'sync'})
@@ -736,6 +765,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+.overlap-banner { margin-bottom: 16px; }
+.overlap-banner p { margin: 6px 0; overflow-wrap: anywhere; }
+.task-preview-confirm.is-disabled { opacity: 0.5; }
 .task-meta { margin: 5px 0; color: var(--text-low); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .task-description { margin-top: 6px; font-size: 12px; }
 .task-description summary { cursor: pointer; color: var(--text-low); }

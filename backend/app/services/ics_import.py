@@ -11,6 +11,7 @@ from ..models.models import Exam, IcsImportReceipt, Task, User
 from .calendar_io import parse_events
 from .study_planner import daily_budget, preview as plan_preview
 from .task_details import task_time
+from .task_conflicts import detect_candidates
 
 
 def validate(db, user, exam, events, requested_limit=None):
@@ -33,6 +34,8 @@ def validate(db, user, exam, events, requested_limit=None):
         if existing + minutes > limit:
             conflicts.append(dict(date=day, existing_minutes=existing, planned_minutes=existing + minutes,
                                   limit_minutes=limit, reason="全科每日总时长超出预算"))
+    candidates = [{**event, 'plan_date': date.fromisoformat(event['day']), 'exam_id': exam.id} for event in events]
+    conflicts.extend({**overlap, 'kind': 'time_overlap'} for overlap in detect_candidates(db, user.id, candidates))
     return limit, conflicts
 
 
@@ -88,7 +91,7 @@ def confirm_import(db, user, token):
             raise HTTPException(409, "任务、考试或预算已经变化，请重新预览")
         _, conflicts = validate(db, user, exam, payload['events'], payload['limit'])
         if conflicts:
-            raise HTTPException(409, "存在预算或考试日期冲突，请调整后重新预览")
+            raise HTTPException(409, "存在时段、预算或考试日期冲突，请调整后重新预览")
         for index, item in enumerate(payload['events']):
             db.add(Task(user_id=user.id, exam_id=exam.id, title='【ICS】' + item['title'],
                         plan_date=date.fromisoformat(item['day']), estimated_minutes=item['minutes'],

@@ -88,6 +88,7 @@ export const taskApi = {
   list: (params) => request.get('/tasks', { params }),
   create: (data) => request.post('/tasks', data),
   preview: (data) => request.post('/tasks/preview', data),
+  conflicts: (params) => request.get('/tasks/conflicts', { params }),
   update: (id, data) => request.put(`/tasks/${id}`, data), // 2.6 编辑任务
   checkin: (id) => request.post(`/tasks/${id}/checkin`),
   uncheckin: (id) => request.delete(`/tasks/${id}/checkin`),

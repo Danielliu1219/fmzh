@@ -585,6 +585,8 @@ class TaskPreviewOut(BaseModel):
     total_minutes: int
     items: list[TaskCreate]
     warnings: list[dict[str, Any]] = []
+    overlaps: list[dict[str, Any]] = []
+    can_save: bool = True
     note: str = '预览不保存；每个重复日期会生成一项任务，可单独打卡和编辑。请核对日期、时段及预算。'
 
 
@@ -611,8 +613,17 @@ class ConflictCheckRequest(BaseModel):
 
     plan_date: date
     estimated_minutes: int = Field(ge=1, le=1440)
-    exclude_task_id: Optional[int] = None  # 编辑场景排除自身
-    daily_limit_minutes: int = Field(default=480, ge=30, le=1440)
+    exclude_task_id: Optional[int] = Field(default=None, ge=1)
+    daily_limit_minutes: Optional[int] = Field(default=None, ge=30, le=1440)
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    exam_id: Optional[int] = None
+    title: str = Field(default='待安排任务', max_length=256)
+
+    @field_validator('start_time', 'end_time', mode='before')
+    @classmethod
+    def validate_time(cls, value):
+        return task_time(value)
 
 
 class ConflictCheckOut(BaseModel):
@@ -621,6 +632,8 @@ class ConflictCheckOut(BaseModel):
     existing_minutes: int  # 当天已有任务总时长
     planned_minutes: int  # 当天已有 + 新增
     limit_minutes: int
+    budget_exceeded: bool = False
+    overlaps: list[dict[str, Any]] = []
 
 
 class IcsImportResult(BaseModel):
