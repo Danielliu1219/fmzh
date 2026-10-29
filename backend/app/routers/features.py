@@ -474,8 +474,8 @@ def compute_relief(db: Session, user: User, option: str) -> dict:
     tasks = [t for t in all_tasks if not t.is_done]
     exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
 
-    movable = [t for t in tasks if t.plan_date <= today]
-    frozen = [t for t in tasks if t.plan_date > today]
+    movable = [t for t in tasks if t.plan_date <= today and t.start_time is None]
+    frozen = [t for t in tasks if t.plan_date > today or t.start_time is not None]
 
     # 未来各天已被未完成任务占用的分钟数
     load: dict[date, int] = {}
@@ -492,6 +492,11 @@ def compute_relief(db: Session, user: User, option: str) -> dict:
     movable.sort(key=sort_key)
 
     moves, conflicts = [], []
+    for task in frozen:
+        if task.start_time is not None and task.plan_date < today:
+            conflicts.append({'task_id': task.id, 'title': task.title, 'reason': '固定时段已过，请先手动改期或打卡'})
+    if any(t.start_time is not None and t.plan_date == today for t in frozen) and load.get(today, 0) > today_cap:
+        conflicts.append({'task_id': 0, 'title': '今日固定安排', 'reason': '固定时段与已完成任务已超过减负后的今日容量，请先调整固定时段'})
     for t in movable:
         exam = exams.get(t.exam_id)
         deadline = exam.exam_date if exam else today + timedelta(days=365)

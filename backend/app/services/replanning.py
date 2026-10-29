@@ -11,6 +11,7 @@ from ..schemas.schemas import AnalysisResult, PlanItem, ReplanOut, WeightChange
 from . import study_planner
 from .mistakes import normalized_title
 from .recommendation_strategy import refresh_strategy
+from .task_details import SNAPSHOT_FIELDS
 
 
 def feedback(db, user_id, exam_id):
@@ -99,7 +100,7 @@ def snapshot(db, user, exam_id):
     priorities = {}
     tasks = []
     for task in rows:
-        item = {k: getattr(task, k) for k in ('id', 'exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', 'source', 'is_done')}
+        item = {k: getattr(task, k) for k in SNAPSHOT_FIELDS}
         if task.exam_id == exam_id and task.source == 'ai' and not task.is_done:
             matches = [c.new_weight for c in changes if c.name in task.title or task.title in c.name]
             if matches:
@@ -121,6 +122,11 @@ def snapshot(db, user, exam_id):
     scheduling['fingerprint'] = fingerprint
     priority_map = {t['id']: t['priority'] for t in tasks}
     plan = [PlanItem(day=(date.fromisoformat(a['date'])-date.today()).days+1, date=a['date'], title=a['title'], estimated_minutes=a['minutes'], priority=priority_map[a['task_id']], detail='依据当前学习反馈在全科共享预算内调整') for a in scheduling['assignments'] if a['exam_id'] == exam_id]
+    plan.extend(PlanItem(day=(t.plan_date-date.today()).days+1, date=t.plan_date.isoformat(), title=t.title,
+                        estimated_minutes=t.estimated_minutes, priority=priorities.get(t.id, t.priority),
+                        detail=f'保留固定时段 {t.start_time:%H:%M}–{t.end_time:%H:%M}；{t.detail or ""}')
+                for t in own if not t.is_done and t.start_time is not None)
+    plan.sort(key=lambda p: (p.date, p.priority))
     note = f'剩余 {days_left} 天，任务完成率 {rate:.0%}，最近自测错题 {sum(wrong.values())} 道。保留手动与已完成任务，本次追加 {len(additions)} 项针对性练习（每项 30 分钟），统一校验全科预算。'
     if scheduling['conflicts']:
         note += '容量不足，处理冲突前不能应用。'

@@ -33,6 +33,14 @@ def parse_events(text: str) -> tuple[list[dict], int]:
             raise ValueError("每个日历事件都需要标题和有效开始日期")
         if len(title) > 251:
             raise ValueError("日历事件标题最多 251 字，请缩短后导入")
+        location = str(component.get('LOCATION', '')).strip()
+        detail = str(component.get('DESCRIPTION', '')).strip()
+        if str(component.get('X-FMZH-TASK-DESCRIPTION', '')) == '1':
+            detail = detail.partition('\n')[2]
+        untimed_placeholder = str(component.get('X-FMZH-TASK-TIMED', '')).upper() == 'FALSE'
+        if len(location) > 120 or len(detail) > 2000:
+            raise ValueError('日历地点最多120字、说明最多2000字，请缩短后导入')
+        start_time, end_time = None, None
         if isinstance(start, datetime):
             end = component.decoded("DTEND", None)
             duration = component.decoded("DURATION", None)
@@ -46,8 +54,17 @@ def parse_events(text: str) -> tuple[list[dict], int]:
                     raise ValueError("事件开始和结束必须使用相同日期类型")
                 end = end.replace(tzinfo=LOCAL_ZONE) if end.tzinfo is None else end.astimezone(LOCAL_ZONE)
                 duration = end.astimezone(timezone.utc) - start.astimezone(timezone.utc)
-            minutes = ceil((duration if duration is not None else timedelta(hours=1)).total_seconds() / 60)
+            duration = duration if duration is not None else timedelta(hours=1)
+            end = start + duration
+            if start.second or start.microsecond or end.second or end.microsecond:
+                raise ValueError('学习事件请使用整分钟的开始和结束时间')
+            if end.date() != start.date() and not untimed_placeholder:
+                raise ValueError('跨午夜学习事件请先拆分成同日事件')
+            minutes = ceil(duration.total_seconds() / 60)
             day = start.date()
+            start_time, end_time = start.strftime('%H:%M'), end.strftime('%H:%M')
+            if untimed_placeholder:
+                start_time, end_time = None, None
         elif isinstance(start, date):
             day, minutes = start, 60
             end = component.decoded("DTEND", None)
@@ -57,12 +74,12 @@ def parse_events(text: str) -> tuple[list[dict], int]:
             raise ValueError("日历开始日期无效")
         if not 1 <= minutes <= 1440:
             raise ValueError("单个学习事件时长需在 1～1440 分钟之间")
-        key = (title, day.isoformat(), minutes)
+        key = (title, day.isoformat(), minutes, start_time, end_time, location, detail)
         if key in seen:
             skipped += 1
             continue
         seen.add(key)
-        events.append(dict(title=title, day=day.isoformat(), minutes=minutes))
+        events.append(dict(title=title, day=day.isoformat(), minutes=minutes, start_time=start_time, end_time=end_time, location=location, detail=detail))
     if not events:
         raise ValueError("文件中没有可导入的单次事件")
     return events, skipped
@@ -97,13 +114,20 @@ def export_calendar(exams, tasks, user_id: int) -> bytes:
                       "LOCATION:" + escape_text(exam.location or "地点待定"),
                       "DESCRIPTION:" + escape_text(f"时长 {exam.duration_minutes} 分钟｜{exam.note or ''}"), "END:VEVENT"])
     for task in tasks:
-        # 当前任务只有日期，08:00 是日历展示占位，不声称任务有实际起止时刻。
-        start = datetime.combine(task.plan_date, datetime.min.time(), tzinfo=LOCAL_ZONE) + timedelta(hours=8)
-        end = start + timedelta(minutes=task.estimated_minutes)
+        timed = getattr(task, 'start_time', None) is not None and getattr(task, 'end_time', None) is not None
+        start = datetime.combine(task.plan_date, task.start_time, tzinfo=LOCAL_ZONE) if timed else datetime.combine(task.plan_date, datetime.min.time(), tzinfo=LOCAL_ZONE) + timedelta(hours=8)
+        end = datetime.combine(task.plan_date, task.end_time, tzinfo=LOCAL_ZONE) if timed else start + timedelta(minutes=task.estimated_minutes)
         subject = subjects.get(task.exam_id, "")
+        description = f"{'已完成' if task.is_done else '未完成'}｜预计 {task.estimated_minutes} 分钟"
+        description += '；北京时间固定时段' if timed else '；08:00 仅为展示占位，实际时间待安排'
+        if getattr(task, 'detail', ''):
+            description += '\n' + task.detail
         lines.extend(["BEGIN:VEVENT", f"UID:task-{task.id}-{user_id}@fmzh", f"DTSTAMP:{stamp}",
                       f"DTSTART:{start.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}",
                       f"DTEND:{end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}",
                       "SUMMARY:" + escape_text("【任务】" + (subject + "·" if subject else "") + task.title),
-                      "DESCRIPTION:" + escape_text(f"{'已完成' if task.is_done else '未完成'}｜预计 {task.estimated_minutes} 分钟；08:00 仅为展示占位"), "END:VEVENT"])
+                      "LOCATION:" + escape_text(getattr(task, 'location', '') or ''),
+                      'X-FMZH-TASK-DESCRIPTION:1',
+                      'X-FMZH-TASK-TIMED:' + ('TRUE' if timed else 'FALSE'),
+                      "DESCRIPTION:" + escape_text(description), "END:VEVENT"])
     return ("\r\n".join(fold_line(line) for line in [*lines, "END:VCALENDAR"]) + "\r\n").encode("utf-8")

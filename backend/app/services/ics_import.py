@@ -10,6 +10,7 @@ from ..config import settings
 from ..models.models import Exam, IcsImportReceipt, Task, User
 from .calendar_io import parse_events
 from .study_planner import daily_budget, preview as plan_preview
+from .task_details import task_time
 
 
 def validate(db, user, exam, events, requested_limit=None):
@@ -40,9 +41,18 @@ def preview_import(db, user, exam, text, requested_limit=None):
         events, skipped = parse_events(text)
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(400, str(exc))
-    events.sort(key=lambda item: (item['day'], item['title'], item['minutes']))
+    events.sort(key=lambda item: (item['day'], item.get('start_time') or '', item['title'], item['minutes'], item.get('end_time') or '', item.get('location', ''), item.get('detail', '')))
     key = hashlib.sha256(json.dumps([user.id, exam.id, exam.created_at.isoformat(), events], sort_keys=True).encode()).hexdigest()
     receipt = db.get(IcsImportReceipt, key)
+    legacy_imported = False
+    if receipt is None:
+        # 旧版本按标题/日期/分钟去重；升级后不把同一旧文件再次插入。
+        legacy = {(event['title'], event['day'], event['minutes']) for event in events}
+        legacy_events = [dict(title=title, day=day, minutes=minutes) for title, day, minutes in sorted(legacy, key=lambda row: (row[1], row[0], row[2]))]
+        legacy_key = hashlib.sha256(json.dumps([user.id, exam.id, exam.created_at.isoformat(), legacy_events], sort_keys=True).encode()).hexdigest()
+        receipt = db.get(IcsImportReceipt, legacy_key)
+        if receipt is not None:
+            key, legacy_imported = legacy_key, True
     limit, conflicts = validate(db, user, exam, events, requested_limit)
     payload = dict(typ='ics_preview', sub=str(user.id), sid=user.auth_key, exam_id=exam.id,
                    events=events, skipped=skipped, limit=requested_limit, import_key=key,
@@ -51,7 +61,8 @@ def preview_import(db, user, exam, text, requested_limit=None):
     return dict(imported=0, count=len(events), skipped=skipped, conflicts=conflicts,
                 events=events, daily_limit_minutes=limit, already_imported=receipt is not None,
                 preview_token=jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256'),
-                note="时间按上海日期合并为每日任务；全天事件按 60 分钟导入。预览不会保存任务，10 分钟内确认有效。")
+                note=('该文件已按旧版规则导入，不会重复创建；如需补充精确时段，请编辑原任务。' if legacy_imported else
+                      '保留北京时间的同日起止时间、地点与说明；全天事件按60分钟、时间待安排导入。预览不保存，10分钟内确认有效。'))
 
 
 def confirm_import(db, user, token):
@@ -81,6 +92,8 @@ def confirm_import(db, user, token):
         for index, item in enumerate(payload['events']):
             db.add(Task(user_id=user.id, exam_id=exam.id, title='【ICS】' + item['title'],
                         plan_date=date.fromisoformat(item['day']), estimated_minutes=item['minutes'],
+                        start_time=task_time(item.get('start_time')), end_time=task_time(item.get('end_time')),
+                        location=item.get('location', ''), detail=item.get('detail', ''),
                         source='manual', priority=2, sort_order=index))
         db.add(IcsImportReceipt(id=payload['import_key'], user_id=user.id, exam_id=exam.id, imported=len(payload['events'])))
         db.commit()

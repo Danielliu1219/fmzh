@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 import re
 from collections import defaultdict
+from sqlalchemy import or_
 
 from sqlalchemy.orm import Session
 
@@ -15,10 +16,10 @@ def create_tasks_from_plan(
     """保留完成记录，替换本科未完成 AI 任务；全科容量不足时回滚并返回原因。"""
     transaction = db.begin_nested()
     completed = defaultdict(int)
-    for task in db.query(Task).filter(Task.user_id == user_id, Task.exam_id == exam_id, Task.source == 'ai', Task.is_done.is_(True)).all():
+    for task in db.query(Task).filter(Task.user_id == user_id, Task.exam_id == exam_id, Task.source == 'ai', or_(Task.is_done.is_(True), Task.start_time.is_not(None))).all():
         title = re.sub(r'（分段 \d+/\d+）$', '', task.title)
         completed[title] += task.estimated_minutes
-    for old_task in db.query(Task).filter(Task.user_id == user_id, Task.exam_id == exam_id, Task.source == "ai", Task.is_done.is_(False)).all():
+    for old_task in db.query(Task).filter(Task.user_id == user_id, Task.exam_id == exam_id, Task.source == "ai", Task.is_done.is_(False), Task.start_time.is_(None)).all():
         db.delete(old_task)
     db.flush()
 
@@ -42,6 +43,7 @@ def create_tasks_from_plan(
                 title=item.title,
                 plan_date=plan_date,
                 estimated_minutes=remaining_minutes,
+                detail=(getattr(item, 'detail', '') + '\n' + '\n'.join(f'{a.label} {a.minutes}分钟：{a.detail}' for a in getattr(item, 'activities', []))).strip()[:2000],
                 priority=int(item.priority or 2),
                 sort_order=i,
                 source="ai",

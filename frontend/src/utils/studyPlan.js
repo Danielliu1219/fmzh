@@ -11,8 +11,9 @@ export function buildStudyPlan(tasks, exams, budget, today) {
   for (const task of tasks) {
     const day = dayNumber(task.plan_date),
       minutes = Math.max(0, task.estimated_minutes || 0)
-    if (task.is_done || task.source !== 'ai') {
+    if (task.is_done || task.source !== 'ai' || task.start_time) {
       fixed.set(day, (fixed.get(day) || 0) + minutes)
+      if (task.start_time && !task.is_done && task.plan_date < today) conflicts.push({ task_id: task.id, title: task.title, minutes, reason: '固定时段已过，请手动改期或打卡；系统不会自动移动固定时段' })
       continue
     }
     const exam = exams.find((e) => e.id === task.exam_id),
@@ -32,7 +33,7 @@ export function buildStudyPlan(tasks, exams, budget, today) {
         reason: '已完成与手动任务已超过当日预算，请先调整手动任务或预算',
       })
   const end = Math.min(
-    Math.max(start, ...jobs.map((j) => j.deadline)),
+    Math.max(start, ...jobs.map((j) => j.deadline), ...[...fixed.keys()].filter(day => day >= start)),
     start + 365,
   )
   for (let day = start; day <= end; day++) {
@@ -157,12 +158,12 @@ export function buildReliefPreview(tasks, exams, budget, today, option) {
     moves = [],
     conflicts = []
   for (const task of tasks)
-    if (task.is_done || task.plan_date > today) {
+    if (task.is_done || task.plan_date > today || task.start_time) {
       const day = dayNumber(task.plan_date)
       load.set(day, (load.get(day) || 0) + task.estimated_minutes)
     }
   for (const task of tasks
-    .filter((t) => !t.is_done && t.plan_date <= today)
+    .filter((t) => !t.is_done && t.plan_date <= today && !t.start_time)
     .sort(
       (a, b) =>
         a.priority - b.priority || a.plan_date.localeCompare(b.plan_date),
@@ -197,6 +198,8 @@ export function buildReliefPreview(tasks, exams, budget, today, option) {
         })
     }
   }
+  for (const task of tasks.filter(t => t.start_time && !t.is_done && t.plan_date < today)) conflicts.push({ task_id: task.id, title: task.title, reason: '固定时段已过，请先手动改期或打卡' })
+  if (tasks.some(t => t.start_time && !t.is_done && t.plan_date === today) && (load.get(start) || 0) > capacity) conflicts.push({ task_id: 0, title: '今日固定安排', reason: '固定时段与已完成任务已超过减负后的今日容量，请先调整固定时段' })
   return {
     option,
     daily_minutes: budget,

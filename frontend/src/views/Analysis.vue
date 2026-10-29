@@ -1356,12 +1356,12 @@ const onAnalyze = async () => {
         brief: { ...brief }, rawText: rawText.value,
       })
       const retained = mockStudySession.tasks.filter(
-        (t) => t.exam_id !== examId.value || t.is_done || t.source !== 'ai',
+        (t) => t.exam_id !== examId.value || t.is_done || t.source !== 'ai' || t.start_time,
       )
       const completed = new Map()
       retained
         .filter(
-          (t) => t.exam_id === examId.value && t.is_done && t.source === 'ai',
+          (t) => t.exam_id === examId.value && (t.is_done || t.start_time) && t.source === 'ai',
         )
         .forEach((t) => {
           const name = t.title.replace(/（分段 \d+\/\d+）$/, '')
@@ -1374,6 +1374,7 @@ const onAnalyze = async () => {
           exam_id: examId.value,
           exam: result.value.course,
           title: `${result.value.course} · ${p.title}`,
+          detail: [p.detail, ...(p.activities || []).map(a => `${a.label} ${a.minutes}分钟：${a.detail}`)].filter(Boolean).join('\n').slice(0, 2000),
           plan_date: p.date,
           estimated_minutes: p.estimated_minutes,
           priority: p.priority,

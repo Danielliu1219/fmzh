@@ -110,6 +110,7 @@ class NotificationTests(unittest.TestCase):
 
     def test_reschedule_follows_new_date_preserving_history(self):
         self.rule(); self.check()
+        self.call('PUT', f"/exams/{self.exam['id']}", {'exam_date': '2026-10-20'})
         self.call('PUT', f"/tasks/{self.task['id']}", {'plan_date': '2026-10-18'})
         data = self.call('GET', f"/notifications/reminders/task/{self.task['id']}")
         self.assertTrue(data['due_at'].startswith('2026-10-18'))

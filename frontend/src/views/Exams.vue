@@ -62,7 +62,14 @@
                   :empty-text="'该科目还没有任务，可手动添加，或在 AI 分析后自动生成'"
                 >
                   <el-table-column prop="plan_date" label="日期" width="110" />
-                  <el-table-column prop="title" label="任务" min-width="220" />
+                  <el-table-column label="任务与安排" min-width="300">
+                    <template #default="{ row: t }">
+                      <b>{{ t.title }}</b>
+                      <p class="task-meta">{{ taskTimeLabel(t) }} · {{ t.location || '地点待定' }} · {{ difficultyLabels[t.difficulty || 'medium'] }}</p>
+                      <p v-if="t.repeat_group_id" class="task-meta">{{ taskRepeatLabel(t) }}</p>
+                      <details v-if="t.detail" class="task-description"><summary>复习内容</summary><p>{{ t.detail }}</p></details>
+                    </template>
+                  </el-table-column>
                   <el-table-column label="时长" width="80">
                     <template #default="{ row: t }">{{ t.estimated_minutes }} 分</template>
                   </el-table-column>
@@ -87,6 +94,7 @@
                       <el-button link type="primary" size="small" @click="openTaskDialog(t, row)">编辑</el-button>
                       <el-button link type="primary" size="small" @click="openReminder('task', t.id)">提醒</el-button>
                       <el-button link type="danger" size="small" @click="onDeleteTask(t)">删除</el-button>
+                      <el-button v-if="t.repeat_group_id" link type="danger" size="small" @click="onDeleteTaskSeries(t)">删除后续重复项</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -203,7 +211,7 @@
     </el-dialog>
 
     <!-- 学习任务编辑对话框（2.6 编辑 / 2.5 添加复用，保存前 2.8 冲突检测） -->
-    <el-dialog v-model="taskDialogVisible" :title="taskForm.id ? '编辑任务' : '添加任务'" width="440px">
+    <el-dialog v-model="taskDialogVisible" :title="taskForm.id ? '编辑本次任务' : '添加任务'" width="min(640px, 94vw)" :close-on-click-modal="!taskSaving" :close-on-press-escape="!taskSaving">
       <el-form ref="taskFormRef" :model="taskForm" :rules="taskRules" label-width="90px">
         <el-form-item label="所属科目" prop="exam_id">
           <el-select v-model="taskForm.exam_id" style="width: 100%" placeholder="选择科目">
@@ -217,9 +225,23 @@
           <el-date-picker v-model="taskForm.plan_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
         </el-form-item>
         <el-form-item label="预计时长" prop="estimated_minutes">
-          <el-input-number v-model="taskForm.estimated_minutes" :min="15" :max="720" :step="15" />
-          <span class="unit">分钟</span>
+          <el-input-number v-model="taskForm.estimated_minutes" :min="1" :max="1440" :step="15" :disabled="taskForm.timed" />
+          <span class="unit">{{ taskForm.timed ? '分钟，按时段自动计算' : '分钟' }}</span>
         </el-form-item>
+        <el-form-item label="固定时段"><el-switch v-model="taskForm.timed" /><span class="hint">北京时间；不指定则保留为待安排</span></el-form-item>
+        <div v-if="taskForm.timed" class="task-form-row">
+          <el-form-item label="开始时间"><el-time-picker v-model="taskForm.start_time" format="HH:mm" value-format="HH:mm" placeholder="开始时间" style="width: 100%" /></el-form-item>
+          <el-form-item label="结束时间"><el-time-picker v-model="taskForm.end_time" format="HH:mm" value-format="HH:mm" placeholder="结束时间" style="width: 100%" /></el-form-item>
+        </div>
+        <el-form-item label="复习地点"><el-input v-model="taskForm.location" placeholder="如：图书馆三楼" maxlength="120" /></el-form-item>
+        <el-form-item label="难度"><el-radio-group v-model="taskForm.difficulty"><el-radio-button value="easy">简单</el-radio-button><el-radio-button value="medium">适中</el-radio-button><el-radio-button value="hard">较难</el-radio-button></el-radio-group></el-form-item>
+        <el-form-item label="复习内容"><el-input v-model="taskForm.detail" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="准备复习什么、使用哪些资料（选填）" /></el-form-item>
+        <template v-if="!taskForm.id">
+          <el-form-item label="重复"><el-select v-model="taskForm.repeat_rule"><el-option v-for="(label, key) in repeatLabels" :key="key" :label="label" :value="key" /></el-select></el-form-item>
+          <el-form-item v-if="taskForm.repeat_rule !== 'none'" label="重复截止"><el-date-picker v-model="taskForm.repeat_until" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledRepeatDate" placeholder="不晚于考试日期" /></el-form-item>
+          <p v-if="taskForm.repeat_rule === 'weekdays'" class="plan-tip">工作日指周一至周五，不按节假日调休。</p>
+        </template>
+        <p v-else-if="taskForm.repeat_group_id" class="plan-tip">{{ taskRepeatLabel(taskForm) }}。本次编辑只影响这一项；改期或换科目后，本项会转为单次任务。</p>
         <el-form-item label="优先级" prop="priority">
           <el-radio-group v-model="taskForm.priority">
             <el-radio-button :value="1">高</el-radio-button>
@@ -232,6 +254,19 @@
         <el-button @click="taskDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="taskSaving" @click="onSaveTask">保存</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="taskPreviewVisible" title="确认任务安排" width="min(720px, 94vw)" :close-on-click-modal="!taskSaving" :close-on-press-escape="!taskSaving">
+      <template v-if="taskPreview">
+        <p>{{ preparedTask?.id ? '修改本次任务' : `将创建 ${taskPreview.count} 项任务` }}，合计 {{ taskPreview.total_minutes }} 分钟。</p>
+        <p class="plan-tip">{{ taskPreview.note }}</p>
+        <el-alert v-for="warning in taskPreview.warnings" :key="warning.date" type="warning" :closable="false" :title="`${warning.date} 共 ${warning.planned_minutes} 分钟，超过全科预算 ${warning.limit_minutes} 分钟`" />
+        <el-table :data="taskPreview.items" max-height="300">
+          <el-table-column prop="plan_date" label="日期" width="115" /><el-table-column label="时段" width="140"><template #default="{ row }">{{ taskTimeLabel(row) }}</template></el-table-column>
+          <el-table-column prop="estimated_minutes" label="分钟" width="75" /><el-table-column prop="title" label="任务" min-width="170" /><el-table-column prop="location" label="地点" min-width="110" />
+        </el-table>
+      </template>
+      <template #footer><el-button :disabled="taskSaving" @click="taskPreviewVisible = false">返回修改</el-button><el-button type="primary" :loading="taskSaving" @click="commitPreparedTask">{{ taskPreview?.warnings?.length ? '确认保留超额安排' : preparedTask?.id ? '确认修改本次' : '确认创建' }}</el-button></template>
     </el-dialog>
 
     <!-- 倒推生成备考时间表（2.7） -->
@@ -264,6 +299,8 @@
         <el-table :data="icsPreview.events" max-height="320" style="margin-top: 16px">
           <el-table-column prop="day" label="日期" width="115" />
           <el-table-column prop="title" label="任务" min-width="180" />
+          <el-table-column label="时段" min-width="135"><template #default="{ row }">{{ taskTimeLabel(row) }}</template></el-table-column>
+          <el-table-column prop="location" label="地点" min-width="110" />
           <el-table-column prop="minutes" label="分钟" width="80" />
         </el-table>
       </template>
@@ -282,9 +319,10 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ReminderDialog from '../components/ReminderDialog.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { examApi, taskApi } from '../api'
+import { examApi, taskApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { examColor, SUBJECT_PALETTE } from '../utils/subjectColor'
+import { buildTaskPreview, difficultyLabels, mockTaskInstances, normalizeTask, repeatLabels, taskRepeatLabel, taskTimeLabel, timeDuration } from '../utils/taskDetails'
 
 // 2.11 全站统一科目配色：任务/日历只有 exam_id 时先找考试再取色
 const examColorById = (examId) => examColor(exams.value.find((e) => e.id === examId))
@@ -418,7 +456,17 @@ const onDelete = async (row) => {
 const taskDialogVisible = ref(false)
 const taskSaving = ref(false)
 const taskFormRef = ref()
-const taskForm = reactive({ id: null, exam_id: null, title: '', plan_date: '', estimated_minutes: 60, priority: 2 })
+const taskForm = reactive({ id: null, exam_id: null, title: '', plan_date: '', estimated_minutes: 60, priority: 2, timed: false, start_time: null, end_time: null, location: '', difficulty: 'medium', detail: '', repeat_rule: 'none', repeat_until: null, repeat_group_id: null })
+const taskPreviewVisible = ref(false), taskPreview = ref(null), preparedTask = ref(null)
+const disabledRepeatDate = day => {
+  const value = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`
+  const exam = exams.value.find(e => e.id === taskForm.exam_id)
+  return (taskForm.plan_date && value < taskForm.plan_date) || (exam && value > exam.exam_date)
+}
+watch(() => [taskForm.timed, taskForm.start_time, taskForm.end_time], () => {
+  if (!taskForm.timed) return
+  try { const minutes = timeDuration(taskForm.start_time, taskForm.end_time); if (minutes) taskForm.estimated_minutes = minutes } catch { /* 保存时显示具体校验原因 */ }
+})
 const taskRules = {
   exam_id: [{ required: true, message: '请选择科目', trigger: 'change' }],
   title: [{ required: true, message: '请输入任务内容', trigger: 'blur' }],
@@ -428,6 +476,7 @@ const taskRules = {
 const tasksOf = (examId) => tasks.value.filter((t) => t.exam_id === examId)
 
 const openTaskDialog = (task, exam) => {
+  taskPreview.value = null; preparedTask.value = null; taskPreviewVisible.value = false
   Object.assign(taskForm, {
     id: task?.id || null,
     exam_id: task?.exam_id || exam?.id || exams.value[0]?.id || null,
@@ -435,17 +484,22 @@ const openTaskDialog = (task, exam) => {
     plan_date: task?.plan_date || '',
     estimated_minutes: task?.estimated_minutes || 60,
     priority: task?.priority || 2,
+    timed: !!task?.start_time, start_time: task?.start_time || null, end_time: task?.end_time || null,
+    location: task?.location || '', difficulty: task?.difficulty || 'medium', detail: task?.detail || '',
+    repeat_rule: task?.repeat_rule || 'none', repeat_until: task?.repeat_until || null, repeat_group_id: task?.repeat_group_id || null,
   })
   taskDialogVisible.value = true
 }
 
 // 2.8 冲突检测：保存前预检，当天总时长超上限时提醒（可选择仍要保存）
 const confirmNoConflict = async (payload, excludeId) => {
-  if (USE_MOCK) return
-  const res = await taskApi.checkConflict({
+  const limit = USE_MOCK ? mockStudySession.daily_minutes : (await studyApi.settings()).daily_minutes
+  const existing = tasks.value.filter(t => t.plan_date === payload.plan_date && t.id !== excludeId).reduce((sum, t) => sum + t.estimated_minutes, 0)
+  const res = USE_MOCK ? { conflict: existing + payload.estimated_minutes > limit, existing_minutes: existing, planned_minutes: existing + payload.estimated_minutes, limit_minutes: limit } : await taskApi.checkConflict({
     plan_date: payload.plan_date,
     estimated_minutes: payload.estimated_minutes,
     exclude_task_id: excludeId || undefined,
+    daily_limit_minutes: limit,
   })
   if (res.conflict) {
     await ElMessageBox.confirm(
@@ -457,36 +511,55 @@ const confirmNoConflict = async (payload, excludeId) => {
 }
 
 const onSaveTask = async () => {
-  await taskFormRef.value.validate()
+  if (taskSaving.value || !(await taskFormRef.value.validate().catch(() => false))) return
   taskSaving.value = true
   try {
-    const payload = { ...taskForm }
-    delete payload.id
-    await confirmNoConflict(payload, taskForm.id)
-    if (USE_MOCK) {
-      if (taskForm.id) {
-        const i = tasks.value.findIndex((t) => t.id === taskForm.id)
-        if (i >= 0) tasks.value[i] = { ...tasks.value[i], ...taskForm }
-        ElMessage.success('修改成功')
-      } else {
-        tasks.value.unshift({ ...taskForm, id: Date.now(), is_done: false, source: 'manual' })
-        ElMessage.success('添加成功')
-      }
-      taskDialogVisible.value = false
-      return
-    }
-    if (taskForm.id) {
-      await taskApi.update(taskForm.id, payload)
-      ElMessage.success('任务已更新')
-    } else {
-      await taskApi.create(payload)
-      ElMessage.success('任务已添加')
-    }
-    taskDialogVisible.value = false
-    loadTasks()
+    const payload = normalizeTask({ exam_id: taskForm.exam_id, title: taskForm.title, plan_date: taskForm.plan_date,
+      estimated_minutes: taskForm.estimated_minutes, priority: taskForm.priority,
+      start_time: taskForm.timed ? taskForm.start_time : null, end_time: taskForm.timed ? taskForm.end_time : null,
+      location: taskForm.location, difficulty: taskForm.difficulty, detail: taskForm.detail,
+      repeat_rule: taskForm.id ? 'none' : taskForm.repeat_rule,
+      repeat_until: taskForm.id || taskForm.repeat_rule === 'none' ? null : taskForm.repeat_until })
+    if (taskForm.timed && !payload.start_time) throw new Error('请填写完整的开始和结束时间')
+    const preview = USE_MOCK ? buildTaskPreview(payload, tasks.value, exams.value, mockStudySession.daily_minutes, taskForm.id)
+      : await taskApi.preview({ ...payload, exclude_task_id: taskForm.id || null })
+    preparedTask.value = { id: taskForm.id, payload }
+    taskPreview.value = preview
+    if (payload.repeat_rule !== 'none' || preview.warnings.length) taskPreviewVisible.value = true
+    else { taskSaving.value = false; await commitPreparedTask() }
+  } catch (error) {
+    if (!error?.response) ElMessage.error(error.message || '任务校验失败')
   } finally {
     taskSaving.value = false
   }
+}
+
+const commitPreparedTask = async () => {
+  if (taskSaving.value || !preparedTask.value) return
+  taskSaving.value = true
+  try {
+    const { id } = preparedTask.value
+    const payload = { ...preparedTask.value.payload }
+    let count = taskPreview.value.count
+    if (id) { delete payload.repeat_rule; delete payload.repeat_until }
+    if (USE_MOCK) {
+      if (id) {
+        const index = tasks.value.findIndex(t => t.id === id)
+        if (index < 0) throw new Error('任务已变化，请关闭后重新打开')
+        const original = tasks.value[index]
+        const changedDateOrExam = original.exam_id !== payload.exam_id || original.plan_date !== payload.plan_date
+        tasks.value[index] = { ...original, ...payload, ...(changedDateOrExam ? { repeat_group_id: null, repeat_rule: 'none', repeat_until: null } : {}) }
+      } else tasks.value.push(...mockTaskInstances(taskPreview.value, tasks.value, crypto.randomUUID().replaceAll('-', '')))
+    } else if (id) await taskApi.update(id, payload)
+    else count = (await taskApi.create(payload)).created_count || 1
+    ElMessage.success(id ? '本次任务已更新' : `已创建 ${count} 项任务`)
+    taskPreviewVisible.value = false
+    taskDialogVisible.value = false
+    preparedTask.value = null
+    if (!USE_MOCK) await loadTasks()
+  } catch (error) {
+    if (!error?.response) ElMessage.error(error.message || '保存失败')
+  } finally { taskSaving.value = false }
 }
 
 const onCheckin = async (t) => {
@@ -503,10 +576,17 @@ const onUncheckin = async (t) => {
 }
 
 const onDeleteTask = async (t) => {
-  await ElMessageBox.confirm(`确定删除任务「${t.title}」吗？`, '删除确认', { type: 'warning' })
+  try { await ElMessageBox.confirm(`确定只删除本次任务「${t.title}」吗？`, '删除确认', { type: 'warning' }) } catch { return }
   if (!USE_MOCK) await taskApi.remove(t.id)
   tasks.value = tasks.value.filter((x) => x.id !== t.id)
   ElMessage.success('已删除')
+}
+
+const onDeleteTaskSeries = async task => {
+  try { await ElMessageBox.confirm(`删除「${task.title}」从 ${task.plan_date} 起尚未完成的重复任务？已完成记录和更早日期会保留。`, '删除后续重复项', { type: 'warning' }) } catch { return }
+  if (USE_MOCK) tasks.value = tasks.value.filter(t => t.repeat_group_id !== task.repeat_group_id || t.is_done || t.plan_date < task.plan_date)
+  else { await taskApi.removeSeries(task.id); await loadTasks() }
+  ElMessage.success('后续未完成重复项已删除')
 }
 
 // ==================== 倒推生成备考时间表（2.7） ====================
@@ -632,7 +712,10 @@ const onDropToDate = async (ev, day) => {
   dragTask.value = null
   if (!t || t.plan_date === day) return
   if (USE_MOCK) {
+    if (day > exams.value.find(e => e.id === t.exam_id)?.exam_date) { ElMessage.warning('任务日期不能晚于考试日期'); return }
+    try { await confirmNoConflict({ plan_date: day, estimated_minutes: t.estimated_minutes }, t.id) } catch { return }
     t.plan_date = day
+    t.repeat_group_id = null; t.repeat_rule = 'none'; t.repeat_until = null
     ElMessage.success(`演示：任务已改期到 ${day}`)
     return
   }
@@ -641,8 +724,8 @@ const onDropToDate = async (ev, day) => {
   } catch {
     return // 用户选择「返回调整」
   }
-  await taskApi.update(t.id, { plan_date: day })
-  t.plan_date = day
+  const updated = await taskApi.update(t.id, { plan_date: day })
+  Object.assign(t, updated)
   ElMessage.success(`「${t.title.slice(0, 12)}…」已改期到 ${day}`)
 }
 
@@ -653,6 +736,12 @@ onMounted(load)
 </script>
 
 <style scoped>
+.task-meta { margin: 5px 0; color: var(--text-low); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.task-description { margin-top: 6px; font-size: 12px; }
+.task-description summary { cursor: pointer; color: var(--text-low); }
+.task-description p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 600px) { .task-form-row { grid-template-columns: 1fr; } }
 .page-head {
   display: flex;
   align-items: center;

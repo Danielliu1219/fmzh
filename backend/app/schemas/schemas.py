@@ -2,11 +2,12 @@
 
 字段含义、枚举取值与 docs/接口文档.md 保持一致。
 """
-from datetime import date, datetime
-from typing import Any, Optional
+from datetime import date, datetime, time
+from typing import Any, Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, field_serializer
 from ..services.score_targets import ScoreBand
+from ..services.task_details import task_time
 
 # ==================== 用户 ====================
 
@@ -500,17 +501,51 @@ class QuizSubmit(BaseModel):
 # ==================== 任务 ====================
 
 
-class TaskCreate(BaseModel):
+class TaskDetails(BaseModel):
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    location: str = Field(default='', max_length=120)
+    difficulty: Literal['easy', 'medium', 'hard'] = 'medium'
+    detail: str = Field(default='', max_length=2000)
+
+    @field_validator('start_time', 'end_time', mode='before')
+    @classmethod
+    def check_time(cls, value):
+        return task_time(value)
+
+    @field_serializer('start_time', 'end_time')
+    def format_time(self, value):
+        return value.strftime('%H:%M') if value is not None else None
+
+    @field_validator('location', 'detail', mode='before')
+    @classmethod
+    def trim_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class TaskCreate(TaskDetails):
+    model_config = ConfigDict(extra='forbid')
     exam_id: int
     title: str = Field(min_length=1, max_length=256)
     plan_date: date
-    estimated_minutes: int = 60
+    estimated_minutes: int = Field(default=60, ge=1, le=1440)
     priority: int = Field(default=2, ge=1, le=3)
+    repeat_rule: Literal['none', 'daily', 'weekdays', 'weekly'] = 'none'
+    repeat_until: Optional[date] = None
+
+    @field_validator('title', mode='before')
+    @classmethod
+    def trim_title(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
-class TaskUpdate(BaseModel):
+class TaskUpdate(TaskDetails):
     """编辑任务（2.6）：字段均可选，仅更新传入的字段"""
 
+    model_config = ConfigDict(extra='forbid')
+    location: Optional[str] = Field(default=None, max_length=120)
+    difficulty: Optional[Literal['easy', 'medium', 'hard']] = None
+    detail: Optional[str] = Field(default=None, max_length=2000)
     exam_id: Optional[int] = None
     title: Optional[str] = Field(default=None, min_length=1, max_length=256)
     plan_date: Optional[date] = None
@@ -518,7 +553,7 @@ class TaskUpdate(BaseModel):
     priority: Optional[int] = Field(default=None, ge=1, le=3)
 
 
-class TaskOut(BaseModel):
+class TaskOut(TaskDetails):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -531,6 +566,26 @@ class TaskOut(BaseModel):
     is_done: bool
     done_at: Optional[datetime] = None
     source: str
+    repeat_rule: str = 'none'
+    repeat_until: Optional[date] = None
+    repeat_group_id: Optional[str] = None
+
+
+class TaskCreateOut(TaskOut):
+    created_count: int = 1
+    created_ids: list[int] = []
+
+
+class TaskPreviewRequest(TaskCreate):
+    exclude_task_id: Optional[int] = Field(default=None, ge=1)
+
+
+class TaskPreviewOut(BaseModel):
+    count: int
+    total_minutes: int
+    items: list[TaskCreate]
+    warnings: list[dict[str, Any]] = []
+    note: str = '预览不保存；每个重复日期会生成一项任务，可单独打卡和编辑。请核对日期、时段及预算。'
 
 
 # ==================== 日程服务（2.7 倒推 / 2.8 冲突检测 / 2.12 ICS 导入） ====================

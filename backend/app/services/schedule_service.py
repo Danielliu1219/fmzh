@@ -91,6 +91,12 @@ def generate_schedule(
         start_date = end_date
 
     total_minutes = _estimate_total_minutes(db, user_id, exam, daily_minutes)
+    retained = db.query(Task).filter(
+        Task.user_id == user_id, Task.exam_id == exam.id, Task.source == "ai",
+        Task.title.like("【倒推】%"),
+        (Task.is_done.is_(True) | Task.start_time.is_not(None)),
+    ).all()
+    total_minutes = max(0, total_minutes - sum(task.estimated_minutes for task in retained))
     days: list[date] = []
     cur = start_date
     while cur <= end_date:
@@ -121,6 +127,8 @@ def generate_schedule(
         Task.exam_id == exam.id,
         Task.source == "ai",
         Task.title.like(f"【倒推】%"),
+        Task.is_done.is_(False),
+        Task.start_time.is_(None),
     ).delete()
 
     conflicts: list[dict] = []
