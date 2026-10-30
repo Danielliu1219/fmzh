@@ -409,62 +409,6 @@ export const mockTop3 = {
   note: '',
 }
 
-// 低情绪减负与计划重排（模块 7.7）演示数据：按选项给出重排预览
-export const mockRelief = {
-  lighten: {
-    option: 'lighten',
-    daily_hours: 4,
-    today_capacity: 120,
-    moves: [
-      {
-        task_id: 5,
-        title: '第5天：综合题与易错点',
-        from_date: '2026-09-10',
-        to_date: '2026-09-11',
-        minutes: 150,
-      },
-    ],
-    conflicts: [],
-    summary: '将后移 1 个任务，今日负担相应减轻',
-  },
-  halfday: {
-    option: 'halfday',
-    daily_hours: 4,
-    today_capacity: 0,
-    moves: [
-      {
-        task_id: 1,
-        title: '第3天：极限与连续',
-        from_date: '2026-09-07',
-        to_date: '2026-09-08',
-        minutes: 120,
-      },
-      {
-        task_id: 2,
-        title: '单词 Unit 1-3 记忆',
-        from_date: '2026-09-07',
-        to_date: '2026-09-08',
-        minutes: 45,
-      },
-      {
-        task_id: 5,
-        title: '第5天：综合题与易错点',
-        from_date: '2026-09-10',
-        to_date: '2026-09-11',
-        minutes: 150,
-      },
-    ],
-    conflicts: [
-      {
-        task_id: 5,
-        title: '第5天：综合题与易错点',
-        reason: '考前时间不足，无法在 2026-09-12 前安排',
-      },
-    ],
-    summary: '将后移 3 个任务，另有 1 个任务考前排不下，需要取舍',
-  },
-}
-
 // 管理端（模块 8）演示数据：课程/科目、账号、资料
 export const mockAdminCourses = [
   {

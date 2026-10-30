@@ -836,6 +836,18 @@ class ReliefMove(BaseModel):
     from_date: date
     to_date: date
     minutes: int
+    from_start: str | None = None
+    from_end: str | None = None
+    to_start: str | None = None
+    to_end: str | None = None
+
+
+class ReliefRetained(BaseModel):
+    task_id: int
+    title: str
+    minutes: int
+    start_time: str | None = None
+    end_time: str | None = None
 
 
 class ReliefConflict(BaseModel):
@@ -851,10 +863,24 @@ class ReliefPlan(BaseModel):
     moves: list[ReliefMove] = []
     conflicts: list[ReliefConflict] = []
     summary: str = ""
+    half: str | None = None
+    date: str
+    daily_minutes: int
+    rest_start: str | None = None
+    rest_end: str | None = None
+    completed_minutes: int
+    today_pending_minutes: int
+    retained: list[ReliefRetained] = []
+    note: str
+    fingerprint: str
+    preview_at: datetime
 
 
 class ReliefApply(BaseModel):
-    option: str = "lighten"  # lighten / halfday
+    option: Literal['lighten', 'halfday'] = 'lighten'
+    half: Literal['morning', 'afternoon'] = 'afternoon'
+    fingerprint: str = ''
+    preview_at: datetime | None = None
 
 
 # ===================== 管理端（模块 8）=====================

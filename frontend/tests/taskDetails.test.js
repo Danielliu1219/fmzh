@@ -59,7 +59,7 @@ test('全科排程和反馈重排保留已固定时段的AI任务', () => {
   assert.ok(applied.filter(t=>t.id!==1).every(t=>t.detail==='保留内容'))
   const feedback = feedbackReplan({ course:'数学',knowledge_points:[{name:'积分',weight:.8}] },1,[fixed,free],exams,120,TODAY)
   assert.ok(feedback.plan.some(p=>p.title==='积分' && p.detail.includes('固定时段')))
-  const relief = buildReliefPreview([fixed],exams,120,TODAY,'halfday')
+  const relief = buildReliefPreview([fixed],exams,120,TODAY,'halfday','morning')
   assert.equal(relief.moves.length,0); assert.ok(relief.conflicts.length)
 })
 
