@@ -281,6 +281,7 @@
               <span>轻松</span><span>适中</span><span>偏压</span
               ><span>高压</span>
             </div>
+            <PressureRecords :pressure="pressure" />
             <el-button text type="primary" @click="onEmergency"
               >时间紧张？查看救急清单 <el-icon><Right /></el-icon
             ></el-button>
@@ -603,6 +604,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ProgressRing from '../components/ProgressRing.vue'
+import PressureRecords from '../components/PressureRecords.vue'
 import { usePendingWork, useDialogDraft } from '../composables/usePendingWork'
 import StudyWorkspace from '../components/StudyWorkspace.vue'
 import StudyTimeslots from '../components/StudyTimeslots.vue'

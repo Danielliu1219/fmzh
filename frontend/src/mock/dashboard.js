@@ -261,6 +261,21 @@ export const mockPressure = {
   need_emergency: false,
 }
 
+// 每日记录为明确的示例快照；真实模式由后端自动保存，GET不会补造历史。
+export const mockPressureHistory = {
+  window_start: '2026-09-01', window_end: '2026-09-07', timezone: 'Asia/Shanghai', scheduled_time: '00:05',
+  items: [
+    [0.6, 0.2], [0.58, 0.25], [0.5, 0.3], [0.48, 0.32], [0.45, 0.35], [0.42, 0.36], [0.4, 0.375],
+  ].map(([backlog, done], i) => {
+    const score = Math.round((30 * 0.25 + 30 * backlog + 20 * (1 - done) + 20) * 10) / 10
+    return {score, level:score < 60 ? '适中' : '偏压', suggestion:'按计划推进，给自己留出休息时间',
+      breakdown:{exam_density:0.25,task_backlog:backlog,task_done_rate:done,exam_proximity:1}, need_emergency:score>=60,
+      record_date:`2026-09-${String(i+1).padStart(2,'0')}`,computed_at:new Date(Date.parse('2026-08-31T16:05:00Z')+i*86400000).toISOString(), source:'scheduled', formula_version:'v1'}
+  }).reverse(),
+  missing_dates:[], note:'示例每日记录；真实模式仅显示实际保存的记录，无记录日期不会补造历史分数。',
+}
+Object.assign(mockPressure, {date:'2026-09-07',computed_at:'2026-09-07T00:00:00Z',timezone:'Asia/Shanghai',daily_snapshot:structuredClone(mockPressureHistory.items[0]),daily_status:'ready'})
+
 // 临时救急模式（模块 7.2）演示数据：最近一场考试的高频基础考点冲刺清单
 export const mockEmergency = {
   exam_id: 1,

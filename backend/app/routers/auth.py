@@ -20,7 +20,7 @@ from ..config import UPLOAD_DIR
 from ..database import Base, get_db
 from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, StudySetting, Task, User, UserProfile
 from ..models.models import Notification, NotificationPreference, Reminder, Collection, MoodRecord, QuizAttempt
-from ..models.models import QaConversation, QaMessage, IcsImportReceipt
+from ..models.models import QaConversation, QaMessage, IcsImportReceipt, DailyPressure
 from ..schemas.schemas import (
     ChangePasswordRequest,
     ResetConfirmRequest,
@@ -239,7 +239,7 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
         user_dir.rmdir()
 
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
-    for model in (IcsImportReceipt, Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
+    for model in (DailyPressure, IcsImportReceipt, Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
         db.query(model).filter(model.user_id == user.id).delete()
     # 资料问答（4.5）：先删消息再删会话
     conversation_ids = [

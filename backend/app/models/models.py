@@ -1,4 +1,4 @@
-"""数据库表模型（共 21 张表）
+"""数据库表模型（共 22 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -173,6 +173,21 @@ class Task(Base):
     def move_fingerprint(self):
         from ..services.task_details import move_fingerprint
         return move_fingerprint(self)
+
+
+class DailyPressure(Base):
+    """计算时刻的每日压力快照；同一账号同一北京时间自然日仅一条。"""
+    __tablename__ = 'daily_pressure_records'
+    __table_args__ = (UniqueConstraint('user_id', 'record_date', name='uq_daily_pressure_user_date'),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), index=True, nullable=False)
+    record_date = Column(Date, nullable=False)
+    score = Column(Float, nullable=False)
+    breakdown = Column(Text, nullable=False)
+    computed_at = Column(DateTime, nullable=False)  # UTC，响应补回时区
+    source = Column(String(16), nullable=False)  # startup / scheduled
+    formula_version = Column(String(16), nullable=False)
 
 
 class MoodRecord(Base):
