@@ -569,6 +569,7 @@ class TaskOut(TaskDetails):
     repeat_rule: str = 'none'
     repeat_until: Optional[date] = None
     repeat_group_id: Optional[str] = None
+    move_fingerprint: str = ''
 
 
 class TaskCreateOut(TaskOut):
@@ -588,6 +589,30 @@ class TaskPreviewOut(BaseModel):
     overlaps: list[dict[str, Any]] = []
     can_save: bool = True
     note: str = '预览不保存；每个重复日期会生成一项任务，可单独打卡和编辑。请核对日期、时段及预算。'
+
+
+class TaskMoveIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    plan_date: date
+    fingerprint: str = Field(pattern='^[0-9a-f]{64}$')
+    start_time: Optional[time] = None  # 省略保留原时段；null 清空时段；有值按原分钟数计算结束
+    allow_over_budget: bool = False
+
+    @field_validator('start_time', mode='before')
+    @classmethod
+    def validate_time(cls, value):
+        return task_time(value)
+
+
+class TaskMovePreviewOut(BaseModel):
+    candidate: TaskCreate
+    overlaps: list[dict[str, Any]]
+    can_save: bool
+    changed: bool
+    budget_exceeded: bool
+    existing_minutes: int
+    planned_minutes: int
+    limit_minutes: int
 
 
 # ==================== 日程服务（2.7 倒推 / 2.8 冲突检测 / 2.12 ICS 导入） ====================
