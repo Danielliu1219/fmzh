@@ -1,4 +1,5 @@
 """FastAPI 应用入口"""
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +10,7 @@ from .services.daily_pressure import make_lifespan
 from .routers import admin, ai, auth, collections, dashboard, exams, features, focus, materials, notifications, study, tasks, quizzes
 from .services.schema_upgrade import upgrade_schema
 from .services.audit import AuditMiddleware
+from .runtime import attach_frontend, cors_origins
 
 # 创建缺失的表；每日压力记录等新表无需清空数据库或修改已有表的列。
 Base.metadata.create_all(bind=engine)
@@ -17,10 +19,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="期末周别慌！API", version="0.1.0", lifespan=make_lifespan(SessionLocal))
 
-# 开发阶段放开跨域，部署时再收紧
+# 完整应用同源访问；独立开发仅允许本机Vite，额外来源通过进程环境显式配置。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins(bool(os.environ.get('FMZH_FRONTEND_DIR'))),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -46,3 +48,7 @@ def health():
     public = {key: state[key] for key in ('running', 'timezone', 'scheduled_time', 'poll_seconds', 'last_poll_at') if key in state}
     public['degraded'] = bool(state.get('failed', 0))
     return {"status": "ok", "daily_pressure": public}
+
+
+if os.environ.get('FMZH_FRONTEND_DIR'):
+    attach_frontend(app, os.environ['FMZH_FRONTEND_DIR'])

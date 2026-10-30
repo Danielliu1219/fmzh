@@ -54,11 +54,13 @@
           </el-form>
         </el-tab-pane>
       </el-tabs>
-      <!-- 免登录预览：mock 模式进本地演示数据；联调模式用演示账号 demo 真实登录 -->
-      <el-divider><span class="demo-tip">演示模式</span></el-divider>
-      <el-button size="large" class="demo-btn" :loading="loading" @click="onDemoLogin">
-        <el-icon><VideoPlay /></el-icon>&nbsp;{{ USE_MOCK ? '免登录预览（无后端）' : '演示账号一键登录（demo）' }}
-      </el-button>
+      <template v-if="USE_MOCK">
+        <el-divider><span class="demo-tip">演示模式</span></el-divider>
+        <el-button size="large" class="demo-btn" @click="onDemoLogin">
+          <el-icon><VideoPlay /></el-icon>&nbsp;免登录预览（无后端）
+        </el-button>
+      </template>
+      <p v-else class="demo-tip">首次使用请先注册，之后使用自己的账号登录。</p>
 
       <!-- 找回密码（1.4）：账号+学号验证身份 → 重置密码（并立即解锁） -->
       <el-dialog v-model="forgotVisible" title="找回密码" width="400px" append-to-body>
@@ -161,20 +163,12 @@ const onLogin = async () => {
   }
 }
 
-// mock 模式种本地会话跳过登录（含管理员标记，便于预览管理端）；联调模式用演示账号真实登录，数据与功能全部真实
+// 仅静态预览提供本地演示会话；真实模式不假设已灌入演示账号。
 const onDemoLogin = async () => {
   if (USE_MOCK) {
     userStore._setSession({ access_token: 'demo-token', user: { username: 'demo', nickname: '演示同学', is_admin: true } })
     router.push('/')
     return
-  }
-  loading.value = true
-  try {
-    await userStore.login('demo', 'demo123456')
-    ElMessage.success('已用演示账号 demo 登录（数据来自 seed_demo.py）')
-    router.push('/')
-  } finally {
-    loading.value = false
   }
 }
 

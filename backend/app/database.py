@@ -2,18 +2,16 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-from .config import BASE_DIR, settings
+from .config import settings
+from .runtime import database_url
 
 # SQLite 相对路径统一转成绝对路径（相对 backend/ 目录）
-url = settings.DATABASE_URL
-if url.startswith("sqlite:///") and url != "sqlite:///:memory:":
-    db_path = url.replace("sqlite:///", "")
-    url = f"sqlite:///{(BASE_DIR / db_path).as_posix()}"
+url = database_url(settings.DATABASE_URL)
 
 engine = create_engine(
     url,
     # SQLite 多线程访问需要关掉同线程检查
-    connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False} if url.get_backend_name() == 'sqlite' else {},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
