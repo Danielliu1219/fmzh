@@ -240,6 +240,7 @@
           </section>
         </template>
       </StudyWorkspace>
+      <StudyTimeslots :exams="exams" :revision="timeslotRevision" />
       <section class="care-section" aria-labelledby="care-heading">
         <header class="care-heading">
           <h2 id="care-heading">情绪记录与减负</h2>
@@ -578,6 +579,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import ProgressRing from '../components/ProgressRing.vue'
 import StudyWorkspace from '../components/StudyWorkspace.vue'
+import StudyTimeslots from '../components/StudyTimeslots.vue'
 import OnboardingTour from '../components/OnboardingTour.vue'
 import {
   buildStudyPlan,
@@ -617,6 +619,7 @@ const route = useRoute()
 const loading = ref(true)
 const error = ref('')
 const exams = ref([])
+const timeslotRevision = ref(0)
 const tasks = ref([])
 const overall = computed(() => taskProgress(tasks.value))
 const extras = ref({ streak: 0, focus_minutes: 0 })
@@ -761,12 +764,14 @@ const saveBudget = async () => {
     const minutes = Math.round(budgetHours.value * 60)
     if (USE_MOCK) {
       dailyBudget.value = minutes
+      timeslotRevision.value++
       focusData.value.goal_minutes = minutes
       mockStudySession.daily_minutes = minutes
       focusData.value.achieved = focusData.value.total_minutes >= minutes
     } else {
       const setting = await studyApi.saveSettings({ daily_minutes: minutes })
       dailyBudget.value = setting.daily_minutes
+      timeslotRevision.value++
       await loadFocus()
     }
     goalInput.value = minutes
@@ -996,6 +1001,7 @@ const onToggle = async (task) => {
       Object.assign(task, updated)
       await refreshFeatures()
     }
+    timeslotRevision.value++
     ElMessage.success(task.is_done ? '已完成，进度向前一步' : '已撤销打卡')
   } catch {
     // The request interceptor displays errors; retain the last confirmed task state.
@@ -1083,6 +1089,7 @@ const load = async () => {
   } finally {
     loading.value = false
     refreshing.value = false
+    timeslotRevision.value++
   }
   await nextTick()
   if (!selectedTask.value)
@@ -1243,6 +1250,11 @@ const flushFocus = async () => {
       focusData.value.goal_minutes > 0 &&
       focusData.value.total_minutes >= focusData.value.goal_minutes
     weekFocus.value += pending
+    const demoEnd = `${getToday()}T${new Date(Date.now() + 8 * 3600000).toISOString().slice(11, 19)}+08:00`
+    mockStudySession.sessions.push({ exam_id: focusExamId.value, duration_minutes: pending,
+      start_time: new Date(Date.parse(demoEnd) - pending * 60000).toISOString(),
+      end_time: demoEnd })
+    timeslotRevision.value++
     extras.value = { ...extras.value, focus_minutes: weekFocus.value }
     return pending
   }
@@ -1252,6 +1264,7 @@ const flushFocus = async () => {
   })
   recordedMin.value = elapsedMin
   await loadFocus()
+  timeslotRevision.value++
   extras.value = { ...extras.value, focus_minutes: weekFocus.value }
   return pending
 }

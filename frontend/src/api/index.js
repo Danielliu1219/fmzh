@@ -122,7 +122,7 @@ export const featureApi = {
   emergency: (params) => request.get('/features/emergency', { params }),
   review: (params) => request.get('/features/review', { params }),
   top3: () => request.get('/features/top3'),
-  timeslots: () => request.get('/features/timeslots'),
+  timeslots: (params) => request.get('/features/timeslots', { params }),
   relief: (params) => request.get('/features/relief', { params }),
   reliefApply: (data) => request.post('/features/relief/apply', data),
 }

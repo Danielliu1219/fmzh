@@ -389,70 +389,13 @@ def top3(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return compute_top3(db, user)
 
 
-# 学习时段模板：(名称, 起, 止, 建议内容方向)；容量单位分钟
-_SLOT_TEMPLATE = [
-    ("早晨", "07:30", "09:00", "精力高峰，攻坚最薄弱章节"),
-    ("上午", "09:00", "11:30", "整块时间学新知识、啃重点"),
-    ("下午", "14:00", "16:30", "刷题练习，巩固当天所学"),
-    ("晚上", "19:00", "21:00", "回顾重点 + 整理错题"),
-]
-_SLOT_CAPACITY = [90, 150, 150, 120]
-_SLOT_RATIO = [0.3, 0.3, 0.2, 0.2]
-_DEFAULT_DAILY_HOURS = 3.0
-
-
-def compute_timeslots(db: Session, user: User) -> dict:
-    """学习时段推荐：按画像每日可用时长，把复习时间分配到早/上午/下午/晚上四个时段"""
-    profile = (
-        db.query(UserProfile)
-        .filter(UserProfile.user_id == user.id)
-        .order_by(UserProfile.id.desc())
-        .first()
-    )
-    note = ""
-    if profile and profile.daily_hours:
-        daily_hours = profile.daily_hours
-    else:
-        daily_hours = _DEFAULT_DAILY_HOURS
-        note = "还没有 AI 画像，先按默认每日 3 小时推荐；去「AI 复习分析」填写目标后更准确"
-
-    try:
-        weak = json.loads(profile.weak_chapters) if profile else []
-    except (json.JSONDecodeError, TypeError):
-        weak = []
-    weak_focus = weak[0] if weak else ""
-
-    # 目标总时长，不超过模板容量之和；比例分配到各时段，取整到 5 分钟
-    total = min(round(daily_hours * 60), sum(_SLOT_CAPACITY))
-    slots = []
-    for (name, start, end, tip), cap, ratio in zip(_SLOT_TEMPLATE, _SLOT_CAPACITY, _SLOT_RATIO):
-        minutes = min(round(total * ratio / 5) * 5, cap)
-        if minutes <= 0:
-            continue
-        focus = tip
-        if weak_focus and name == "早晨":
-            focus = f"攻坚薄弱环节：{weak_focus}"
-        elif weak_focus and name == "上午":
-            focus = f"主攻高频重点（{weak_focus} 等）"
-        slots.append({
-            "name": name,
-            "start": start,
-            "end": end,
-            "minutes": minutes,
-            "focus": focus,
-        })
-
-    return {
-        "daily_hours": daily_hours,
-        "learning_status": profile.learning_status if profile else None,
-        "slots": slots,
-        "note": note,
-    }
-
-
-@router.get("/timeslots", response_model=TimeSlotOut, summary="学习时段推荐：按画像分配每日复习时段")
-def timeslots(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return compute_timeslots(db, user)
+# 学习时段推荐只读统计，不写回任务。
+@router.get("/timeslots", response_model=TimeSlotOut, summary="基于近28天专注习惯推荐学习时段")
+def timeslots(exam_id: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from ..services.timeslots import recommend
+    if exam_id is not None and not db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user.id).first():
+        raise HTTPException(status_code=404, detail="考试不存在")
+    return recommend(db, user.id, exam_id)
 
 
 def compute_relief(db: Session, user: User, option: str) -> dict:
