@@ -40,7 +40,7 @@
           displayName
         }}</span>
         <el-divider direction="vertical" class="divider" />
-        <el-button text class="logout" aria-label="退出登录" @click="onLogout">
+        <el-button text class="logout" aria-label="退出登录" :loading="loggingOut" @click="onLogout">
           <el-icon><SwitchButton /></el-icon>
           <span>退出</span>
         </el-button>
@@ -56,9 +56,11 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { pendingWork, createLogoutFlow } from '../utils/pendingWork'
+import { confirmAction, protectBrowserClose } from '../composables/usePendingWork'
 import { authApi } from '../api'
 import { USE_MOCK } from '../mock/dashboard'
 import { useUserStore } from '../stores/user'
@@ -70,6 +72,8 @@ const userStore = useUserStore()
 const notices = useNotificationStore()
 watch(() => route.fullPath, () => notices.refresh(), { immediate: true })
 onBeforeUnmount(() => notices.reset())
+onMounted(() => window.addEventListener('beforeunload',protectBrowserClose))
+onBeforeUnmount(() => window.removeEventListener('beforeunload',protectBrowserClose))
 
 const navItems = computed(() => {
   const items = [
@@ -88,16 +92,18 @@ const displayName = computed(() => userStore.displayName)
 const isActive = (path) =>
   path === '/' ? route.path === '/' : route.path.startsWith(path)
 
+const loggingOut = ref(false)
+const logoutFlow = createLogoutFlow({work:pendingWork, token:() => localStorage.getItem('fmzh_token') || '',
+  confirm:message => confirmAction(message,'退出登录',{confirmButtonText:'退出登录',cancelButtonText:'继续学习'}),
+  revoke:token => USE_MOCK ? Promise.resolve() : authApi.logout(token),
+  notify:message => ElMessage.warning(message),
+  clear:async () => {userStore.logout();ElMessage.success('已退出登录');await router.replace('/login')},
+})
 const onLogout = async () => {
-  try {
-    await ElMessageBox.confirm('确认退出？此账号的已有登录会话将失效，当前浏览器的未提交自测草稿将清除。', '退出登录', { confirmButtonText: '退出', cancelButtonText: '继续学习' })
-  } catch { return }
-  if (!USE_MOCK) {
-    try { await authApi.logout() } catch { return }
-  }
-  userStore.logout()
-  ElMessage.success('已退出登录，考试顺利！')
-  router.push('/login')
+  if(loggingOut.value) return
+  if(userStore.token !== (localStorage.getItem('fmzh_token') || '')) {ElMessage.warning('账号已在其他页面变化，请刷新后再操作');return}
+  loggingOut.value = true
+  try {await logoutFlow()} finally {loggingOut.value = false}
 }
 </script>
 

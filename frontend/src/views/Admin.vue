@@ -95,7 +95,7 @@
     </el-tabs>
 
     <!-- ===== 新增 / 编辑课程弹窗 ===== -->
-    <el-dialog v-model="courseDialog" :title="editing ? '编辑课程/科目' : '新增课程/科目'" width="460px" align-center>
+    <el-dialog v-model="courseDialog" :title="editing ? '编辑课程/科目' : '新增课程/科目'" width="460px" align-center :before-close="courseDraft.beforeClose">
       <el-form :model="courseForm" label-width="80px">
         <el-form-item label="名称" required>
           <el-input v-model="courseForm.name" placeholder="如：高等数学" />
@@ -117,7 +117,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="courseDialog = false">取消</el-button>
+        <el-button @click="courseDraft.close" :disabled="adminAction.busy.value">取消</el-button>
         <el-button type="primary" @click="saveCourse">保存</el-button>
       </template>
     </el-dialog>
@@ -125,6 +125,7 @@
 </template>
 
 <script setup>
+import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '../api'
@@ -175,6 +176,7 @@ const retryCleanup = async () => {
   } finally { cleanupLoading.value = false }
 }
 
+const adminAction = useActionLock('管理端操作')
 const courseDialog = ref(false)
 const editing = ref(false)
 const courseForm = reactive({
@@ -186,6 +188,7 @@ const courseForm = reactive({
   term: '',
   note: '',
 })
+const courseDraft = useDialogDraft(courseForm,courseDialog,adminAction.busy,'课程管理信息')
 
 const loadAll = async () => {
   loading.value = true
@@ -224,6 +227,7 @@ const openEdit = (row) => {
 }
 
 const saveCourse = async () => {
+  return adminAction.run(async () => {
   if (!courseForm.name.trim()) {
     ElMessage.warning('请填写课程/科目名称')
     return
@@ -256,9 +260,11 @@ const saveCourse = async () => {
   } catch (e) {
     // request.js 已统一提示错误
   }
+  })
 }
 
 const removeCourse = async (row) => {
+  return adminAction.run(async () => {
   try {
     await ElMessageBox.confirm(`确定删除课程「${row.name}」？`, '删除确认', { type: 'warning' })
   } catch {
@@ -276,9 +282,11 @@ const removeCourse = async (row) => {
   } catch (e) {
     // request.js 已统一提示错误
   }
+  })
 }
 
 const ban = async (row) => {
+  return adminAction.run(async () => {
   try {
     await ElMessageBox.confirm(`确定封禁账号「${row.username}」？该账号将无法登录。`, '封禁确认', { type: 'warning' })
   } catch {
@@ -296,9 +304,12 @@ const ban = async (row) => {
   } catch (e) {
     // request.js 已统一提示错误
   }
+  })
 }
 
 const unban = async (row) => {
+  return adminAction.run(async () => {
+  if(!await confirmAction(`确认解封账号「${row.username}」？该账号将恢复登录权限。`,'解封账号',{confirmButtonText:'确认解封',cancelButtonText:'取消'})) return
   if (USE_MOCK) {
     row.is_banned = false
     ElMessage.success('已解封（预览态不落库）')
@@ -311,9 +322,11 @@ const unban = async (row) => {
   } catch (e) {
     // request.js 已统一提示错误
   }
+  })
 }
 
 const removeMaterial = async (row) => {
+  return adminAction.run(async () => {
   try {
     await ElMessageBox.confirm(`确定删除资料「${row.title}」？`, '删除确认', { type: 'warning' })
   } catch {
@@ -332,6 +345,7 @@ const removeMaterial = async (row) => {
   } catch (e) {
     // request.js 已统一提示错误
   }
+  })
 }
 
 onMounted(loadAll)

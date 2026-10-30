@@ -178,6 +178,7 @@
   </div>
 </template>
 <script setup>
+import { usePendingWork } from '../composables/usePendingWork'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -278,6 +279,7 @@ async function openTarget(item) {
   })
 }
 async function savePrefs() {
+  if(savingPrefs.value) return
   savingPrefs.value = true
   try {
     Object.assign(prefs, await notifications.savePreferences({ ...prefs }))
@@ -290,6 +292,7 @@ async function savePrefs() {
     savingPrefs.value = false
   }
 }
+usePendingWork(() => ({busy:[busy.value && '通知操作',savingPrefs.value && '提醒偏好保存'].filter(Boolean)}))
 onMounted(async () => {
   await load(true)
   try {

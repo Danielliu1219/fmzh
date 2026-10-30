@@ -307,7 +307,7 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑资料" width="520px">
+    <el-dialog v-model="editVisible" title="编辑资料" width="520px" :before-close="materialDraft.beforeClose">
       <el-form label-width="80px">
         <el-form-item label="标题">
           <el-input v-model="editForm.title" placeholder="资料标题" />
@@ -357,7 +357,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
+        <el-button :disabled="editSaving" @click="materialDraft.close">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="onEditSave">保存</el-button>
       </template>
     </el-dialog>
@@ -390,6 +390,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { collectionApi, examApi, materialApi } from '../api'
@@ -677,6 +678,7 @@ const applySuggestion = () => {
 }
 
 const onUpload = async () => {
+  if(uploading.value || !file.value) return
   uploading.value = true
   try {
     if (USE_MOCK) {
@@ -766,6 +768,7 @@ const openLinkedExcerpt = async () => {
 watch(previewVisible, value => { if (!value) { previewRequest++; previewLoading.value = false } })
 
 const onDelete = async (row) => {
+  return materialAction.run(async () => {
   await ElMessageBox.confirm(`确定删除「${row.title}」吗？解析文本也会被删除。`, '删除确认', { type: 'warning' })
   if (USE_MOCK) {
     const i = mockMaterials.findIndex((m) => m.id === row.id)
@@ -778,6 +781,7 @@ const onDelete = async (row) => {
   if (result.cleanup_pending) ElMessage.warning('资料已删除，文件清理待重试，可由管理员重试清理')
   else ElMessage.success('已删除')
   load()
+  })
 }
 
 const onEdit = (row) => {
@@ -796,6 +800,7 @@ const onEdit = (row) => {
 
 // 保存编辑：改标题/说明/标签，改科目即为「移动分类」（用例 3.3）
 const onEditSave = async () => {
+  if(editSaving.value) return
   const title = editForm.title.trim()
   if (!title) {
     ElMessage.warning('标题不能为空')
@@ -866,6 +871,8 @@ const onToggleFavorite = async (row) => {
 
 // 从收藏本里移除（收藏的资料或错题）
 const onRemoveCollection = async (item) => {
+  return materialAction.run(async () => {
+  if(item.item_type === 'question' && !await confirmAction(`确认从错题本移除「${item.title}」？自测历史与成绩保留。`,'移除错题',{confirmButtonText:'移除错题',cancelButtonText:'保留'})) return
   if (USE_MOCK) {
     mockCollections.value = mockCollections.value.filter((c) => c.id !== item.id)
   } else {
@@ -873,6 +880,7 @@ const onRemoveCollection = async (item) => {
   }
   ElMessage.success('已移除')
   loadCollections()
+  })
 }
 
 // ---------------- 合并导出复习笔记（用例 3.6） ----------------
@@ -1002,6 +1010,10 @@ const exportAs = async (format) => {
     merging.value = false
   }
 }
+
+const materialAction = useActionLock('资料或错题操作')
+const materialDraft = useDialogDraft(editForm,editVisible,editSaving,'资料信息')
+usePendingWork(() => ({busy:[uploading.value && '资料上传',merging.value && '笔记导出'].filter(Boolean),warning:file.value ? '有尚未上传的文件，离开会清除当前文件选择和上传表单。' : ''}))
 
 onMounted(() => {
   const requested = Number(route.query.exam)

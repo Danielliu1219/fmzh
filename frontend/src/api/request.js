@@ -9,7 +9,7 @@ const request = axios.create({
 // 请求拦截：自动带上 token
 request.interceptors.request.use((config) => {
   const token = localStorage.getItem('fmzh_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  if (token && !config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 

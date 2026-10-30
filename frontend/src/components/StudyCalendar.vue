@@ -53,7 +53,7 @@
       <p class="calendar-footnote">点击任务可精确调整日期或时间，也适用于触屏与键盘。已完成任务保留历史安排，不可拖动。移到“时间待安排区”可清除固定时段。</p>
     </template>
 
-    <el-dialog v-model="adjustVisible" title="移动任务时间" width="min(460px, 94vw)" :close-on-click-modal="!busy" :close-on-press-escape="!busy">
+    <el-dialog v-model="adjustVisible" title="移动任务时间" width="min(460px, 94vw)" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :before-close="adjustDraft.beforeClose">
       <template v-if="adjustTask">
         <p class="adjust-title">{{ subject(adjustTask) }} · {{ adjustTask.title }}</p><p class="calendar-footnote">保留 {{ adjustTask.estimated_minutes }} 分钟，只调整本次任务。</p>
         <el-form label-width="88px" @submit.prevent="submitAdjustment">
@@ -63,13 +63,14 @@
         </el-form>
         <p v-if="feedback.status === 'error'" class="move-feedback error" role="alert">{{ feedback.message }}</p>
       </template>
-      <template #footer><el-button :disabled="busy" @click="adjustVisible = false">取消</el-button><el-button type="primary" :loading="busy" @click="submitAdjustment">确认移动</el-button></template>
+      <template #footer><el-button :disabled="busy" @click="adjustDraft.close">取消</el-button><el-button type="primary" :loading="busy" @click="submitAdjustment">确认移动</el-button></template>
     </el-dialog>
   </section>
 </template>
 
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useDialogDraft } from '../composables/usePendingWork'
 import { addDays, calendarDays, dayHeading, weekday, minuteLabel, dropMinute, moveProposal, layoutTimedTasks } from '../utils/calendar.js'
 import { examColor } from '../utils/subjectColor.js'
 
@@ -114,6 +115,7 @@ function allowDrop(event) { if (dragging.value && !props.busy) event.dataTransfe
 function hoverTime(event, day) { allowDrop(event); if (dragging.value && !props.busy) hover.value = { day, minute: dropMinute(event.clientY-event.currentTarget.getBoundingClientRect().top, event.currentTarget.clientHeight, dragClock, dragOffset, event.clientY-dragOriginY) } }
 function dropOnTime(event, day) { hoverTime(event, day); const proposal = proposalFor(day, hover.value ? minuteLabel(hover.value.minute) : undefined); if (proposal) emit('move', proposal); endDrag() }
 const adjustVisible = ref(false), adjustTask = ref(null), adjust = reactive({ date: '', time: '', timed: false, fingerprint: '' })
+const adjustDraft = useDialogDraft(adjust,adjustVisible,computed(() => props.busy),'任务移动')
 function openTask(task) {
   if (Date.now() - lastDrag < 250) return
   emit('clear-feedback')

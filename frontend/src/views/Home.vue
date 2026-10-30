@@ -386,6 +386,7 @@
       </section>
       <el-dialog
         v-model="planningVisible"
+        :before-close="budgetDraft.beforeClose"
         title="全科时间与排程"
         width="660px"
         align-center
@@ -461,7 +462,7 @@
           >
         </div>
         <template #footer
-          ><el-button @click="planningVisible = false">取消</el-button
+          ><el-button @click="budgetDraft.close" :disabled="planningBusy">取消</el-button
           ><el-button
             type="primary"
             :loading="planningBusy"
@@ -600,8 +601,9 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ProgressRing from '../components/ProgressRing.vue'
+import { usePendingWork, useDialogDraft } from '../composables/usePendingWork'
 import StudyWorkspace from '../components/StudyWorkspace.vue'
 import StudyTimeslots from '../components/StudyTimeslots.vue'
 import OnboardingTour from '../components/OnboardingTour.vue'
@@ -736,6 +738,7 @@ const planningVisible = ref(false),
   planningBusy = ref(false),
   budgetHours = ref(4),
   planPreview = ref(null)
+const budgetDraft = useDialogDraft(() => ({hours:budgetHours.value}),planningVisible,planningBusy,'全科时间预算')
 const selectTask = (task) => {
   if (focusStarted.value && task?.id !== selectedTaskId.value) {
     ElMessage.info('先结束当前这轮专注，再切换任务')
@@ -806,6 +809,7 @@ const saveBudget = async () => {
     }
     goalInput.value = minutes
     planPreview.value = null
+    budgetDraft.capture()
     ElMessage.success('全科预算与今日专注目标已保存')
   } catch {
   } finally {
@@ -1416,21 +1420,21 @@ onMounted(() => {
     headerObserver.observe(header)
   }
 })
-onBeforeRouteLeave(async () => {
-  // Logout and expired sessions have already removed the token; do not trap navigation.
-  if (!localStorage.getItem('fmzh_token')) return true
-  if (focusSaving.value) return false
+usePendingWork(() => ({
+  busy: [focusSaving.value && '专注记录保存', planningBusy.value && '全科计划保存', reliefSaving.value && '减负保存', pendingIds.value.size && '任务打卡', moodSaving.value && '心情保存'].filter(Boolean),
+  warning: focusStarted.value ? '当前有未结束的专注。确认离开或退出后，将暂停并保存已完成的整分钟；不足一分钟不计入。取消会继续保留当前计时。' : '',
+}), async () => {
+  if (!focusStarted.value) return true
   if (focusRunning.value) {
     remainSec.value = Math.max(0, Math.ceil((focusEndAt - Date.now()) / 1000))
     focusRunning.value = false
     clearInterval(focusTimerId)
+    focusTimerId = null
   }
-  try {
-    await flushFocus()
-  } catch {
-    ElMessage.warning('专注记录尚未保存，请重试后再离开')
-    return false
-  }
+  focusSaving.value = true
+  try { await flushFocus(); return true }
+  catch { ElMessage.warning('专注记录尚未保存，请重试后再离开'); return false }
+  finally { focusSaving.value = false }
 })
 onBeforeUnmount(() => {
   headerObserver?.disconnect()
