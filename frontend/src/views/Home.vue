@@ -514,14 +514,19 @@
       <el-dialog
         v-model="reliefVisible"
         title="低情绪减负 · 计划重排"
-        width="620px"
+        width="min(620px, calc(100vw - 32px))"
         align-center
+        :close-on-click-modal="!reliefSaving"
+        :close-on-press-escape="!reliefSaving"
+        :show-close="!reliefSaving"
+        @closed="closeRelief"
       >
         <div class="relief">
           <div class="rf-opts">
             <el-button
               :type="reliefOption === 'lighten' ? 'primary' : 'default'"
               round
+              :disabled="reliefSaving"
               @click="pickRelief('lighten')"
             >
               减轻当日任务
@@ -529,41 +534,60 @@
             <el-button
               :type="reliefOption === 'halfday' ? 'primary' : 'default'"
               round
+              :disabled="reliefSaving"
               @click="pickRelief('halfday')"
             >
               暂停半天
             </el-button>
-            <span class="rf-cap"
-              >重排后今日可用
+            <label v-if="reliefOption === 'halfday'" class="rf-half" for="relief-half">休息半天
+              <select id="relief-half" v-model="reliefHalf" :disabled="reliefSaving" @change="loadRelief">
+                <option value="morning">上午休息 · 00:00–12:00</option>
+                <option value="afternoon">下午休息 · 12:00–24:00</option>
+              </select>
+            </label>
+            <span class="rf-cap">今日计划容量
               {{ relief ? relief.today_capacity : '—' }} 分钟</span
             >
           </div>
           <div v-if="relief" class="rf-body">
             <p class="rf-summary">{{ relief.summary }}</p>
+            <p v-if="relief.rest_start">{{ relief.date }} 休息 {{ relief.rest_start }}–{{ relief.rest_end }}；未定时任务安排到另一半天的剩余空档。</p>
+            <p>全科预算 {{ relief.daily_minutes }} 分钟 · 今日已完成任务 {{ relief.completed_minutes }} 分钟 · 预览后待办 {{ relief.today_pending_minutes }} 分钟</p>
+            <p class="rf-cap">规划时刻 {{ USE_MOCK ? '08:00（演示）' : relief.preview_at?.slice(11, 19) }}；预览10分钟内有效，开始时刻已到或数据变化需重新预览。</p>
+            <h3 v-if="relief.moves.length">待确认的调整</h3>
             <ul v-if="relief.moves.length" class="rf-list">
               <li v-for="m in relief.moves" :key="m.task_id" class="rf-item">
                 <span class="rf-title">{{ m.title }}</span>
                 <span class="rf-dates"
-                  >{{ m.from_date }} → {{ m.to_date }}</span
-                >
+                  >{{ m.from_date }} {{ m.from_start ? `${m.from_start}–${m.from_end}` : '未定时' }} → {{ m.to_date }} {{ m.to_start ? `${m.to_start}–${m.to_end}` : '未定时' }} · {{ m.minutes }}分钟</span>
               </li>
             </ul>
+            <h3>今日保留的待办</h3>
+            <ul v-if="relief.retained.length" class="rf-list">
+              <li v-for="item in relief.retained" :key="item.task_id" class="rf-item"><span>{{ item.title }}</span><span>{{ item.start_time ? `${item.start_time}–${item.end_time}` : '未定时' }} · {{ item.minutes }}分钟</span></li>
+            </ul>
+            <p v-else>今日不再安排新的待办，已完成记录保持原样。</p>
             <div v-if="relief.conflicts.length" class="rf-conflicts">
-              <div class="rf-conf-head">以下任务考前排不下，需要取舍：</div>
+              <div class="rf-conf-head">请先处理以下约束，当前方案不能确认：</div>
               <ul>
                 <li v-for="c in relief.conflicts" :key="c.task_id">
                   {{ c.title }} —— {{ c.reason }}
                 </li>
               </ul>
+              <router-link to="/exams" @click="reliefVisible = false">去课程管理调整 ↗</router-link>
             </div>
+            <p class="rf-cap">{{ relief.note }}</p>
           </div>
-          <div v-else class="rf-loading">加载中…</div>
+          <div v-else-if="reliefLoading" class="rf-loading" role="status">正在生成减负预览…</div>
+          <div v-if="reliefError" class="rf-conflicts" role="alert">{{ reliefError }} <el-button text :disabled="reliefLoading || reliefSaving" @click="loadRelief">重新预览</el-button></div>
+          <p v-if="focusStarted" class="rf-cap">请先结束当前专注，再确认调整任务。</p>
         </div>
         <template #footer>
-          <el-button @click="reliefVisible = false">取消</el-button>
+          <el-button :disabled="reliefSaving" @click="reliefVisible = false">取消</el-button>
           <el-button
             type="primary"
-            :disabled="!relief || !!relief.conflicts.length"
+            :loading="reliefSaving"
+            :disabled="reliefLoading || !relief || !!relief.conflicts.length || !relief.moves.length || focusStarted"
             @click="confirmRelief"
             >确认调整</el-button
           >
@@ -585,6 +609,7 @@ import {
   buildStudyPlan,
   applyStudyPlan,
   buildReliefPreview,
+  applyReliefPlan,
 } from '../utils/studyPlan'
 import { checkinHistory, daysUntil, taskProgress } from '../utils/studyProgress'
 import { ElMessage } from 'element-plus'
@@ -638,6 +663,11 @@ const top3 = ref(null)
 const reliefVisible = ref(false)
 const reliefOption = ref('lighten')
 const relief = ref(null)
+const reliefHalf = ref('afternoon')
+const reliefLoading = ref(false)
+const reliefSaving = ref(false)
+const reliefError = ref('')
+let reliefRequest = 0
 
 // —— 番茄钟（FMZH-SRS-2.10.0）：计时结束时长计入对应科目，作为学习统计唯一依据 ——
 const FOCUS_PRESETS = [25, 15, 45]
@@ -1154,55 +1184,59 @@ const onMoodChange = async (val) => {
   }
 }
 
-const loadRelief = async () => {
-  if (USE_MOCK) {
-    relief.value = buildReliefPreview(
-      tasks.value,
-      exams.value,
-      dailyBudget.value,
-      getToday(),
-      reliefOption.value,
-    )
-    return
-  }
-  relief.value = null
-  try {
-    relief.value = await featureApi.relief({ option: reliefOption.value })
-  } catch (e) {
-    // request.js 已统一提示错误
-  }
+const reliefMessage = e => {
+  const detail = e?.response?.data?.detail
+  return (typeof detail === 'string' ? detail : detail?.message) || (e?.message === 'Network Error' ? '网络连接失败，请重新预览。' : e?.message) || '减负预览暂不可用，请重试。'
 }
-
+const loadRelief = async () => {
+  if (reliefSaving.value) return
+  const request = ++reliefRequest
+  relief.value = null
+  reliefError.value = ''
+  reliefLoading.value = true
+  try {
+    const result = USE_MOCK
+      ? buildReliefPreview(tasks.value, exams.value, dailyBudget.value, getToday(), reliefOption.value, reliefHalf.value)
+      : await featureApi.relief({ option: reliefOption.value, half: reliefHalf.value })
+    if (request === reliefRequest && reliefVisible.value) relief.value = result
+  } catch (e) {
+    if (request === reliefRequest) reliefError.value = reliefMessage(e)
+  } finally { if (request === reliefRequest) reliefLoading.value = false }
+}
+const closeRelief = () => { reliefRequest++; relief.value = null; reliefLoading.value = false }
 const onRelief = () => {
   reliefVisible.value = true
   reliefOption.value = 'lighten'
+  reliefHalf.value = 'afternoon'
   loadRelief()
 }
-
-const pickRelief = (option) => {
-  if (reliefOption.value === option) return
+const pickRelief = option => {
+  if (reliefSaving.value || reliefOption.value === option) return
   reliefOption.value = option
   loadRelief()
 }
-
 const confirmRelief = async () => {
-  if (USE_MOCK) {
-    const moves = new Map(relief.value.moves.map((m) => [m.task_id, m.to_date]))
-    tasks.value = tasks.value.map((t) =>
-      moves.has(t.id) ? { ...t, plan_date: moves.get(t.id) } : t,
-    )
-    ElMessage.success('已按方案减轻今日任务（本次演示内有效）')
-    reliefVisible.value = false
-    return
-  }
+  if (reliefSaving.value || reliefLoading.value || !relief.value || relief.value.conflicts.length || focusStarted.value) return
+  reliefSaving.value = true
+  reliefError.value = ''
   try {
-    await featureApi.reliefApply({ option: reliefOption.value })
-    ElMessage.success('计划已按确认方案重排')
+    if (USE_MOCK) {
+      tasks.value = applyReliefPlan(tasks.value, exams.value, dailyBudget.value, getToday(), relief.value)
+      timeslotRevision.value++
+      ElMessage.success('已按确认方案调整（本次演示内有效）')
+    } else {
+      await featureApi.reliefApply({ option: reliefOption.value, half: reliefHalf.value,
+        fingerprint: relief.value.fingerprint, preview_at: relief.value.preview_at })
+      ElMessage.success('计划已按确认方案重排')
+      await load()
+    }
     reliefVisible.value = false
-    await load()
   } catch (e) {
-    // request.js 已统一提示错误
-  }
+    relief.value = null
+    reliefError.value = reliefMessage(e)
+    // 写入响应丢失时也重新读取权威任务，保留错误提示，绝不自动重试写入。
+    if (!USE_MOCK) await load()
+  } finally { reliefSaving.value = false }
 }
 
 // —— 番茄钟逻辑 ——
@@ -2080,6 +2114,10 @@ onBeforeUnmount(() => {
   text-align: center;
   color: var(--muted);
 }
+.rf-body { max-height: 50vh; overflow-y: auto; font-size: 13px; line-height: 1.8; }
+.rf-body h3 { font-size: 13px; margin: 18px 0 0; }
+.rf-half { width:100%; display:flex; gap:8px; align-items:center; font-size:12px; flex-wrap:wrap; }
+.rf-half select { padding:8px; font:inherit; color:inherit; background:var(--paper); border:1px solid var(--line); border-radius:6px; max-width:100%; }
 .rf-opts {
   display: flex;
   flex-wrap: wrap;

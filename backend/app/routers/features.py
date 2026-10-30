@@ -398,128 +398,13 @@ def timeslots(exam_id: int | None = None, user: User = Depends(get_current_user)
     return recommend(db, user.id, exam_id)
 
 
-def compute_relief(db: Session, user: User, option: str) -> dict:
-    """低情绪减负：把今日（含逾期）未完成任务在约束下重排到后续日期
-
-    约束：① 不晚于该任务所属考试的日期；② 每日不超过全科共享的每日可用时长
-    （暂停半天时今日容量取 0，减轻当日取一半）；③ 按任务优先级从高到低优先安排。
-    排不下的任务进 conflicts 明确提示取舍，不硬塞到后续日期。
-    """
-    if option not in ("lighten", "halfday"):
-        raise HTTPException(422, "不支持的减负选项")
-    today = date.today()
-
-    from ..services.study_planner import daily_budget
-    daily_minutes = daily_budget(db, user.id)
-    today_cap = 0 if option == "halfday" else daily_minutes // 2
-
-    all_tasks = db.query(Task).filter(Task.user_id == user.id).all()
-    tasks = [t for t in all_tasks if not t.is_done]
-    exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
-
-    movable = [t for t in tasks if t.plan_date <= today and t.start_time is None]
-    frozen = [t for t in tasks if t.plan_date > today or t.start_time is not None]
-
-    # 未来各天已被未完成任务占用的分钟数
-    load: dict[date, int] = {}
-    for t in frozen:
-        load[t.plan_date] = load.get(t.plan_date, 0) + t.estimated_minutes
-    for t in all_tasks:
-        if t.is_done and t.plan_date >= today:
-            load[t.plan_date] = load.get(t.plan_date, 0) + t.estimated_minutes
-
-    def sort_key(t: Task):
-        exam = exams.get(t.exam_id)
-        return (t.priority, exam.exam_date if exam else date.max, t.plan_date)
-
-    movable.sort(key=sort_key)
-
-    moves, conflicts = [], []
-    for task in frozen:
-        if task.start_time is not None and task.plan_date < today:
-            conflicts.append({'task_id': task.id, 'title': task.title, 'reason': '固定时段已过，请先手动改期或打卡'})
-    if any(t.start_time is not None and t.plan_date == today for t in frozen) and load.get(today, 0) > today_cap:
-        conflicts.append({'task_id': 0, 'title': '今日固定安排', 'reason': '固定时段与已完成任务已超过减负后的今日容量，请先调整固定时段'})
-    for t in movable:
-        exam = exams.get(t.exam_id)
-        deadline = exam.exam_date if exam else today + timedelta(days=365)
-        placed = None
-        d = today
-        while d <= deadline:
-            if d == today and today_cap == 0:
-                d += timedelta(days=1)
-                continue
-            cap = today_cap if d == today else daily_minutes
-            used = load.get(d, 0)
-            if used + t.estimated_minutes <= cap:
-                placed = d
-                break
-            d += timedelta(days=1)
-
-        if placed is None:
-            conflicts.append({
-                "task_id": t.id,
-                "title": t.title,
-                "reason": (
-                    f"考前时间不足，无法在 {deadline.isoformat()} 前安排"
-                    if deadline
-                    else "每日可用时间不足，无法安排"
-                ),
-            })
-            continue
-
-        load[placed] = load.get(placed, 0) + t.estimated_minutes
-        if placed != t.plan_date:
-            moves.append({
-                "task_id": t.id,
-                "title": t.title,
-                "from_date": t.plan_date,
-                "to_date": placed,
-                "minutes": t.estimated_minutes,
-            })
-
-    if conflicts:
-        summary = f"将后移 {len(moves)} 个任务，另有 {len(conflicts)} 个任务考前排不下，需要取舍"
-    elif moves:
-        summary = f"将后移 {len(moves)} 个任务，今日负担相应减轻"
-    else:
-        summary = "当前安排已满足约束，无需调整"
-
-    return {
-        "option": option,
-        "daily_hours": daily_minutes / 60,
-        "today_capacity": today_cap,
-        "moves": moves,
-        "conflicts": conflicts,
-        "summary": summary,
-    }
+@router.get("/relief", response_model=ReliefPlan, summary="低情绪减负：只读预览今日半天与跨科调整")
+def relief(option: str = "lighten", half: str = "afternoon", user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from ..services.relief import preview
+    return preview(db, user.id, option, half)
 
 
-@router.get("/relief", response_model=ReliefPlan, summary="低情绪减负：重排方案预览（未生效）")
-def relief(
-    option: str = "lighten",
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return compute_relief(db, user, option)
-
-
-@router.post("/relief/apply", response_model=ReliefPlan, summary="确认减负：按预览方案重排并生效")
-def relief_apply(
-    payload: ReliefApply,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    plan = compute_relief(db, user, payload.option)
-    if plan['conflicts']:
-        raise HTTPException(409, "仍有任务无法安排，请先调整任务或每日时间")
-    moves = {m["task_id"]: m["to_date"] for m in plan["moves"]}
-    if moves:
-        for t in (
-            db.query(Task)
-            .filter(Task.user_id == user.id, Task.id.in_(list(moves.keys())))
-            .all()
-        ):
-            t.plan_date = moves[t.id]
-        db.commit()
-    return plan
+@router.post("/relief/apply", response_model=ReliefPlan, summary="确认减负：锁内重验预览并原子调整")
+def relief_apply(payload: ReliefApply, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from ..services.relief import apply
+    return apply(db, user.id, payload)
