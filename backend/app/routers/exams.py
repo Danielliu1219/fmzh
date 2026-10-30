@@ -29,6 +29,7 @@ from ..services import schedule_service
 from ..services import deletion
 from ..services import ics_import
 from ..services.calendar_io import export_calendar
+from ..services.task_conflicts import lock_schedule
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -66,6 +67,7 @@ def create_exam(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    lock_schedule(db, user.id, auth_key=user.auth_key)
     exam = Exam(user_id=user.id, **payload.model_dump())
     db.add(exam)
     db.commit()
@@ -80,6 +82,7 @@ def update_exam(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    lock_schedule(db, user.id, auth_key=user.auth_key)
     exam = _get_own_exam(db, user, exam_id)
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(exam, field, value)

@@ -3,10 +3,9 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
@@ -35,7 +34,9 @@ class ScoreTargetTests(unittest.TestCase):
             with Session(self.engine) as db:
                 yield db
         app.dependency_overrides[get_db] = database
-        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1)
+        def current_user(db=Depends(get_db)):
+            return db.get(User, 1)
+        app.dependency_overrides[get_current_user] = current_user
         app.include_router(ai.router, prefix='/api/ai')
         self.client = TestClient(app)
         self.mock = patch.object(settings, 'LLM_MOCK', True)

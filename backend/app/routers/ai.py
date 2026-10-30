@@ -52,6 +52,8 @@ from ..services.llm_client import LLMError, chat_json, chat_text
 from ..services.material_weight import default_weight_for
 from ..services.plan_service import create_tasks_from_plan
 from ..services.study_planner import daily_budget
+from ..services.task_conflicts import lock_schedule
+from ..services.planning_inputs import signature as input_signature, values as input_values
 from ..services.quizzes import public_analysis, prepare_questions
 from ..services.score_targets import band_strategy, band_text
 from ..services.recommendation_strategy import apply_strategy, strategy_context
@@ -224,7 +226,9 @@ def create_profile(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _get_own_exam(db, user, payload.exam_id)
+    user_id, auth_key = user.id, user.auth_key
+    lock_schedule(db, user_id, auth_key=auth_key)
+    exam = _get_own_exam(db, user, payload.exam_id)
     if not payload.raw_text.strip() and not (payload.supplement or "").strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="请填写学习状态描述或补全内容"
@@ -237,30 +241,35 @@ def create_profile(
         .order_by(UserProfile.id.desc())
         .first()
     )
-    if profile is None:
-        profile = UserProfile(user_id=user.id, exam_id=payload.exam_id)
-        db.add(profile)
-
     # 新描述优先；没传新描述时沿用已保存的描述；补全内容永远追加在末尾
-    raw_text = payload.raw_text.strip() or profile.raw_text
+    raw_text = payload.raw_text.strip() or (profile.raw_text if profile else '')
     if payload.supplement and payload.supplement.strip():
         raw_text = f"{raw_text}\n补充说明：{payload.supplement.strip()}"
-    profile.raw_text = raw_text
-
-    exam = db.query(Exam).filter(Exam.id == payload.exam_id).first()
+    subject = exam.subject
+    before = input_signature(db, user_id, payload.exam_id)
+    db.rollback()  # 仅短暂锁定输入快照，等待模型时释放数据库写锁。
     try:
         if settings.LLM_MOCK:
             data = prompts.mock_extract_profile(raw_text)
         else:
             data = chat_json(
                 prompts.PROFILE_SYSTEM_PROMPT,
-                prompts.build_profile_user_prompt(exam.subject, raw_text),
+                prompts.build_profile_user_prompt(subject, raw_text),
                 max_tokens=1000,
             )
     except LLMError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
 
     data = normalize_profile(data)
+    lock_schedule(db, user_id, auth_key=auth_key)
+    if input_signature(db, user_id, payload.exam_id) != before:
+        db.rollback()
+        raise HTTPException(409, '考试或学习画像已变化，请重新提取画像')
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user_id, UserProfile.exam_id == payload.exam_id).order_by(UserProfile.id.desc()).first()
+    if profile is None:
+        profile = UserProfile(user_id=user_id, exam_id=payload.exam_id)
+        db.add(profile)
+    profile.raw_text = raw_text
     # 滑条选中的区间为明确目标，不让模型将其重新猜回另一档。
     if payload.target_band:
         profile.target_band = payload.target_band
@@ -316,6 +325,8 @@ def analyze(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_id, auth_key = user.id, user.auth_key
+    lock_schedule(db, user_id, auth_key=auth_key)
     exam = _get_own_exam(db, user, payload.exam_id)
     if exam.exam_date < date.today():
         raise HTTPException(409, "该考试已经结束，不能再生成备考任务")
@@ -363,6 +374,12 @@ def analyze(
     )
     context = _profile_to_text(profile) + strategy_context(planning_profile) + f"\n注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
 
+    before = input_signature(db, user_id, payload.exam_id, analysis=True)
+    profile_id = profile.id
+    exam = SimpleNamespace(**input_values(exam))
+    materials = [SimpleNamespace(**input_values(row)) for row in materials]
+    db.rollback()  # 规划输入已复制；模型调用不占数据库锁。
+
     # 最多尝试两次（大模型偶尔返回格式不对）
     last_err = None
     result = None
@@ -392,19 +409,21 @@ def analyze(
     ensure_question_type_analysis(result)
     attach_references(result, materials)
 
-    analysis = Analysis(
-        user_id=user.id,
-        exam_id=payload.exam_id,
-        profile_id=profile.id,
-        result_json=result.model_dump_json(),
-        status="success",
-    )
-    db.add(analysis)
-    db.commit()
-    db.refresh(analysis)
-
-    # 复习计划 -> 每日任务（自动替换该科目旧的 AI 任务）
-    scheduling = create_tasks_from_plan(db, user.id, exam.id, analysis.id, result.review_plan)
+    try:
+        lock_schedule(db, user_id, auth_key=auth_key)
+        if input_signature(db, user_id, payload.exam_id, analysis=True) != before:
+            raise HTTPException(409, '任务、考试、预算、画像或资料已变化，请重新生成分析')
+        analysis = Analysis(user_id=user_id, exam_id=payload.exam_id, profile_id=profile_id,
+                            result_json=result.model_dump_json(), status='success')
+        db.add(analysis)
+        db.flush()
+        # 分析与任务同事务提交；容量不足时仅保留分析，原有任务不被替换。
+        scheduling = create_tasks_from_plan(db, user_id, exam.id, analysis.id, result.review_plan, commit=False)
+        db.commit()
+        db.refresh(analysis)
+    except Exception:
+        db.rollback()
+        raise
 
     return AnalysisOut(
         id=analysis.id,

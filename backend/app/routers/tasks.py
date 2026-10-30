@@ -22,6 +22,7 @@ from ..services.schedule_service import check_conflict
 from ..services import task_service, task_moves
 from ..services.study_planner import daily_budget
 from ..services.task_conflicts import detect_candidates, find_overlaps
+from ..services.task_conflicts import lock_schedule
 from ..services.task_details import timed_minutes
 from ..utils.security import get_current_user
 
@@ -143,12 +144,13 @@ def checkin(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    lock_schedule(db, user.id, auth_key=user.auth_key)
     task = _get_own_task(db, user, task_id)
     if not task.is_done:
         task.is_done = True
         task.done_at = datetime.now()
-        db.commit()
-        db.refresh(task)
+    db.commit()
+    db.refresh(task)
     return task
 
 
@@ -158,6 +160,7 @@ def uncheckin(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    lock_schedule(db, user.id, auth_key=user.auth_key)
     task = _get_own_task(db, user, task_id)
     task.is_done = False
     task.done_at = None

@@ -102,12 +102,13 @@ def distribute(tasks: list[dict], exams: dict, budget: int, today: date) -> dict
 
 
 def preview(db: Session, user_id: int) -> dict:
+    today = date.today()
     rows = db.query(Task).filter(Task.user_id == user_id).order_by(Task.id).all()
     tasks = [{key: getattr(t, key) for key in SNAPSHOT_FIELDS} for t in rows]
     exams = {e.id: {'exam_date': e.exam_date, 'subject': e.subject} for e in db.query(Exam).filter(Exam.user_id == user_id).all()}
     budget = daily_budget(db, user_id)
-    fingerprint = hashlib.sha256(json.dumps([date.today(), budget, tasks, exams], default=str, sort_keys=True).encode()).hexdigest()
-    return {**distribute(tasks, exams, budget, date.today()), 'fingerprint': fingerprint}
+    fingerprint = hashlib.sha256(json.dumps([today, budget, tasks, exams], default=str, sort_keys=True).encode()).hexdigest()
+    return {**distribute(tasks, exams, budget, today), 'fingerprint': fingerprint}
 
 
 def apply(db: Session, user_id: int, plan: dict, *, commit: bool = True):
