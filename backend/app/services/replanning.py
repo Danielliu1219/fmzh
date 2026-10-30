@@ -143,9 +143,8 @@ def replan(db, user, exam_id, payload):
         raise HTTPException(409, '请先预览调整，再确认应用')
     try:
         # 先获取写锁，再读取确认所用快照，避免确认过程中其他请求改写任务。
-        claimed = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update({User.auth_key: user.auth_key}, synchronize_session=False)
-        if claimed != 1:
-            raise HTTPException(401, '登录已失效，请重新登录')
+        from .task_conflicts import lock_schedule
+        lock_schedule(db, user.id, auth_key=user.auth_key)
         output, analysis, data, base, priorities, additions, feedback_key = snapshot(db, user, exam_id)
         if output.fingerprint != payload.fingerprint:
             raise HTTPException(409, '任务、预算或自测结果已变化，请重新预览')

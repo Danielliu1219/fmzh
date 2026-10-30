@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from ..models.models import Analysis, Exam, Task
+from .task_conflicts import lock_schedule
 
 # 同一天任务总时长默认上限（分钟），超过即触发提醒
 DEFAULT_DAILY_LIMIT_MINUTES = 480
@@ -81,6 +82,11 @@ def generate_schedule(
     规则：从开始日到考试前一天，每天安排不超过 daily_minutes 的复习任务，
     越临近考试优先级越高；与现有日程冲突的日期记录下来提醒用户手动调整（不阻止生成）。
     """
+    exam_id = exam.id
+    lock_schedule(db, user_id)
+    exam = db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user_id).first()
+    if exam is None:
+        raise ValueError('考试不存在或已删除，请刷新后重试')
     end_date = exam.exam_date - timedelta(days=1)  # 考试前一天为最后复习日
     if end_date < date.today():
         raise ValueError("考试日期已过或就是今天，没有可安排的复习时间")

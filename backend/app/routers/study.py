@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.models import FocusGoal, StudySetting, User
 from ..services import study_planner
+from ..services.task_conflicts import lock_schedule
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -28,6 +29,7 @@ def settings(user: User = Depends(get_current_user), db: Session = Depends(get_d
 
 @router.put('/settings')
 def save_settings(payload: BudgetIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lock_schedule(db, user.id, auth_key=user.auth_key)
     row = db.get(StudySetting, user.id)
     if row is None:
         row = StudySetting(user_id=user.id)
@@ -49,10 +51,15 @@ def plan_preview(user: User = Depends(get_current_user), db: Session = Depends(g
 
 @router.post('/plan/confirm')
 def plan_confirm(payload: ConfirmIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    plan = study_planner.preview(db, user.id)
-    if payload.fingerprint != plan['fingerprint']:
-        raise HTTPException(409, '任务或预算已经变化，请重新预览')
-    if plan['conflicts']:
-        raise HTTPException(409, '有任务无法在考试前安排，请先调整预算或任务')
-    study_planner.apply(db, user.id, plan)
-    return {'ok': True}
+    try:
+        lock_schedule(db, user.id, auth_key=user.auth_key)
+        plan = study_planner.preview(db, user.id)
+        if payload.fingerprint != plan['fingerprint']:
+            raise HTTPException(409, '任务、考试或预算已经变化，请重新预览')
+        if plan['conflicts']:
+            raise HTTPException(409, '有任务无法在考试前安排，请先调整预算或任务')
+        study_planner.apply(db, user.id, plan)
+        return {'ok': True}
+    except Exception:
+        db.rollback()
+        raise

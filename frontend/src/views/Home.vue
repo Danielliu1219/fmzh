@@ -402,6 +402,7 @@
           ><el-input-number
             id="daily-budget"
             v-model="budgetHours"
+            :disabled="planningBusy"
             :min="0.5"
             :max="16"
             :step="0.5"
@@ -417,6 +418,7 @@
         <el-button type="primary" :loading="planningBusy" @click="previewPlan"
           >预览全科排程</el-button
         >
+        <p v-if="planNotice" class="budget-note" role="status">{{ planNotice }}</p>
         <div v-if="planPreview" class="plan-preview">
           <div
             v-if="planPreview.conflicts.length"
@@ -740,6 +742,7 @@ const planningVisible = ref(false),
   planningBusy = ref(false),
   budgetHours = ref(4),
   planPreview = ref(null)
+const planNotice = ref('')
 const budgetDraft = useDialogDraft(() => ({hours:budgetHours.value}),planningVisible,planningBusy,'全科时间预算')
 const selectTask = (task) => {
   if (focusStarted.value && task?.id !== selectedTaskId.value) {
@@ -783,6 +786,7 @@ const openPlanning = () => {
   }
   budgetHours.value = dailyBudget.value / 60
   planPreview.value = null
+  planNotice.value = ''
   planningVisible.value = true
 }
 const saveBudget = async () => {
@@ -824,6 +828,7 @@ const previewPlan = async () => {
     return
   }
   planningBusy.value = true
+  planNotice.value = ''
   try {
     planPreview.value = USE_MOCK
       ? buildStudyPlan(tasks.value, exams.value, dailyBudget.value, getToday())
@@ -866,8 +871,14 @@ const confirmPlan = async () => {
     }
     planningVisible.value = false
     ElMessage.success('全科计划已更新，回到清单开始复习')
-  } catch {
+  } catch (failure) {
     planPreview.value = null
+    if (!USE_MOCK && failure.response?.status === 409) {
+      planNotice.value = '任务、考试或预算已变化，旧预览已失效。请核对当前预算，重新预览后确认。'
+      await load()
+      budgetHours.value = dailyBudget.value / 60
+      budgetDraft.capture()
+    }
   } finally {
     planningBusy.value = false
   }

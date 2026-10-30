@@ -16,6 +16,8 @@ from ..models.models import (
 
 def delete_exam(db: Session, user_id: int, exam_id: int):
     try:
+        from .task_conflicts import lock_schedule
+        lock_schedule(db, user_id)
         # 先取得写锁，再读取关联集合，防并发创建子记录漏删。
         locked = db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user_id).update(
             {Exam.id: exam_id}, synchronize_session=False)

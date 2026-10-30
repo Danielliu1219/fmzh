@@ -5,15 +5,28 @@ from collections import defaultdict
 from sqlalchemy import or_
 
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
-from ..models.models import Task
+from ..models.models import Exam, Task
 from . import study_planner
+from .task_conflicts import lock_schedule
 
 
 def create_tasks_from_plan(
-    db: Session, user_id: int, exam_id: int, analysis_id: int, plan_items: list
+    db: Session, user_id: int, exam_id: int, analysis_id: int, plan_items: list, *, commit: bool = True
 ) -> dict:
     """保留完成记录，替换本科未完成 AI 任务；全科容量不足时回滚并返回原因。"""
+    try:
+        lock_schedule(db, user_id)
+        if db.query(Exam.id).filter(Exam.id == exam_id, Exam.user_id == user_id).first() is None:
+            raise HTTPException(404, '考试不存在或已删除')
+        return _replace_tasks(db, user_id, exam_id, analysis_id, plan_items, commit=commit)
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _replace_tasks(db, user_id, exam_id, analysis_id, plan_items, *, commit):
     transaction = db.begin_nested()
     completed = defaultdict(int)
     for task in db.query(Task).filter(Task.user_id == user_id, Task.exam_id == exam_id, Task.source == 'ai', or_(Task.is_done.is_(True), Task.start_time.is_not(None))).all():
@@ -57,5 +70,6 @@ def create_tasks_from_plan(
     else:
         study_planner.apply(db, user_id, plan, commit=False)
         transaction.commit()
+    if commit:
         db.commit()
     return {'created': count if not plan['conflicts'] else 0, 'applied': not plan['conflicts'], 'conflicts': plan['conflicts']}

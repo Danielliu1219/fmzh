@@ -52,6 +52,14 @@ def detect_candidates(db, user_id, items, exclude_task_id=None):
     return find_overlaps(rows.all(), items, subjects)
 
 
-def lock_schedule(db, user_id):
-    # 所有科目创建/改期和 ICS 确认使用同一账号写锁，重验与写入处于同一事务。
-    db.query(User).filter(User.id == user_id).update({User.id: user_id}, synchronize_session=False)
+def lock_schedule(db, user_id, *, auth_key=None):
+    """变更前取得账号锁；重读数据库状态，直到调用者提交或回滚才释放。"""
+    from fastapi import HTTPException
+    query = db.query(User).filter(User.id == user_id)
+    if auth_key is not None:
+        query = query.filter(User.auth_key == auth_key)
+    if query.update({User.id: user_id}, synchronize_session=False) != 1:
+        raise HTTPException(401, '登录已失效，请重新登录')
+    # 等待锁期间其他事务可能已提交；不能沿用Session中预先读取的旧对象。
+    # 调用者必须先锁后改，避免expire_all丢弃尚未flush的字段修改。
+    db.expire_all()

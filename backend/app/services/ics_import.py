@@ -76,10 +76,8 @@ def confirm_import(db, user, token):
     except (jwt.InvalidTokenError, ValueError, KeyError):
         raise HTTPException(409, "导入预览已失效，请重新选择文件预览")
     try:
-        locked = db.query(User).filter(User.id == user.id, User.auth_key == user.auth_key).update(
-            {User.auth_key: user.auth_key}, synchronize_session=False)
-        if not locked:
-            raise HTTPException(401, "登录已失效")
+        from .task_conflicts import lock_schedule
+        lock_schedule(db, user.id, auth_key=user.auth_key)
         receipt = db.get(IcsImportReceipt, payload['import_key'])
         if receipt:
             db.rollback()
