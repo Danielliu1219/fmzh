@@ -7,8 +7,29 @@ from .mistakes import question_key
 from ..models.models import Collection, Task
 
 
+LEGACY_ACCOUNT_COLUMNS = {
+    'users': {
+        'class_name': "VARCHAR(32) NOT NULL DEFAULT ''",
+        'avatar': "VARCHAR(16) NOT NULL DEFAULT ''",
+        'is_admin': 'BOOLEAN NOT NULL DEFAULT 0',
+        'is_banned': 'BOOLEAN NOT NULL DEFAULT 0',
+        'failed_attempts': 'INTEGER NOT NULL DEFAULT 0',
+        'locked_until': 'DATETIME',
+    },
+    'exams': {'color': "VARCHAR(16) NOT NULL DEFAULT ''"},
+}
+
+
 def upgrade_schema(engine):
     with engine.begin() as conn:
+        # create_all只补缺表；旧账号/考试表也必须显式补齐后来新增的字段。
+        for table, additions in LEGACY_ACCOUNT_COLUMNS.items():
+            if not inspect(conn).has_table(table):
+                continue
+            columns = {c['name'] for c in inspect(conn).get_columns(table)}
+            for name, sql_type in additions.items():
+                if name not in columns:
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {sql_type}'))
         if inspect(conn).has_table('tasks'):
             columns = {c['name'] for c in inspect(conn).get_columns('tasks')}
             additions = {

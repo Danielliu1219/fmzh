@@ -7,9 +7,10 @@
         <h1>期末周别慌<span class="coral-mark">！</span></h1>
         <p class="slogan">资料给你 · 计划给你 · 高分也给你</p>
       </div>
-      <el-tabs v-model="tab" stretch class="tabs">
+      <el-alert v-if="USE_MOCK" title="当前为界面演示" description="无需注册或登录，请使用下方免登录预览。创建并保存账号请使用本地完整应用。" type="info" :closable="false" show-icon />
+      <el-tabs v-else v-model="tab" stretch class="tabs">
         <el-tab-pane label="登录" name="login">
-          <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" @keyup.enter="onLogin">
+          <el-form ref="loginFormRef" :model="loginForm" :rules="loginRules" @submit.prevent @keyup.enter="onLogin">
             <el-form-item prop="username">
               <el-input v-model="loginForm.username" placeholder="账号" size="large">
                 <template #prefix><el-icon><User /></el-icon></template>
@@ -29,7 +30,7 @@
           </el-form>
         </el-tab-pane>
         <el-tab-pane label="注册" name="register">
-          <el-form ref="registerFormRef" :model="registerForm" :rules="registerRules" @keyup.enter="onRegister">
+          <el-form ref="registerFormRef" :model="registerForm" :rules="registerRules" @submit.prevent @keyup.enter="onRegister">
             <el-form-item prop="username">
               <el-input v-model="registerForm.username" placeholder="账号（3-20位字母数字下划线）" size="large" />
             </el-form-item>
@@ -152,12 +153,15 @@ const registerRules = {
 }
 
 const onLogin = async () => {
-  await loginFormRef.value.validate()
+  if (USE_MOCK || loading.value) return
+  if (!await loginFormRef.value.validate().catch(() => false) || loading.value) return
   loading.value = true
   try {
     await userStore.login(loginForm.username, loginForm.password)
     ElMessage.success(`欢迎回来，${userStore.displayName}`)
     router.push('/')
+  } catch {
+    // 请求拦截器已显示错误；保留输入以便修正或重试。
   } finally {
     loading.value = false
   }
@@ -173,7 +177,8 @@ const onDemoLogin = async () => {
 }
 
 const onRegister = async () => {
-  await registerFormRef.value.validate()
+  if (USE_MOCK || loading.value) return
+  if (!await registerFormRef.value.validate().catch(() => false) || loading.value) return
   loading.value = true
   try {
     await userStore.register({
@@ -185,6 +190,8 @@ const onRegister = async () => {
     })
     ElMessage.success('注册成功，已自动登录')
     router.push('/')
+  } catch {
+    // 不把校验/网络错误变成未处理的Promise，输入留在表单中。
   } finally {
     loading.value = false
   }

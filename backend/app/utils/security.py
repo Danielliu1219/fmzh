@@ -1,5 +1,7 @@
 """认证工具：密码哈希、JWT、获取当前用户"""
 from datetime import datetime, timedelta, timezone
+import base64
+import hashlib
 from hmac import compare_digest
 from uuid import uuid4
 
@@ -17,11 +19,20 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    raw = password.encode('utf-8')
+    # pyca/bcrypt文档的长输入方案；加版本标记，旧bcrypt密码仍可正常验证。
+    # https://github.com/pyca/bcrypt#maximum-password-length
+    if len(raw)>72:
+        encoded = base64.b64encode(hashlib.sha256(raw).digest())
+        return 'bcrypt-sha256$'+bcrypt.hashpw(encoded,bcrypt.gensalt()).decode('utf-8')
+    return bcrypt.hashpw(raw, bcrypt.gensalt()).decode('utf-8')
 
 
 def verify_password(password: str, hashed: str) -> bool:
     try:
+        if hashed.startswith('bcrypt-sha256$'):
+            encoded = base64.b64encode(hashlib.sha256(password.encode('utf-8')).digest())
+            return bcrypt.checkpw(encoded,hashed.removeprefix('bcrypt-sha256$').encode('utf-8'))
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except ValueError:
         return False
