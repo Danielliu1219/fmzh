@@ -804,13 +804,30 @@ class TimeSlot(BaseModel):
     end: str                # HH:MM
     minutes: int            # 该时段建议复习分钟数
     focus: str = ""         # 建议内容方向
+    history_minutes: int = 0
+    study_days: int = 0
+    reason: str = ""
 
 
 class TimeSlotOut(BaseModel):
-    daily_hours: float              # 画像里的每日可用时长
+    daily_hours: float              # 全科共享预算折算小时；保留旧响应字段
     learning_status: str | None = None  # weak / medium / good
     slots: list[TimeSlot] = []
     note: str = ""
+    daily_minutes: int
+    mode: str
+    scope: str
+    exam_id: int | None = None
+    window_start: str
+    window_end: str
+    timezone: str
+    session_count: int
+    study_days: int
+    history_minutes: int
+    checkin_count: int
+    ignored_sessions: int
+    recommended_minutes: int
+    unallocated_minutes: int
 
 
 class ReliefMove(BaseModel):

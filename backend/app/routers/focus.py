@@ -20,6 +20,7 @@ from ..schemas.schemas import (
 )
 from ..utils.security import get_current_user
 from ..services.study_planner import daily_budget
+from ..services.timeslots import CHINA, local_time
 
 router = APIRouter()
 
@@ -69,8 +70,12 @@ def create_session(
         if exam is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="考试不存在")
 
-    end_time = payload.end_time or datetime.now()
-    start_time = payload.start_time or (end_time - timedelta(minutes=payload.duration_minutes))
+    now = datetime.now(CHINA).replace(tzinfo=None)
+    end_time = local_time(payload.end_time) if payload.end_time else now
+    start_time = local_time(payload.start_time) if payload.start_time else (end_time - timedelta(minutes=payload.duration_minutes))
+    if (end_time <= start_time or end_time > now + timedelta(seconds=5)
+            or abs((end_time-start_time).total_seconds()/60-payload.duration_minutes) > 1):
+        raise HTTPException(status_code=422, detail="专注起止需与记录分钟一致，且不能晚于当前时间")
 
     session = FocusSession(
         user_id=user.id,

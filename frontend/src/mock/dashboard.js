@@ -180,6 +180,13 @@ export const mockDashboard = {
 }
 
 // 演示操作在本次页面会话内保留，刷新浏览器后恢复初始示例。
+const sampleFocusSessions = () => [
+  ...['2026-09-05', '2026-09-06', '2026-09-07'].flatMap(day => ['09:00', '19:00'].map(time => ({
+    exam_id: 1, duration_minutes: 25, start_time: `${day}T${time}:00+08:00`,
+    end_time: `${day}T${time.slice(0, 2)}:25:00+08:00`,
+  }))),
+  { exam_id: 2, duration_minutes: 25, start_time: '2026-09-07T14:00:00+08:00', end_time: '2026-09-07T14:25:00+08:00' },
+]
 export const mockStudySession = {
   tasks: structuredClone(mockTasks),
   exams: structuredClone(mockDashboard.exams),
@@ -191,10 +198,12 @@ export const mockStudySession = {
     session_count: 3,
     by_exam: [],
   },
+  sessions: sampleFocusSessions(),
   scenario: 'normal',
 }
 export function setMockScenario(key) {
   mockStudySession.scenario = key
+  mockStudySession.sessions = key === 'new' ? [] : sampleFocusSessions()
   mockStudySession.exams =
     key === 'new' ? [] : structuredClone(mockDashboard.exams)
   mockStudySession.daily_minutes = 240
@@ -395,43 +404,6 @@ export const mockTop3 = {
       estimated_minutes: 45,
       score: 61.5,
       reason: '距大学英语考试 11 天',
-    },
-  ],
-  note: '',
-}
-
-// 学习时段推荐（模块 7.5）演示数据：按每日可用 4 小时分配到四个时段
-export const mockTimeslots = {
-  daily_hours: 4,
-  learning_status: 'medium',
-  slots: [
-    {
-      name: '早晨',
-      start: '07:30',
-      end: '09:00',
-      minutes: 70,
-      focus: '攻坚薄弱环节：极限与连续',
-    },
-    {
-      name: '上午',
-      start: '09:00',
-      end: '11:30',
-      minutes: 70,
-      focus: '主攻高频重点（极限与连续 等）',
-    },
-    {
-      name: '下午',
-      start: '14:00',
-      end: '16:30',
-      minutes: 50,
-      focus: '刷题练习，巩固当天所学',
-    },
-    {
-      name: '晚上',
-      start: '19:00',
-      end: '21:00',
-      minutes: 50,
-      focus: '回顾重点 + 整理错题',
     },
   ],
   note: '',
