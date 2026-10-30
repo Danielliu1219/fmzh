@@ -54,7 +54,7 @@
       </el-card>
 
       <el-card shadow="never">
-        <el-table ref="examTable" :data="exams" row-key="id" highlight-current-row v-loading="loading" empty-text="还没有课程，点右上角添加">
+        <el-table ref="examTable" :data="filteredExams" row-key="id" highlight-current-row v-loading="loading" empty-text="还没有课程，点右上角添加">
           <el-table-column type="expand">
             <template #default="{ row }">
               <div class="task-panel">
@@ -138,44 +138,8 @@
       </el-card>
     </template>
 
-    <!-- ==================== 备考日历视图（2.9）：拖拽任务卡片改期 ==================== -->
-    <el-card v-else shadow="never">
-      <el-calendar v-model="calDate">
-        <template #date-cell="{ data }">
-          <div
-            class="cal-cell"
-            :class="{ today: data.isSelected }"
-            @dragover.prevent
-            @drop="onDropToDate($event, data.day)"
-          >
-            <div class="cal-date-num">{{ Number(data.day.split('-')[2]) }}</div>
-            <div v-if="examsOn(data.day).length" class="cal-exams">
-              <div v-for="e in examsOn(data.day)" :key="e.id" class="cal-exam" :style="{ background: examColor(e).soft, borderColor: examColor(e).color }">
-                📝 {{ e.subject }}
-              </div>
-            </div>
-            <div
-              v-for="t in tasksOn(data.day).slice(0, 3)"
-              :key="t.id"
-              class="cal-task"
-              :class="{ done: t.is_done }"
-              :style="{ borderLeftColor: examColorById(t.exam_id).color }"
-              draggable="true"
-              :title="`${t.title}（${t.estimated_minutes} 分钟）— 拖拽到其他日期可改期`"
-              @dragstart="onDragTaskStart($event, t)"
-              @click="openTaskDialog(t)"
-            >
-              {{ t.title }}
-            </div>
-            <div v-if="tasksOn(data.day).length > 3" class="cal-more">等 {{ tasksOn(data.day).length }} 项任务…</div>
-          </div>
-        </template>
-      </el-calendar>
-      <div class="cal-legend">
-        <span><i class="legend-dot" style="background: var(--coral)" /> 考试日</span>
-        <span>拖拽改期时检查固定时段重叠与全科日预算</span>
-      </div>
-    </el-card>
+    <StudyCalendar v-else :tasks="tasks" :exams="exams" :today="getToday()" :busy="calendarMoving" :loading="loading" :feedback="calendarFeedback"
+      @move="onCalendarMove" @edit="openTaskDialog" @edit-exam="openDialog" @create="createCalendarTask" @clear-feedback="calendarFeedback = {}" />
 
     <!-- 课程编辑对话框（含科目颜色 2.11） -->
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑课程' : '添加课程'" width="460px">
@@ -330,15 +294,15 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ReminderDialog from '../components/ReminderDialog.vue'
+import StudyCalendar from '../components/StudyCalendar.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { examApi, taskApi, studyApi } from '../api'
+import { examApi, taskApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { examColor, SUBJECT_PALETTE } from '../utils/subjectColor'
 import { buildTaskPreview, difficultyLabels, mockTaskInstances, normalizeTask, repeatLabels, taskRepeatLabel, taskTimeLabel, timeDuration } from '../utils/taskDetails'
 import { describeOverlap, findTaskOverlaps } from '../utils/taskConflicts'
 
-// 2.11 全站统一科目配色：任务/日历只有 exam_id 时先找考试再取色
-const examColorById = (examId) => examColor(exams.value.find((e) => e.id === examId))
+import { applyMockCalendarMove, moveCandidate, previewCalendarMove } from '../utils/calendar.js'
 
 const viewMode = ref('list')
 const route = useRoute(), examTable = ref()
@@ -361,6 +325,8 @@ const formRef = ref()
 
 // 2.4 筛选条件
 const filter = reactive({ subject: '', range: null })
+const filteredExams = computed(() => exams.value.filter(exam => (!filter.subject || exam.subject.toLowerCase().includes(filter.subject.trim().toLowerCase())) &&
+  (!filter.range?.length || (exam.exam_date >= filter.range[0] && exam.exam_date <= filter.range[1]))))
 
 const emptyForm = () => ({
   id: null,
@@ -384,13 +350,7 @@ const load = async () => {
     if (USE_MOCK) {
       exams.value = structuredClone(mockStudySession.exams)
     } else {
-      const params = {}
-      if (filter.subject) params.subject = filter.subject
-      if (filter.range?.length === 2) {
-        params.date_from = filter.range[0]
-        params.date_to = filter.range[1]
-      }
-      exams.value = await examApi.list(params)
+      exams.value = await examApi.list() // 保留全科上下文，科目列表筛选仅影响展示。
     }
     await loadTasks()
     await revealTarget()
@@ -503,31 +463,6 @@ const openTaskDialog = (task, exam) => {
     repeat_rule: task?.repeat_rule || 'none', repeat_until: task?.repeat_until || null, repeat_group_id: task?.repeat_group_id || null,
   })
   taskDialogVisible.value = true
-}
-
-// 2.8 冲突检测：保存前预检，当天总时长超上限时提醒（可选择仍要保存）
-const confirmNoConflict = async (payload, excludeId) => {
-  const limit = USE_MOCK ? mockStudySession.daily_minutes : (await studyApi.settings()).daily_minutes
-  const existing = tasks.value.filter(t => t.plan_date === payload.plan_date && t.id !== excludeId).reduce((sum, t) => sum + t.estimated_minutes, 0)
-  const overlaps = USE_MOCK ? findTaskOverlaps(tasks.value.filter(t => t.id !== excludeId), [payload], exams.value) : []
-  const res = USE_MOCK ? { budget_exceeded: existing + payload.estimated_minutes > limit, overlaps, existing_minutes: existing, planned_minutes: existing + payload.estimated_minutes, limit_minutes: limit } : await taskApi.checkConflict({
-    plan_date: payload.plan_date,
-    estimated_minutes: payload.estimated_minutes,
-    exclude_task_id: excludeId || undefined,
-    daily_limit_minutes: limit,
-    start_time: payload.start_time || null, end_time: payload.end_time || null, exam_id: payload.exam_id, title: payload.title,
-  })
-  if (res.overlaps?.length) {
-    await ElMessageBox.alert(res.overlaps.slice(0, 8).map(o => `${o.date}：${describeOverlap(o)}`).join('\n'), '时段重叠，请调整', { type: 'warning', customStyle: { whiteSpace: 'pre-line' } })
-    throw new Error('时段重叠')
-  }
-  if (res.budget_exceeded) {
-    await ElMessageBox.confirm(
-      `「${payload.plan_date}」当天已安排 ${res.existing_minutes} 分钟，加上本任务共 ${res.planned_minutes} 分钟，超过每日上限 ${res.limit_minutes} 分钟。仍要保存吗？`,
-      '日程冲突提醒',
-      { type: 'warning', confirmButtonText: '仍要保存', cancelButtonText: '返回调整' },
-    )
-  }
 }
 
 const onSaveTask = async () => {
@@ -722,40 +657,45 @@ const onExportIcs = async () => {
   }
 }
 
-// ==================== 备考日历（2.9） ====================
-const calDate = ref(new Date(`${getToday()}T12:00:00`))
-const dragTask = ref(null)
-
-const tasksOn = (day) => tasks.value.filter((t) => t.plan_date === day)
-const examsOn = (day) => exams.value.filter((e) => e.exam_date === day)
-
-const onDragTaskStart = (ev, t) => {
-  dragTask.value = t
-  ev.dataTransfer.effectAllowed = 'move'
+// ==================== 日历单项移动（2.9） ====================
+const calendarMoving = ref(false), calendarFeedback = ref({})
+const createCalendarTask = (day, examId) => {
+  openTaskDialog(null, exams.value.find(e => e.id === examId) || exams.value[0])
+  taskForm.plan_date = day
 }
-
-const onDropToDate = async (ev, day) => {
-  const t = dragTask.value
-  dragTask.value = null
-  if (!t || t.plan_date === day) return
-  if (USE_MOCK) {
-    if (day > exams.value.find(e => e.id === t.exam_id)?.exam_date) { ElMessage.warning('任务日期不能晚于考试日期'); return }
-    try { await confirmNoConflict({ ...t, plan_date: day }, t.id) } catch { return }
-    t.plan_date = day
-    t.repeat_group_id = null; t.repeat_rule = 'none'; t.repeat_until = null
-    ElMessage.success(`演示：任务已改期到 ${day}`)
-    return
-  }
+const onCalendarMove = async proposal => {
+  if (calendarMoving.value) return
+  calendarMoving.value = true
+  calendarFeedback.value = {}
+  const task = tasks.value.find(t => t.id === proposal.task_id)
+  let writeAttempted = false
   try {
-    await confirmNoConflict({ ...t, plan_date: day }, t.id)
-  } catch {
-    return // 用户选择「返回调整」
-  }
-  try {
-    const updated = await taskApi.update(t.id, { plan_date: day })
-    Object.assign(t, updated)
-    ElMessage.success(`「${t.title.slice(0, 12)}…」已改期到 ${day}`)
-  } catch { /* 接口统一展示错误，保留原日期。 */ }
+    if (!task) throw new Error('任务已变化，请刷新后重试')
+    moveCandidate(task, proposal) // 本地检查分钟边界，最终以服务端快照和重验为准。
+    const { task_id, ...request } = proposal
+    const preview = USE_MOCK ? previewCalendarMove(task, proposal, tasks.value, exams.value, mockStudySession.daily_minutes)
+      : await taskApi.previewMove(task_id, request)
+    if (!preview.can_save) throw new Error('未移动，时段重叠：' + preview.overlaps.slice(0, 4).map(describeOverlap).join('；'))
+    let allowOverBudget = false
+    if (preview.changed && preview.budget_exceeded) {
+      await ElMessageBox.confirm(`${request.plan_date} 全科共 ${preview.planned_minutes} 分钟，超过日预算 ${preview.limit_minutes} 分钟。确认保留这次超额安排？`, '核对日预算', { confirmButtonText: '确认保留超额安排', cancelButtonText: '取消移动', type: 'warning' })
+      allowOverBudget = true
+    }
+    writeAttempted = !USE_MOCK
+    const updated = USE_MOCK ? applyMockCalendarMove(task, proposal, tasks.value, exams.value, mockStudySession.daily_minutes, allowOverBudget)
+      : await taskApi.move(task_id, { ...request, allow_over_budget: allowOverBudget })
+    const current = tasks.value.find(t => t.id === task_id)
+    if (current) Object.assign(current, updated)
+    calendarFeedback.value = { status: 'success', task_id, message: `已保存：${updated.title}，${updated.plan_date} · ${taskTimeLabel(updated)}，保留 ${updated.estimated_minutes} 分钟。` }
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') { calendarFeedback.value = { status: 'info', message: '已取消移动，保留原安排。' }; return }
+    const detail = error?.response?.data?.detail
+    let message = detail?.message || (typeof detail === 'string' ? detail : error?.message) || '未能确认移动结果，请刷新核对'
+    if (writeAttempted && !error?.response) message = '连接中断，未能确认移动结果，请刷新核对'
+    if (detail?.overlaps?.length) message += '：' + detail.overlaps.slice(0, 4).map(describeOverlap).join('；')
+    calendarFeedback.value = { status: 'error', message }
+    if (!USE_MOCK && (error?.response || writeAttempted)) await loadTasks().catch(() => {})
+  } finally { calendarMoving.value = false }
 }
 
 watch(tasks, value=>{if(USE_MOCK)mockStudySession.tasks=JSON.parse(JSON.stringify(value))},{deep:true,flush:'sync'})
@@ -857,64 +797,5 @@ onMounted(load)
   line-height: 1.7;
 }
 
-/* 备考日历 */
-.cal-cell {
-  min-height: 78px;
-  cursor: default;
-}
-.cal-date-num {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-mid);
-}
-.cal-exam {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ink-1);
-  border: 1px solid;
-  border-radius: 4px;
-  padding: 0 4px;
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cal-task {
-  font-size: 11px;
-  color: var(--text-hi);
-  background: var(--bg-page);
-  border-left: 3px solid var(--coral);
-  border-radius: 3px;
-  padding: 1px 4px;
-  margin-top: 3px;
-  cursor: grab;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cal-task.done {
-  text-decoration: line-through;
-  color: var(--text-low);
-  opacity: 0.6;
-}
-.cal-more {
-  font-size: 11px;
-  color: var(--text-low);
-  margin-top: 2px;
-}
-.cal-legend {
-  display: flex;
-  gap: 18px;
-  font-size: 12.5px;
-  color: var(--text-low);
-  margin-top: 10px;
-  align-items: center;
-}
-.legend-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 4px;
-}
+@media (max-width: 800px) { .page-head { flex-wrap: wrap; } .head-sub { flex-basis: 100%; } }
 </style>

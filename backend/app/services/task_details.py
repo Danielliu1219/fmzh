@@ -1,11 +1,19 @@
 """任务时段与有限重复规则；全部按北京时间、同日整分钟处理。"""
 import re
+import hashlib
+import json
 from datetime import date, time, timedelta
 
 REPEAT_RULES = {'none', 'daily', 'weekdays', 'weekly'}
 DETAIL_FIELDS = ('start_time', 'end_time', 'location', 'difficulty', 'detail')
 SNAPSHOT_FIELDS = ('id', 'exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', 'source', 'is_done',
                    *DETAIL_FIELDS, 'repeat_rule', 'repeat_until', 'repeat_group_id')
+
+
+def move_fingerprint(task):
+    fields = (*SNAPSHOT_FIELDS, 'created_at', 'done_at')
+    snapshot = {key: getattr(task, key, None) for key in fields}
+    return hashlib.sha256(json.dumps(snapshot, default=str, sort_keys=True).encode()).hexdigest()
 
 
 def task_time(value):

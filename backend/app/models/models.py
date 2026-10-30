@@ -169,6 +169,11 @@ class Task(Base):
     source = Column(String(16), default="ai")  # ai / manual
     created_at = Column(DateTime, default=datetime.now)
 
+    @property
+    def move_fingerprint(self):
+        from ..services.task_details import move_fingerprint
+        return move_fingerprint(self)
+
 
 class MoodRecord(Base):
     """每日情绪记录（模块 7.6）：每个用户每天一条，情绪自评 1~5"""

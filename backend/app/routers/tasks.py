@@ -13,11 +13,13 @@ from ..schemas.schemas import (
     TaskCreateOut,
     TaskPreviewRequest,
     TaskPreviewOut,
+    TaskMoveIn,
+    TaskMovePreviewOut,
     TaskOut,
     TaskUpdate,
 )
 from ..services.schedule_service import check_conflict
-from ..services import task_service
+from ..services import task_service, task_moves
 from ..services.study_planner import daily_budget
 from ..services.task_conflicts import detect_candidates, find_overlaps
 from ..services.task_details import timed_minutes
@@ -123,6 +125,16 @@ def update_task(
     db: Session = Depends(get_db),
 ):
     return task_service.update_task(db, user.id, task_id, payload)
+
+
+@router.post('/{task_id}/move/preview', response_model=TaskMovePreviewOut, summary='只读预览日历单项移动')
+def preview_move(task_id: int, payload: TaskMoveIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return task_moves.preview_move(db, user.id, task_id, payload)
+
+
+@router.post('/{task_id}/move', response_model=TaskOut, summary='保留时长移动任务，快照与冲突重验后保存')
+def move_task(task_id: int, payload: TaskMoveIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return task_moves.apply_move(db, user.id, task_id, payload)
 
 
 @router.post("/{task_id}/checkin", response_model=TaskOut, summary="打卡完成")
