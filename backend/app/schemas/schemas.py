@@ -719,12 +719,37 @@ class StatsOut(BaseModel):
 
 
 # ===================== 特色功能（模块 7）=====================
-class PressureOut(BaseModel):
+class PressureValue(BaseModel):
     score: float        # 0~100
     level: str          # 轻松 / 适中 / 偏压 / 高压
     suggestion: str
     breakdown: dict[str, float]
     need_emergency: bool # score >= 60，前端据此提示救急模式
+
+
+class DailyPressureOut(PressureValue):
+    record_date: date
+    computed_at: datetime
+    source: Literal['startup', 'scheduled']
+    formula_version: str
+
+
+class PressureOut(PressureValue):
+    date: date
+    computed_at: datetime
+    timezone: str = 'Asia/Shanghai'
+    daily_snapshot: DailyPressureOut | None = None
+    daily_status: Literal['ready', 'pending']
+
+
+class PressureHistoryOut(BaseModel):
+    window_start: date
+    window_end: date
+    timezone: str = 'Asia/Shanghai'
+    scheduled_time: str = '00:05'
+    items: list[DailyPressureOut]
+    missing_dates: list[date]
+    note: str
 
 
 class MoodSubmit(BaseModel):

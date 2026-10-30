@@ -117,6 +117,7 @@ export const focusApi = {
 
 export const featureApi = {
   pressure: () => request.get('/features/pressure'),
+  pressureHistory: (params) => request.get('/features/pressure/history', { params }),
   moodToday: () => request.get('/features/mood/today'),
   submitMood: (data) => request.post('/features/mood', data),
   emergency: (params) => request.get('/features/emergency', { params }),

@@ -4,17 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import models  # noqa: F401  确保表模型注册到 Base
 from .config import UPLOAD_DIR
-from .database import Base, engine
+from .database import Base, engine, SessionLocal
+from .services.daily_pressure import make_lifespan
 from .routers import admin, ai, auth, collections, dashboard, exams, features, focus, materials, notifications, study, tasks, quizzes
 from .services.schema_upgrade import upgrade_schema
 from .services.audit import AuditMiddleware
 
-# 创建缺失的表；新增预算 / 提醒表无需清空数据库或修改已有表的列。
+# 创建缺失的表；每日压力记录等新表无需清空数据库或修改已有表的列。
 Base.metadata.create_all(bind=engine)
 upgrade_schema(engine)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="期末周别慌！API", version="0.1.0")
+app = FastAPI(title="期末周别慌！API", version="0.1.0", lifespan=make_lifespan(SessionLocal))
 
 # 开发阶段放开跨域，部署时再收紧
 app.add_middleware(
@@ -41,4 +42,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["管理端"])
 
 @app.get("/health", summary="健康检查")
 def health():
-    return {"status": "ok"}
+    state = getattr(app.state, 'daily_pressure', {'running': False})
+    public = {key: state[key] for key in ('running', 'timezone', 'scheduled_time', 'poll_seconds', 'last_poll_at') if key in state}
+    public['degraded'] = bool(state.get('failed', 0))
+    return {"status": "ok", "daily_pressure": public}
