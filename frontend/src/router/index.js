@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '../views/Layout.vue'
 import { readSession } from '../utils/session'
+import { confirmPageLeave } from '../composables/usePendingWork'
 
 const routes = [
   { path: '/login', name: 'login', component: () => import('../views/Login.vue') },
@@ -42,6 +43,12 @@ router.beforeEach((to) => {
   if (to.meta.admin) {
     if (!user?.is_admin) return '/'
   }
+})
+
+router.beforeEach(async (to,from) => {
+  if(!readSession().token || !from.matched.some(r => r.path === '/')) return true
+  if(to.path === from.path && JSON.stringify(to.query) === JSON.stringify(from.query)) return true
+  return confirmPageLeave()
 })
 
 export default router

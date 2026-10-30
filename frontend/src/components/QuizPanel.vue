@@ -41,7 +41,7 @@
 </template>
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { usePendingWork, confirmAction } from '../composables/usePendingWork'
 import { quizApi } from '../api'
 import { USE_MOCK } from '../mock/dashboard'
 import { mockQuizHistory, mockQuizDetail, startMockQuiz, submitMockQuiz, saveMockQuizDraft } from '../mock/quizzes'
@@ -52,6 +52,8 @@ import QuizFeedback from './QuizFeedback.vue'
 const props = defineProps({ analysisId: { type: [Number,String], required:true }, questions: { type:Array, default:()=>[] }, subject: { type:String, default:'' } })
 const emit = defineEmits(['submitted'])
 const attempt=ref(null), answers=ref([]), current=ref(0), busy=ref(false), error=ref(''), history=ref([])
+const confirming=ref(false)
+usePendingWork(() => ({busy:busy.value || confirming.value ? '自测操作' : '', warning:attempt.value?.status==='active' && answered.value>0 ? '自测尚未提交，离开后可在当前浏览器继续作答；退出登录会清除本地草稿。' : ''}))
 const active=computed(()=>attempt.value?.questions[current.value])
 const hasAnswer=a=>Array.isArray(a) ? a.length>0 : typeof a==='string' && a.trim().length>0
 const answered=computed(()=>answers.value.filter(hasAnswer).length)
@@ -74,6 +76,8 @@ watch(answers,value=>{
 }, {deep:true,flush:'sync'})
 const refreshHistory=async()=>{history.value=USE_MOCK ? mockQuizHistory(props.analysisId) : await quizApi.history(props.analysisId)}
 const openAttempt=async id=>{
+  if(busy.value || confirming.value) return
+  if(attempt.value?.id!==id && attempt.value?.status==='active' && answered.value>0 && !await confirmAction('当前自测尚未提交，草稿会保留在当前浏览器。确认切换记录？','切换自测记录',{confirmButtonText:'切换记录',cancelButtonText:'继续作答'})) return
   busy.value=true; error.value=''
   try {restore(USE_MOCK ? mockQuizDetail(id) : await quizApi.detail(id))} catch {error.value='自测记录暂时无法读取，请重试。'} finally {busy.value=false}
 }
@@ -82,13 +86,20 @@ const loadHistory=async()=>{
   try {await refreshHistory(); if(history.value.length) restore(USE_MOCK ? mockQuizDetail(history.value[0].id) : await quizApi.detail(history.value[0].id))} catch {error.value='历史记录暂时无法读取，请重试。'} finally {busy.value=false}
 }
 const start=async()=>{
+  if(busy.value || confirming.value) return
   busy.value=true; error.value=''
   try {restore(USE_MOCK ? startMockQuiz(props.analysisId,props.subject,props.questions) : await quizApi.start(props.analysisId)); await refreshHistory()} catch {error.value='暂时无法开始自测，请稍后重试或重新生成分析。'} finally {busy.value=false}
 }
 const submit=async()=>{
-  if(answered.value<attempt.value.questions.length) {
-    try {await ElMessageBox.confirm(`还有 ${attempt.value.questions.length-answered.value} 道未作答，提交后将按答错计入错题本。确认提交？`,'提交自测',{confirmButtonText:'确认提交',cancelButtonText:'继续作答'})} catch {return}
-  }
+  if(busy.value || confirming.value || attempt.value?.status!=='active') return
+  confirming.value=true
+  let approved=false
+  try {approved=await confirmAction(answered.value<attempt.value.questions.length
+    ? `还有 ${attempt.value.questions.length-answered.value} 道未作答，提交后按答错计入错题本。确认提交并判分？`
+    : '提交后将正式判分、保存成绩并把错题收入错题本，本轮答案不能再修改。确认提交？',
+    '提交自测',{confirmButtonText:'确认提交',cancelButtonText:'继续作答'})}
+  finally {confirming.value=false}
+  if(!approved) return
   busy.value=true; error.value=''
   try {const result=USE_MOCK ? submitMockQuiz(attempt.value.id,answers.value) : await quizApi.submit(attempt.value.id,answers.value); localStorage.removeItem(draftKey()); restore(result); await refreshHistory(); emit('submitted')} catch {error.value='提交暂未完成，作答已保留。请重试；重复提交不会重复记分或添加错题。'} finally {busy.value=false}
 }

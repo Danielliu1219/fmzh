@@ -87,7 +87,7 @@
     </el-row>
 
     <!-- 修改密码（1.5） -->
-    <el-dialog v-model="pwdVisible" title="修改密码" width="400px">
+    <el-dialog v-model="pwdVisible" title="修改密码" width="400px" :before-close="passwordDraft.beforeClose" @closed="clearPassword">
       <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="90px">
         <el-form-item label="原密码" prop="old_password">
           <el-input v-model="pwdForm.old_password" type="password" show-password />
@@ -100,7 +100,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="pwdVisible = false">取消</el-button>
+        <el-button :disabled="pwdSaving" @click="passwordDraft.close">取消</el-button>
         <el-button type="primary" :loading="pwdSaving" @click="onChangePassword">确认修改</el-button>
       </template>
     </el-dialog>
@@ -109,6 +109,7 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { authApi } from '../api'
@@ -127,6 +128,11 @@ const pwdFormRef = ref()
 
 const form = reactive({ nickname: '', student_no: '', major: '', grade: '', class_name: '', avatar: '' })
 const pwdForm = reactive({ old_password: '', new_password: '', confirm: '' })
+const passwordDraft = useDialogDraft(pwdForm,pwdVisible,pwdSaving,'密码表单')
+const profileAction = useActionLock('账号安全操作')
+const savedForm = ref('')
+const clearPassword = () => {pwdForm.old_password=pwdForm.new_password=pwdForm.confirm=''}
+usePendingWork(() => ({busy:saving.value ? '个人资料保存' : '', warning:savedForm.value && JSON.stringify(form)!==savedForm.value ? '个人资料有未保存修改，离开会丢弃。' : ''}))
 const pwdRules = {
   old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
   new_password: [
@@ -149,6 +155,7 @@ const fillForm = (u) => {
   form.grade = u?.grade || ''
   form.class_name = u?.class_name || ''
   form.avatar = u?.avatar || ''
+  savedForm.value = JSON.stringify(form)
 }
 
 const load = async () => {
@@ -163,11 +170,14 @@ const load = async () => {
 }
 
 const onSave = async () => {
+  if(saving.value) return
   if (!form.nickname.trim()) {
     ElMessage.warning('姓名不能为空')
     return
   }
   if (USE_MOCK) {
+    userStore.applyUser({...userStore.user,...form})
+    savedForm.value=JSON.stringify(form)
     ElMessage.success('演示模式：资料仅保存在本地预览，不会提交后端')
     return
   }
@@ -176,6 +186,7 @@ const onSave = async () => {
     const updated = await authApi.updateMe({ ...form })
     userStore.applyUser(updated)
     user.value = updated
+    savedForm.value=JSON.stringify(form)
     ElMessage.success('资料已更新')
   } finally {
     saving.value = false
@@ -183,7 +194,10 @@ const onSave = async () => {
 }
 
 const onChangePassword = async () => {
+  return profileAction.run(async () => {
+  if(pwdSaving.value) return
   await pwdFormRef.value.validate()
+  if(!await confirmAction('修改密码后，已有登录会话将失效，需要重新登录；当前浏览器的自测草稿会清除。个人资料的未保存修改不会保存。确认修改？','修改密码',{confirmButtonText:'确认修改密码',cancelButtonText:'继续编辑'})) return
   pwdSaving.value = true
   try {
     if (USE_MOCK) {
@@ -203,10 +217,12 @@ const onChangePassword = async () => {
   } finally {
     pwdSaving.value = false
   }
+  })
 }
 
 // 1.7 注销账号：二次确认后调用后端清理全部数据并退出登录
 const onDeactivate = async () => {
+  return profileAction.run(async () => {
   if (USE_MOCK) {
     ElMessage.info('演示模式：注销操作需联调真实后端')
     return
@@ -221,6 +237,7 @@ const onDeactivate = async () => {
   userStore.logout()
   ElMessage.success('账号已注销，个人数据已清理')
   router.push('/login')
+  })
 }
 
 const formatDate = (v) => (v ? String(v).slice(0, 10) : '-')

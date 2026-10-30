@@ -3,6 +3,7 @@
     :model-value="modelValue"
     title="设置站内提醒"
     width="460px"
+    :before-close="reminderDraft.beforeClose"
     @update:model-value="$emit('update:modelValue', $event)"
   >
     <div v-loading="loading">
@@ -57,7 +58,7 @@
       />
     </div>
     <template #footer>
-      <el-button @click="$emit('update:modelValue', false)">取消</el-button>
+      <el-button :disabled="saving" @click="reminderDraft.close">取消</el-button>
       <el-button
         type="primary"
         :loading="saving"
@@ -70,6 +71,7 @@
 </template>
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import { useDialogDraft } from '../composables/usePendingWork'
 import { ElMessage } from 'element-plus'
 import {
   notifications,
@@ -94,6 +96,8 @@ const form = reactive({
   event_time: '09:00',
   advance_minutes: 15,
 })
+const reminderVisible = computed({get:() => props.modelValue,set:value => emit('update:modelValue',value)})
+const reminderDraft = useDialogDraft(form,reminderVisible,saving,'提醒设置')
 const dueLabel = computed(() =>
   detail.value && form.event_time && form.advance_minutes != null
     ? notificationTime(
@@ -120,6 +124,7 @@ watch(
       if (id === requestId) {
         detail.value = result
         Object.assign(form, result)
+        reminderDraft.capture()
       }
     } catch (e) {
       if (id === requestId) error.value = e.message || '提醒设置加载失败'
@@ -129,6 +134,7 @@ watch(
   },
 )
 async function save() {
+  if(saving.value) return
   saving.value = true
   try {
     await notifications.saveReminder(props.kind, props.targetId, {

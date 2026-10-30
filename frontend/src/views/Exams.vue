@@ -142,7 +142,7 @@
       @move="onCalendarMove" @edit="openTaskDialog" @edit-exam="openDialog" @create="createCalendarTask" @clear-feedback="calendarFeedback = {}" />
 
     <!-- 课程编辑对话框（含科目颜色 2.11） -->
-    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑课程' : '添加课程'" width="460px">
+    <el-dialog v-model="dialogVisible" :title="form.id ? '编辑课程' : '添加课程'" width="460px" :before-close="examDraft.beforeClose">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="科目" prop="subject">
           <el-input v-model="form.subject" placeholder="如：高等数学" />
@@ -177,13 +177,13 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button :disabled="saving" @click="examDraft.close">取消</el-button>
         <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
       </template>
     </el-dialog>
 
     <!-- 学习任务编辑对话框（2.6 编辑 / 2.5 添加复用，保存前 2.8 冲突检测） -->
-    <el-dialog v-model="taskDialogVisible" :title="taskForm.id ? '编辑本次任务' : '添加任务'" width="min(640px, 94vw)" :close-on-click-modal="!taskSaving" :close-on-press-escape="!taskSaving">
+    <el-dialog v-model="taskDialogVisible" :title="taskForm.id ? '编辑本次任务' : '添加任务'" width="min(640px, 94vw)" :close-on-click-modal="!taskSaving" :close-on-press-escape="!taskSaving" :before-close="taskDraft.beforeClose">
       <el-form ref="taskFormRef" :model="taskForm" :rules="taskRules" label-width="90px">
         <el-form-item label="所属科目" prop="exam_id">
           <el-select v-model="taskForm.exam_id" style="width: 100%" placeholder="选择科目">
@@ -223,7 +223,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="taskDialogVisible = false">取消</el-button>
+        <el-button :disabled="taskSaving" @click="taskDraft.close">取消</el-button>
         <el-button type="primary" :loading="taskSaving" @click="onSaveTask">保存</el-button>
       </template>
     </el-dialog>
@@ -292,6 +292,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRoute } from 'vue-router'
 import ReminderDialog from '../components/ReminderDialog.vue'
 import StudyCalendar from '../components/StudyCalendar.vue'
@@ -338,6 +339,8 @@ const emptyForm = () => ({
   color: '',
 })
 const form = reactive(emptyForm())
+const examDraft = useDialogDraft(form,dialogVisible,saving,'课程信息')
+const examAction = useActionLock('课程或任务操作')
 const rules = {
   subject: [{ required: true, message: '请输入科目', trigger: 'blur' }],
   exam_date: [{ required: true, message: '请选择考试日期', trigger: 'change' }],
@@ -379,6 +382,7 @@ const openDialog = (row) => {
 }
 
 const onSave = async () => {
+  if(saving.value) return
   await formRef.value.validate()
   saving.value = true
   try {
@@ -410,6 +414,7 @@ const onSave = async () => {
 }
 
 const onDelete = async (row) => {
+  return examAction.run(async () => {
   await ElMessageBox.confirm(
     `确定删除「${row.subject}」吗？相关任务、分析、自测和提醒将被删除；资料保留并转为未分类，专注时长保留在历史统计中。`,
     '删除确认',
@@ -424,6 +429,7 @@ const onDelete = async (row) => {
   await examApi.remove(row.id)
   ElMessage.success('已删除')
   load()
+  })
 }
 
 // ==================== 学习任务：添加（2.5 复用）/ 编辑（2.6）/ 冲突检测（2.8） ====================
@@ -431,6 +437,7 @@ const taskDialogVisible = ref(false)
 const taskSaving = ref(false)
 const taskFormRef = ref()
 const taskForm = reactive({ id: null, exam_id: null, title: '', plan_date: '', estimated_minutes: 60, priority: 2, timed: false, start_time: null, end_time: null, location: '', difficulty: 'medium', detail: '', repeat_rule: 'none', repeat_until: null, repeat_group_id: null })
+const taskDraft = useDialogDraft(taskForm,taskDialogVisible,taskSaving,'任务信息')
 const taskPreviewVisible = ref(false), taskPreview = ref(null), preparedTask = ref(null)
 const disabledRepeatDate = day => {
   const value = `${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`
@@ -525,30 +532,38 @@ const commitPreparedTask = async () => {
 }
 
 const onCheckin = async (t) => {
+  return examAction.run(async () => {
   if (!USE_MOCK) await taskApi.checkin(t.id)
   t.is_done = true
   if (USE_MOCK) t.done_at = `${getToday()}T12:00:00`
   ElMessage.success('已完成，继续保持！')
+  })
 }
 
 const onUncheckin = async (t) => {
+  return examAction.run(async () => {
   if (!USE_MOCK) await taskApi.uncheckin(t.id)
   t.is_done = false
   if (USE_MOCK) t.done_at = null
+  })
 }
 
 const onDeleteTask = async (t) => {
+  return examAction.run(async () => {
   try { await ElMessageBox.confirm(`确定只删除本次任务「${t.title}」吗？`, '删除确认', { type: 'warning' }) } catch { return }
   if (!USE_MOCK) await taskApi.remove(t.id)
   tasks.value = tasks.value.filter((x) => x.id !== t.id)
   ElMessage.success('已删除')
+  })
 }
 
 const onDeleteTaskSeries = async task => {
+  return examAction.run(async () => {
   try { await ElMessageBox.confirm(`删除「${task.title}」从 ${task.plan_date} 起尚未完成的重复任务？已完成记录和更早日期会保留。`, '删除后续重复项', { type: 'warning' }) } catch { return }
   if (USE_MOCK) tasks.value = tasks.value.filter(t => t.repeat_group_id !== task.repeat_group_id || t.is_done || t.plan_date < task.plan_date)
   else { await taskApi.removeSeries(task.id); await loadTasks() }
   ElMessage.success('后续未完成重复项已删除')
+  })
 }
 
 // ==================== 倒推生成备考时间表（2.7） ====================
@@ -564,6 +579,8 @@ const openPlanDialog = (row) => {
 }
 
 const onGeneratePlan = async () => {
+  return examAction.run(async () => {
+  if(planLoading.value || !await confirmAction('生成倒推计划会替换本科尚未完成且未定时的AI任务，并按全科预算统筹安排。手动任务、固定时段和已完成记录保留。确认生成？','确认生成计划',{confirmButtonText:'确认生成',cancelButtonText:'取消'})) return
   if (USE_MOCK) {
     ElMessage.info('演示模式：倒推计划需联调真实后端（LLM_MOCK=true 即可演示）')
     planDialogVisible.value = false
@@ -590,6 +607,7 @@ const onGeneratePlan = async () => {
   } finally {
     planLoading.value = false
   }
+  })
 }
 
 // ==================== ICS 导入（2.12）/ 导出（2.13） ====================
@@ -659,6 +677,7 @@ const onExportIcs = async () => {
 
 // ==================== 日历单项移动（2.9） ====================
 const calendarMoving = ref(false), calendarFeedback = ref({})
+usePendingWork(() => ({busy:[planLoading.value && '倒推计划生成',icsSaving.value && '日历导入',calendarMoving.value && '日历移动'].filter(Boolean)}))
 const createCalendarTask = (day, examId) => {
   openTaskDialog(null, exams.value.find(e => e.id === examId) || exams.value[0])
   taskForm.plan_date = day

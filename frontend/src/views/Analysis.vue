@@ -686,6 +686,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRoute } from 'vue-router'
 import { aiApi, examApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
@@ -729,6 +730,10 @@ const examId = ref(null)
 const selectedExam = computed(() => exams.value.find((exam) => exam.id === examId.value))
 const courseLoading = ref(false)
 const courseDrafts = new Map()
+const analysisBaseline = ref('')
+const analysisAction = useActionLock('复习分析确认或生成')
+const analysisSnapshot = () => JSON.stringify({raw:rawText.value,brief:{...brief},complete:{...completeForm}})
+const captureAnalysis = () => {analysisBaseline.value=analysisSnapshot(); if(activeExamId) courseDrafts.delete(activeExamId)}
 let activeExamId = null
 const step = ref(0)
 const rawText = ref('')
@@ -897,6 +902,7 @@ const onExtractProfile = async () => {
       })
     }
     completeForm.target_band = brief.target_band
+    captureAnalysis()
     step.value = 1
     if (profile.value.is_complete) ElMessage.success('画像提取完成')
     else ElMessage.warning('画像缺少部分信息，请补全')
@@ -916,6 +922,7 @@ const onCompleteProfile = async () => {
       supplement: buildSupplement(),
       target_band: missing.value.includes('target') ? completeForm.target_band : profile.value.target_band,
     })
+    captureAnalysis()
     if (profile.value.is_complete) ElMessage.success('画像已补全')
   } catch {
     /* 错误提示已由拦截器弹出，留在补全表单 */
@@ -1310,7 +1317,7 @@ const onReplanPreview = async () => {
 }
 
 const onReplanApply = async () => {
-  if (!replanPreview.value) return
+  if (replanApplying.value || !replanPreview.value) return
   replanApplying.value = true
   try {
     if (USE_MOCK) {
@@ -1338,7 +1345,9 @@ const onReplanApply = async () => {
 }
 
 const onAnalyze = async () => {
-  if (!examId.value) return
+  return analysisAction.run(async () => {
+  if (!examId.value || analyzing.value) return
+  if(!await confirmAction('生成分析会保存新的分析结果，并替换本科未完成且未定时的AI任务，按全科预算重排；手动任务、固定时段和已完成历史保留。确认生成？','生成复习分析',{confirmButtonText:'确认生成',cancelButtonText:'继续检查'})) return
   analyzing.value = true
   analyzeError.value = ''
   schedulingNote.value = ''
@@ -1426,6 +1435,7 @@ const onAnalyze = async () => {
   } finally {
     analyzing.value = false
   }
+  })
 }
 
 const onBackToDescribe = () => {
@@ -1440,7 +1450,7 @@ const backToProfile = () => {
 
 const onExamChange = async () => {
   // 未选课时的公共草稿带入第一门课；之后按课程保留草稿，避免串课。
-  if (activeExamId) courseDrafts.set(activeExamId, { brief: { ...brief }, rawText: rawText.value, profile: profile.value })
+  if (activeExamId) courseDrafts.set(activeExamId, { brief: { ...brief }, rawText: rawText.value, profile: profile.value, baseline:analysisBaseline.value, dirty:analysisBaseline.value !== analysisSnapshot() })
   const firstSelection = !activeExamId
   const hasPublicDraft = firstSelection && (rawText.value.trim() || brief.target_band !== 'D')
   activeExamId = examId.value
@@ -1506,11 +1516,13 @@ const onExamChange = async () => {
       }
     }
     await loadQa()
-  } finally { courseLoading.value = false }
+  } finally { courseLoading.value = false; analysisBaseline.value = draft?.baseline || analysisSnapshot() }
 }
 
 watch([examId, analysisId], loadMastery)
 watch([examId, analysisId], () => { evidenceVisible.value = false; evidenceData.value = null })
+
+usePendingWork(() => ({busy:[analyzing.value && '分析生成',profileLoading.value && '画像保存',replanApplying.value && '反馈重排',qaLoading.value && '资料问答'].filter(Boolean),warning:[analysisBaseline.value && analysisBaseline.value!==analysisSnapshot() && '备考描述或目标表单有未保存修改，离开会丢弃当前页面的草稿。',[...courseDrafts.values()].some(d => d.dirty) && '其他科目还有只保存在当前页面的备考草稿，离开会丢弃。',qaInput.value.trim() && '资料问答有尚未发送的文字，离开会丢弃。'].filter(Boolean)}))
 
 onMounted(async () => {
   window.addEventListener('resize', resizeMindmap)
@@ -1526,6 +1538,7 @@ onMounted(async () => {
     examId.value = requested
     await onExamChange()
   }
+  if(!analysisBaseline.value) analysisBaseline.value=analysisSnapshot()
 })
 
 watch([step, analysisId], async () => {

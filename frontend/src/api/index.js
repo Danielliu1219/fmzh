@@ -4,7 +4,7 @@ import request from './request'
 export const authApi = {
   register: (data) => request.post('/auth/register', data),
   login: (data) => request.post('/auth/login', data),
-  logout: () => request.post('/auth/logout'),
+  logout: (token) => request.post('/auth/logout', null, token ? {headers:{Authorization:`Bearer ${token}`}} : undefined),
   me: () => request.get('/auth/me'),
   updateMe: (data) => request.put('/auth/me', data),
   // 1.5 修改密码（登录态）
