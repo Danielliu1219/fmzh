@@ -8,7 +8,7 @@
     "test": "node --test tests/*.test.js",
     "build": "vite build",
     "build:app": "vite build --mode app --outDir dist-app",
-    "preview": "vite preview"
+    "preview": "vite preview --base /fmzh/"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

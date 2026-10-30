@@ -242,7 +242,7 @@ def weekly_report(
     ai = ai if isinstance(ai, dict) else {}
 
     by_subject = {}
-    for item in ai.get("subjects") or []:
+    for item in (ai.get('subjects') if isinstance(ai.get('subjects'),list) else []):
         if isinstance(item, dict):
             name = str(item.get("subject") or "").strip()
             if name:

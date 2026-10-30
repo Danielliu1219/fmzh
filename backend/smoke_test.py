@@ -8,12 +8,14 @@ import io
 import sys
 import argparse
 from datetime import date, timedelta
+from uuid import uuid4
 
 import httpx
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--base-url', default='http://127.0.0.1:8000')
 BASE = parser.parse_args().base_url.rstrip('/')
+TEST_USERNAME = 'smoke_'+uuid4().hex[:12]  # 每次独立账号，不复用/改写已有测试数据。
 client = httpx.Client(timeout=60)
 
 ok_count = 0
@@ -34,7 +36,7 @@ print("== 注册 ==")
 r = client.post(
     f"{BASE}/api/auth/register",
     json={
-        "username": "testuser",
+        "username": TEST_USERNAME,
         "password": "test123456",
         "nickname": "测试同学",
         "student_no": "20240001",
@@ -42,9 +44,6 @@ r = client.post(
         "grade": "2024级",
     },
 )
-if r.status_code == 409:
-    print("  [INFO] 账号已存在，改为登录")
-    r = client.post(f"{BASE}/api/auth/login", json={"username": "testuser", "password": "test123456"})
 check("注册/登录", r.status_code == 200, r.text)
 token = r.json()["access_token"]
 headers = {"Authorization": f"Bearer {token}"}
@@ -52,7 +51,7 @@ headers = {"Authorization": f"Bearer {token}"}
 # 2. 个人信息
 print("== 个人信息 ==")
 r = client.get(f"{BASE}/api/auth/me", headers=headers)
-check("GET /auth/me", r.status_code == 200 and r.json()["username"] == "testuser", r.text)
+check("GET /auth/me", r.status_code == 200 and r.json()["username"] == TEST_USERNAME, r.text)
 
 # 3. 录入考试（日期动态取 5 天后，任意日期运行均有效）
 print("== 考试 ==")
@@ -124,7 +123,7 @@ check("补全后画像完整", r.status_code == 200 and r.json()["is_complete"] 
 # 7. 生成复习分析
 print("== AI 分析 ==")
 r = client.post(f"{BASE}/api/ai/analyze", headers=headers, json={"exam_id": exam_id})
-check("生成分析", r.status_code == 200, r.text)
+check("生成分析并实际保存计划", r.status_code == 200 and r.json().get('scheduling',{}).get('applied') is True, r.text)
 result = r.json()["result"]
 check("含知识点权重", len(result["knowledge_points"]) >= 3, str(result))
 check("含常考点", len(result["exam_focus"]) >= 2, str(result))
@@ -248,7 +247,7 @@ check(
     r.text[:200],
 )
 
-# 12. 账号安全：锁定 / 找回 / 改密（独立账号，避免影响 testuser）
+# 12. 账号安全：锁定 / 找回 / 改密（独立账号，避免影响主流程账号）
 print("== 账号安全 ==")
 lock_user = "locktest01"
 r = client.post(

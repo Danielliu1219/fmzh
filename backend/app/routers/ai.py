@@ -159,7 +159,7 @@ def normalize_profile(data: dict) -> dict:
     data = data or {}
 
     def pick(value, allowed):
-        return value if value in allowed else None
+        return value if isinstance(value,str) and value in allowed else None
 
     weak_chapters = data.get("weak_chapters")
     weak_chapters = [str(x) for x in weak_chapters][:20] if isinstance(weak_chapters, list) else []
@@ -170,9 +170,13 @@ def normalize_profile(data: dict) -> dict:
 
     available_days = data.get("available_days")
     available_days = int(available_days) if isinstance(available_days, (int, float)) and not isinstance(available_days, bool) else None
+    if available_days is not None and not 0<available_days<=2147483647:
+        available_days = None
 
     daily_hours = data.get("daily_hours")
     daily_hours = float(daily_hours) if isinstance(daily_hours, (int, float)) and not isinstance(daily_hours, bool) else None
+    if daily_hours is not None and not 0<daily_hours<=24:
+        daily_hours = None
 
     profile = {
         "target": pick(data.get("target"), TARGETS),
