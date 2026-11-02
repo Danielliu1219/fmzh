@@ -36,11 +36,14 @@ class LocalUpstream:
                 item=outer.responses.popleft() if outer.responses else {'status':500,'payload':{'error':'unplanned test call'}}
                 time.sleep(item.get('delay',0))
                 data=item.get('raw',json.dumps(item.get('payload',{}),ensure_ascii=False).encode())
+                heartbeats=item.get('heartbeats',0)
                 try:
                     self.send_response(item.get('status',200))
                     self.send_header('Content-Type','application/json')
-                    self.send_header('Content-Length',str(len(data)))
+                    self.send_header('Content-Length',str(len(data)+heartbeats))
                     self.end_headers()
+                    for _ in range(heartbeats):
+                        self.wfile.write(b' ');self.wfile.flush();time.sleep(.02)
                     self.wfile.write(data)
                 except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):
                     pass
@@ -143,6 +146,12 @@ class LlmTransportTests(unittest.TestCase):
             with self.assertRaises(llm_client.LLMError):llm_client.chat_json('system','question')
         self.assertEqual(self.upstream.requests,[])
 
+    def test_total_deadline_cannot_be_extended_by_upstream_heartbeat_bytes(self):
+        self.upstream.add('answer after continuous heartbeats',heartbeats=50)
+        with patch.object(llm_client,'REQUEST_TIMEOUT',.08):
+            with self.assertRaisesRegex(llm_client.LLMError,'超时'):
+                llm_client.chat_text('system',[])
+
     def test_real_profile_http_success_persists_and_failure_preserves_previous(self):
         self.upstream.add(json.dumps({'target':'medium','learning_status':'medium','available_days':5,'daily_hours':2,'weak_chapters':['积分'],'output_need':[],'missing_fields':[]}))
         with patch.object(ai.prompts,'mock_extract_profile',side_effect=AssertionError('Mock path must not run')):
@@ -193,12 +202,14 @@ class LlmTransportTests(unittest.TestCase):
         before=self.state()
         for status in (401,429,503):
             self.upstream.add(status=status,raw=b'private upstream body')
+            if status in (429,503): self.upstream.add(status=status,raw=b'private upstream body')
             self.call('POST',path,{'content':'失败时不保留本条提问'},status=502)
             self.assertEqual(before,self.state())
             self.assertEqual(self.call('GET','/auth/me')['username'],'owner')
 
     def test_profile_timeout_returns_502_without_saving_partial_input(self):
         before=self.state()
+        self.upstream.add('delayed',delay=.12)
         self.upstream.add('delayed',delay=.12)
         with patch.object(llm_client,'REQUEST_TIMEOUT',.02):
             result=self.call('POST','/ai/profile',{'exam_id':1,'raw_text':'超时内容不落库'},status=502)
@@ -211,6 +222,7 @@ class LlmTransportTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         self.assertTrue(self.upstream.requests)
         self.upstream.add(status=503)
+        self.upstream.add(status=503)
         response=self.client.post('/api/reports/weekly',headers=self.headers,json={})
         self.assertEqual(response.status_code,502,response.text)
 
@@ -218,3 +230,11 @@ class LlmTransportTests(unittest.TestCase):
         self.upstream.add('{"summary":"已有统计仍可使用","subjects":12}')
         response=self.client.post('/api/reports/weekly',headers=self.headers,json={})
         self.assertEqual(response.status_code,200,response.text)
+
+    def test_profile_transient_timeout_retries_once_then_saves_valid_response(self):
+        self.upstream.add('delayed',delay=.12)
+        self.upstream.add(json.dumps({'target':'pass','learning_status':'weak','available_days':5,'daily_hours':2,'missing_fields':[]}))
+        with patch.object(llm_client,'REQUEST_TIMEOUT',.02):
+            result=self.call('POST','/ai/profile',{'exam_id':1,'raw_text':'重试后的有效画像'})
+        self.assertEqual(result['target'],'pass')
+        self.assertEqual(len(self.upstream.requests),2)

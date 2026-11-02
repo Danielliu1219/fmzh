@@ -1,6 +1,7 @@
 """特色功能接口（模块7）：压力指数 / 情绪记录 / 救急模式等
 公式口径见 README 第 3.3、3.4 节，实现照抄，不要自行改动。
 """
+from ..services.pressure import beijing_day
 import json
 from datetime import date, timedelta
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models.models import Analysis, Exam, MoodRecord, Task, User, UserProfile
+from ..models.models import Analysis, Exam, MoodRecord, Task, User, UserProfile, Collection, Material, QuizAttempt
 from ..schemas.schemas import (
     EmergencyOut,
     MoodResult,
@@ -62,17 +63,6 @@ def _streak_days(db: Session, user_id: int, today: date) -> int:
     return streak
 
 
-def _mood_suggestion(score: float) -> str:
-    """复习节奏建议（按综合评分分档）"""
-    if score >= 4:
-        return "状态很好，可以适当加量，挑战高权重难点"
-    if score >= 3:
-        return "状态不错，保持当前节奏即可"
-    if score >= 2.5:
-        return "状态一般，建议放慢节奏、穿插休息"
-    return "状态偏低，建议减轻今日任务或暂停半天"
-
-
 def compute_mood(db: Session, user: User, today: date) -> dict | None:
     """情绪综合评分 = 0.4×情绪项 + 0.3×完成项 + 0.2×压力项 + 0.1×达标项；今天没记录返回 None"""
     record = (
@@ -85,13 +75,14 @@ def compute_mood(db: Session, user: User, today: date) -> dict | None:
 
     emotion_item = 5 * (record.mood_score - 1) / 4
     completion_item = 5 * _today_completion_rate(db, user.id, today)
-    pressure_item = 5 - compute_pressure(db, user.id)["score"] / 20
+    pressure_value = compute_pressure(db, user.id, today)
+    pressure_item = 5 - pressure_value.get('raw_score', pressure_value['score']) / 20
     streak_item = 5 * min(_streak_days(db, user.id, today), 7) / 7
 
-    composite = round(
-        0.4 * emotion_item + 0.3 * completion_item + 0.2 * pressure_item + 0.1 * streak_item,
-        2,
-    )
+    composite = 0.4 * emotion_item + 0.3 * completion_item + 0.2 * pressure_item + 0.1 * streak_item
+    from ..services.mood_advice import advice
+    previous = {row.record_date:row.composite_raw for row in db.query(MoodRecord).filter(
+        MoodRecord.user_id == user.id, MoodRecord.record_date < today).order_by(MoodRecord.id).all()}
     return {
         "record_date": today,
         "mood_score": record.mood_score,
@@ -99,8 +90,9 @@ def compute_mood(db: Session, user: User, today: date) -> dict | None:
         "completion_item": round(completion_item, 2),
         "pressure_item": round(pressure_item, 2),
         "streak_item": round(streak_item, 2),
-        "composite_score": composite,
-        "suggestion": _mood_suggestion(composite),
+        "composite_score": round(composite,2),
+        "raw_score": composite,
+        **advice(composite,today,user.id,previous),
         "need_relief": composite < 2.5,
     }
 
@@ -111,7 +103,9 @@ def submit_mood(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    from ..services.task_conflicts import lock_schedule
+    lock_schedule(db, user.id, auth_key=user.auth_key)
+    today = beijing_day()
     record = (
         db.query(MoodRecord)
         .filter(MoodRecord.user_id == user.id, MoodRecord.record_date == today)
@@ -125,13 +119,16 @@ def submit_mood(
     else:
         record.mood_score = payload.mood_score
         record.note = payload.note
+    db.flush()
+    result = compute_mood(db, user, today)
+    record.composite_raw = result['raw_score']
     db.commit()
-    return compute_mood(db, user, today)
+    return result
 
 
 @router.get("/mood/today", response_model=MoodResult | None, summary="查询今日情绪评分（未记录返回 null）")
 def today_mood(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return compute_mood(db, user, date.today())
+    return compute_mood(db, user, beijing_day())
 
 
 def _latest_analysis(db: Session, user_id: int, exam_id: int) -> Analysis | None:
@@ -154,7 +151,7 @@ def _pick_exam(db: Session, user_id: int, exam_id: int | None, today: date) -> E
 
 def compute_emergency(db: Session, user: User, exam_id: int | None = None) -> dict | None:
     """临时救急模式：为最近一场考试（或指定考试）生成高频基础考点冲刺清单"""
-    today = date.today()
+    today = beijing_day()
     exam = _pick_exam(db, user.id, exam_id, today)
     if exam is None:
         return None
@@ -216,7 +213,7 @@ def emergency(
 
 def compute_review(db: Session, user: User, exam_id: int | None = None) -> dict | None:
     """考前重点回顾列表：按权重从高到低列出该科目的必看知识点（考前几天通览用）"""
-    today = date.today()
+    today = beijing_day()
     exam = _pick_exam(db, user.id, exam_id, today)
     if exam is None:
         return None
@@ -230,15 +227,12 @@ def compute_review(db: Session, user: User, exam_id: int | None = None) -> dict 
         "note": "",
     }
     analysis = _latest_analysis(db, user.id, exam.id)
-    if analysis is None:
-        base["note"] = "该科目还没有 AI 分析结果，先去「AI 复习分析」生成后才有重点回顾清单"
-        return base
-
     try:
-        result = json.loads(analysis.result_json)
-    except json.JSONDecodeError:
-        base["note"] = "分析结果解析失败"
-        return base
+        result = json.loads(analysis.result_json) if analysis else {}
+        if not isinstance(result, dict):
+            result = {}
+    except (ValueError, TypeError):
+        result = {}
 
     base["items"] = [
         {
@@ -249,6 +243,7 @@ def compute_review(db: Session, user: User, exam_id: int | None = None) -> dict 
             "suggest_minutes": k.get("suggest_minutes"),
             "source": k.get("source", ""),
             "basis": k.get("recommend_reason", ""),
+            "kind": "knowledge",
         }
         for k in sorted(
             result.get("knowledge_points", []),
@@ -256,8 +251,128 @@ def compute_review(db: Session, user: User, exam_id: int | None = None) -> dict 
             reverse=True,
         )
     ]
+    unassigned, notebook = [], []
+    from ..services.mistakes import question_key
+
+    question_map = {}
+    material_map = {
+        m.id: m for m in db.query(Material).filter(Material.user_id == user.id).all()
+    }
+    for item in (
+        db.query(Collection)
+        .filter(Collection.user_id == user.id)
+        .order_by(Collection.id.desc())
+        .all()
+    ):
+        if item.item_type == "material":
+            material = material_map.get(item.material_id)
+            if not material or material.exam_id != exam.id:
+                continue
+            notebook.append(
+                dict(
+                    name=item.title or material.title,
+                    weight=0,
+                    source="资料收藏",
+                    kind="material",
+                    basis=(
+                        material.description
+                        or material.text_content
+                        or "打开资料库查看原文"
+                    )[:1200],
+                    material_id=material.id,
+                    collection_id=item.id,
+                )
+            )
+        else:
+            question_map[item.question_key or question_key(item.title)] = item
+            try:
+                content = json.loads(item.content or "{}")
+            except ValueError:
+                content = {"note": item.content}
+            if not isinstance(content, dict):
+                content = {}
+            scope = content.get("exam_id")
+            entry = dict(
+                name=item.title,
+                weight=0,
+                source="自测错题" if item.source == "quiz" else "手动题目收藏",
+                kind="question",
+                collection_id=item.id,
+                basis="；".join(
+                    str(content[k])
+                    for k in ("knowledge_point", "answer", "analysis", "note")
+                    if content.get(k)
+                )[:1200],
+            )
+            if content.get("archived_subject"):
+                entry["source"] = (
+                    f"历史题目 · {content['archived_subject']}（考试已删除）"
+                )
+            if (
+                scope == exam.id
+                and item.created_at
+                and exam.created_at
+                and item.created_at < exam.created_at
+            ):
+                entry["source"] = "待重新归类"
+                unassigned.append(entry)
+            elif scope == exam.id:
+                notebook.append(entry)
+            elif scope is None:
+                unassigned.append(entry)
+    # 同一道题只在错题本留一份，仍可属于多个实际做过该题的科目。
+    seen = {
+        question_key(item["name"]) for item in notebook if item["kind"] == "question"
+    }
+    attempts = (
+        db.query(QuizAttempt)
+        .filter_by(user_id=user.id, exam_id=exam.id, status="submitted")
+        .order_by(QuizAttempt.submitted_at.desc())
+    )
+    for attempt in attempts:
+        try:
+            payload = json.loads(attempt.result_json or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            continue
+        for item in payload["items"]:
+            if (
+                not isinstance(item, dict)
+                or item.get("correct") is not False
+                or not isinstance(item.get("question"), str)
+            ):
+                continue
+            key = question_key(item["question"])
+            collection = question_map.get(key)
+            if collection is None or key in seen:
+                continue
+            seen.add(key)
+            notebook.append(
+                dict(
+                    name=item["question"],
+                    kind="question",
+                    source="自测错题",
+                    weight=0,
+                    collection_id=collection.id,
+                    basis="；".join(
+                        str(item[k])
+                        for k in ("knowledge_point", "answer", "analysis")
+                        if item.get(k)
+                    )[:1200],
+                )
+            )
+    base["items"] = notebook + base["items"]
+    assigned_questions = {
+        item["collection_id"] for item in notebook if item["kind"] == "question"
+    }
+    base["unassigned"] = [
+        item for item in unassigned if item["collection_id"] not in assigned_questions
+    ]
     if not base["items"]:
-        base["note"] = "该科目分析里没有可回顾的知识点"
+        base["note"] = (
+            "该科目暂无错题、收藏或分析知识点。未分类题目单独列出，不混入其他科目。"
+        )
     return base
 
 
@@ -277,18 +392,37 @@ _PRIORITY_WEIGHT = {1: 1.0, 2: 0.6, 3: 0.3}
 def compute_top3(db: Session, user: User) -> dict:
     """今日最重要的三件事：在今日（含逾期）未完成任务中按 权重+截止紧迫度+压力指数 打分取前三
 
-    打分 = 40×优先级权重 + 35×截止紧迫度 + 25×(压力指数/100)；
+    打分 = (40+25×压力/100)×知识点权重 + 35×截止紧迫度 + 10×任务优先级权重；
+    无知识点关联时明确用任务优先级作为权重，不伪造知识点依据。
     截止紧迫度：任务已逾期或考试当天取 1，否则 min(1, 7÷距考试天数)，无考试取 0。
     """
-    today = date.today()
-    score_pressure = compute_pressure(db, user.id)["score"]
+    today = beijing_day()
+    current_pressure_value = compute_pressure(db, user.id)
+    score_pressure = current_pressure_value.get(
+        "raw_score", current_pressure_value["score"]
+    )
     exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
     tasks = (
         db.query(Task)
-        .filter(Task.user_id == user.id, Task.is_done.is_(False), Task.plan_date <= today)
+        .filter(
+            Task.user_id == user.id, Task.is_done.is_(False), Task.plan_date <= today
+        )
         .all()
     )
 
+    points_by_exam = {}
+    for analysis in (
+        db.query(Analysis)
+        .filter(Analysis.user_id == user.id)
+        .order_by(Analysis.id)
+        .all()
+    ):
+        try:
+            points_by_exam[analysis.exam_id] = json.loads(analysis.result_json).get(
+                "knowledge_points", []
+            )
+        except (ValueError, AttributeError):
+            continue
     ranked = []
     for t in tasks:
         exam = exams.get(t.exam_id)
@@ -300,10 +434,37 @@ def compute_top3(db: Session, user: User) -> dict:
         else:
             urgency = min(1.0, 7 / days_left)
 
-        weight = _PRIORITY_WEIGHT.get(t.priority, 0.3)
-        score = round(40 * weight + 35 * urgency + 25 * (score_pressure / 100), 1)
+        points = points_by_exam.get(t.exam_id, [])
+        linked = [
+            p
+            for p in points
+            if isinstance(p, dict)
+            and p.get("name")
+            and (
+                p["name"] == t.knowledge_point
+                or (
+                    not t.knowledge_point
+                    and len(p["name"]) >= 2
+                    and p["name"] in (t.title + " " + t.detail)
+                )
+            )
+        ]
+        weight = max(
+            (float(p.get("weight", 0)) for p in linked),
+            default=_PRIORITY_WEIGHT.get(t.priority, 0.3),
+        )
+        score = (
+            (40 + 25 * score_pressure / 100) * weight
+            + 35 * urgency
+            + 10 * _PRIORITY_WEIGHT.get(t.priority, 0.3)
+        )
 
         bits = []
+        bits.append(
+            "知识点权重：" + "、".join(p["name"] for p in linked)
+            if linked
+            else "未关联知识点，按任务优先级"
+        )
         if t.priority == 1:
             bits.append("优先级高")
         if t.plan_date < today:
@@ -311,16 +472,21 @@ def compute_top3(db: Session, user: User) -> dict:
         elif days_left is not None:
             bits.append(f"距{exam.subject}考试 {days_left} 天")
 
-        ranked.append((score, {
-            "task_id": t.id,
-            "title": t.title,
-            "subject": exam.subject if exam else "",
-            "plan_date": t.plan_date,
-            "priority": t.priority,
-            "estimated_minutes": t.estimated_minutes,
-            "score": score,
-            "reason": " · ".join(bits) if bits else "按当前压力排序",
-        }))
+        ranked.append(
+            (
+                score,
+                {
+                    "task_id": t.id,
+                    "title": t.title,
+                    "subject": exam.subject if exam else "",
+                    "plan_date": t.plan_date,
+                    "priority": t.priority,
+                    "estimated_minutes": t.estimated_minutes,
+                    "score": score,
+                    "reason": " · ".join(bits) if bits else "按当前压力排序",
+                },
+            )
+        )
 
     ranked.sort(key=lambda x: x[0], reverse=True)
     top = [item for _, item in ranked[:3]]

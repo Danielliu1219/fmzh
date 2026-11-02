@@ -9,6 +9,8 @@
 允许列表由调用方传入，便于不同入口各自规定格式范围（复习资料 / 头像等）。
 """
 from pathlib import Path
+from io import BytesIO
+from zipfile import ZipFile, BadZipFile
 
 MAX_UPLOAD_SIZE_MB = 20
 
@@ -17,6 +19,7 @@ CONTENT_SIGNATURES: dict[str, tuple[bytes, ...]] = {
     "pdf": (b"%PDF-",),
     "docx": (b"PK\x03\x04",),
     "pptx": (b"PK\x03\x04",),
+    "ppt": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
     "xlsx": (b"PK\x03\x04",),
     "png": (b"\x89PNG\r\n\x1a\n",),
     "jpg": (b"\xff\xd8\xff",),
@@ -61,6 +64,28 @@ def check_content_head(content: bytes, ext: str) -> None:
         head = content[:16]
         if not any(head.startswith(sig) for sig in signatures):
             raise UploadRejected(f"文件内容与扩展名 .{ext} 不符（可能被改过名），已拒绝上传")
+        if ext in ('docx','pptx'):
+            _check_office(content, ext)
+        elif ext == 'ppt':
+            import olefile
+            try:
+                with olefile.OleFileIO(BytesIO(content)) as doc:
+                    if not doc.exists('PowerPoint Document'):
+                        raise ValueError('not PowerPoint')
+            except Exception as exc:
+                raise UploadRejected('文件不是有效的PPT文档') from exc
+        elif ext in ('png','jpg','jpeg'):
+            from PIL import Image
+            try:
+                with Image.open(BytesIO(content)) as pic:
+                    if pic.width*pic.height > 25_000_000 or pic.format != ('PNG' if ext == 'png' else 'JPEG'):
+                        raise ValueError('image size or format')
+                    pic.verify()
+                # JPEG.verify不解码像素；再次解码才能拒绝完整头部下的损坏压缩数据。
+                with Image.open(BytesIO(content)) as pic:
+                    pic.load()
+            except Exception as exc:
+                raise UploadRejected('图片损坏、格式不符或像素过大，请使用2500万像素以内的PNG/JPEG') from exc
         return
     if ext in TEXT_LIKE:
         head = content[:4096]
@@ -69,6 +94,28 @@ def check_content_head(content: bytes, ext: str) -> None:
             return
         if b"\x00" in head:
             raise UploadRejected("该文件含二进制内容，不像纯文本，已拒绝上传")
+
+
+def _check_office(content, ext):
+    import zlib
+    from pathlib import PurePosixPath
+    from xml.etree import ElementTree as ET
+    required = 'word/document.xml' if ext == 'docx' else 'ppt/presentation.xml'
+    root = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document' if ext == 'docx' else '{http://schemas.openxmlformats.org/presentationml/2006/main}presentation'
+    try:
+        with ZipFile(BytesIO(content)) as package:
+            infos = package.infolist()
+            if len(infos)>4000 or len({i.filename for i in infos}) != len(infos) or sum(i.file_size for i in infos)>100*1024*1024:
+                raise ValueError('archive limits')
+            if any(i.flag_bits & 1 or i.file_size>40*1024*1024 or PurePosixPath(i.filename).is_absolute() or '..' in PurePosixPath(i.filename).parts or '\\' in i.filename or ':' in i.filename for i in infos):
+                raise ValueError('archive entry')
+            if required not in package.namelist() or '[Content_Types].xml' not in package.namelist():
+                raise ValueError('missing office parts')
+            xml = package.read(required)
+            if b'<!DOCTYPE' in xml.upper() or ET.fromstring(xml).tag != root or package.testzip() is not None:
+                raise ValueError('invalid office XML')
+    except (BadZipFile, ValueError, KeyError, ET.ParseError, RuntimeError, NotImplementedError, OSError, EOFError, zlib.error) as exc:
+        raise UploadRejected(f'文件不是有效的.{ext}文档，或压缩内容超出安全范围') from exc
 
 
 def validate_upload(

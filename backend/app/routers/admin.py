@@ -5,7 +5,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ def operation_logs(
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
     actor: str = Query('', max_length=64), action: str = Query('', max_length=48),
     outcome: str = Query('', pattern='^(success|failure)?$'),
+    request_id: str = Query('', max_length=32, pattern='^[0-9a-f]*$'),
     date_from: date | None = None, date_to: date | None = None,
     _: User = Depends(get_current_admin), db: Session = Depends(get_db),
 ):
@@ -37,6 +38,7 @@ def operation_logs(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "起始日期不能晚于结束日期")
     query = db.query(OperationLog)
+    if request_id: query = query.filter(OperationLog.request_id == request_id)
     if actor.strip(): query = query.filter(OperationLog.actor_name.contains(actor.strip(), autoescape=True))
     if action: query = query.filter(OperationLog.action == action)
     if outcome == 'success': query = query.filter(OperationLog.status_code < 400)
@@ -49,7 +51,7 @@ def operation_logs(
     rows = query.order_by(OperationLog.id.desc()).offset((page-1)*page_size).limit(page_size).all()
     return dict(total=total, page=page, page_size=page_size,
                 actions=[dict(value=key, label=value) for key, value in ACTION_LABELS.items()],
-                items=[dict(id=row.id, actor_id=row.actor_id, actor_name=row.actor_name,
+                items=[dict(id=row.id, request_id=row.request_id, actor_id=row.actor_id, actor_name=row.actor_name,
                             action=row.action, label=ACTION_LABELS.get(row.action, row.action), target_id=row.target_id,
                             method=row.method, path=row.path, status_code=row.status_code,
                             outcome='success' if row.status_code < 400 else 'failure',
@@ -66,6 +68,7 @@ def list_courses(_: User = Depends(get_current_admin), db: Session = Depends(get
 @router.post("/courses", response_model=CourseOut, summary="新增课程/科目")
 def create_course(
     payload: CourseCreate,
+    request: Request,
     _: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
@@ -73,6 +76,7 @@ def create_course(
     db.add(course)
     db.commit()
     db.refresh(course)
+    request.state.audit_target = course.id
     return course
 
 

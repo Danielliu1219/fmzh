@@ -1,4 +1,5 @@
 """无写入的签名预览，确认时重新校验并原子保存任务和幂等凭据。"""
+from .pressure import beijing_day
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -23,10 +24,10 @@ def validate(db, user, exam, events, requested_limit=None):
     for task in db.query(Task).filter(Task.user_id == user.id).all():
         key = task.plan_date.isoformat()
         totals[key] = totals.get(key, 0) + task.estimated_minutes
-    deadline = max(date.today(), exam.exam_date - timedelta(days=1))
+    deadline = max(beijing_day(), exam.exam_date - timedelta(days=1))
     for event in events:
         day = date.fromisoformat(event['day'])
-        if day < date.today() or exam.exam_date < date.today() or day > deadline:
+        if day < beijing_day() or exam.exam_date < beijing_day() or day > deadline:
             conflicts.append(dict(date=event['day'], reason="事件不在今天至考前的可复习日期内"))
         additions[event['day']] = additions.get(event['day'], 0) + event['minutes']
     for day, minutes in sorted(additions.items()):

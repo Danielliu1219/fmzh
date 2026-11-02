@@ -6,15 +6,16 @@
 - 2.12 ICS 导入：解析 ICS 为学习任务，合并前做冲突检测
 - 2.13 ICS 导出：考试与任务导出为 ICS 日历文件
 """
+from ..services.pressure import beijing_day
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..config import settings
-from ..models.models import Exam, Task, User
+from ..models.models import Exam, Task, User, Course
 from ..schemas.schemas import (
     ExamCreate,
     ExamOut,
@@ -42,6 +43,26 @@ def _get_own_exam(db: Session, user: User, exam_id: int) -> Exam:
     return exam
 
 
+def catalog_subject(db, subject):
+    courses = db.query(Course).filter(Course.name == subject).with_for_update().all()
+    active = next((course for course in courses if course.is_active), None)
+    if courses and active is None:
+        raise HTTPException(409, "该课程已停用，请选择其他启用课程或自建科目")
+    return active
+
+
+@router.get("/course-options", summary="学生可选的启用课程")
+def course_options(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return [
+        dict(id=c.id, name=c.name, code=c.code, color=c.color)
+        for c in db.query(Course)
+        .filter(Course.is_active.is_(True))
+        .order_by(Course.name, Course.id)
+    ]
+
+
 @router.get("", response_model=list[ExamOut], summary="我的考试列表（按考试时间排序，支持按科目/日期筛选）")
 def list_exams(
     subject: str | None = None,
@@ -64,14 +85,18 @@ def list_exams(
 @router.post("", response_model=ExamOut, summary="录入考试")
 def create_exam(
     payload: ExamCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     lock_schedule(db, user.id, auth_key=user.auth_key)
+    course=catalog_subject(db,payload.subject)
     exam = Exam(user_id=user.id, **payload.model_dump())
+    if course and not exam.color: exam.color=course.color
     db.add(exam)
     db.commit()
     db.refresh(exam)
+    request.state.audit_target = exam.id
     return exam
 
 
@@ -84,7 +109,12 @@ def update_exam(
 ):
     lock_schedule(db, user.id, auth_key=user.auth_key)
     exam = _get_own_exam(db, user, exam_id)
-    for field, value in payload.model_dump(exclude_none=True).items():
+    if payload.subject is not None and payload.subject!=exam.subject:
+        course=catalog_subject(db,payload.subject)
+        if course and payload.color is None: exam.color=course.color
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is None and field != 'exam_time':
+            raise HTTPException(422, '考试字段不能为null；仅考试时刻可清空')
         setattr(exam, field, value)
     db.commit()
     db.refresh(exam)
@@ -168,5 +198,5 @@ def export_ics(
     return Response(
         content=export_calendar(exams, tasks, user.id),
         media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="fmzh_{date.today():%Y%m%d}.ics"'},
+        headers={"Content-Disposition": f'attachment; filename="fmzh_{beijing_day():%Y%m%d}.ics"'},
     )

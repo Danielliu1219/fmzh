@@ -41,7 +41,7 @@ class NotificationTests(unittest.TestCase):
         self.clock.stop(); self.client.close(); self.db.close(); self.engine.dispose()
 
     def account(self, name):
-        data = self.client.post('/api/auth/register', json={'username': name, 'password': 'StudyQA123', 'student_no': '20240001'}).json()
+        data = self.client.post('/api/auth/register', json={'username': name, 'password': 'StudyQA123', 'student_no': '20240001_'+name}).json()
         return {'Authorization': 'Bearer ' + data['access_token']}
 
     def call(self, method, path, payload=None, status=200, headers=None):

@@ -21,7 +21,7 @@ def capture_user(session_factory, user_id, now, source):
         if db.query(DailyPressure.id).filter(DailyPressure.user_id == user_id, DailyPressure.record_date == day).first():
             return False
         result = compute_pressure(db, user_id, day)
-        db.add(DailyPressure(user_id=user_id, record_date=day, score=result['score'],
+        db.add(DailyPressure(user_id=user_id, record_date=day, score=result['score'], raw_score=result['raw_score'],
                              breakdown=json.dumps(result['breakdown']), computed_at=utc(now).replace(tzinfo=None),
                              source=source, formula_version=FORMULA_VERSION))
         db.commit()
@@ -56,9 +56,14 @@ def run_due(session_factory, now=None, source='scheduled', stop=None):
     return result
 
 
-def make_lifespan(session_factory, interval=60, clock=None):
+def make_lifespan(session_factory, interval=60, clock=None, backup=None):
     @asynccontextmanager
     async def lifespan(app):
+        from . import ai_jobs
+        await asyncio.to_thread(ai_jobs.recover,session_factory)
+        from . import material_parsing
+        from ..config import UPLOAD_DIR
+        await asyncio.to_thread(material_parsing.recover,session_factory,UPLOAD_DIR)
         stopped = Event()
         wake = asyncio.Event()
         state = dict(running=True, timezone='Asia/Shanghai', scheduled_time='00:05', poll_seconds=interval)
@@ -68,6 +73,8 @@ def make_lifespan(session_factory, interval=60, clock=None):
             now = (clock or utcnow)()
             result = await asyncio.to_thread(run_due, session_factory, now, source, stopped)
             state.update(last_poll_at=utc(now).isoformat(), **result)
+            if backup is not None:
+                app.state.backup = await asyncio.to_thread(backup)
 
         await poll('startup')
 
@@ -86,5 +93,7 @@ def make_lifespan(session_factory, interval=60, clock=None):
             stopped.set()
             wake.set()
             await task
+            await asyncio.to_thread(ai_jobs.stop)
+            await asyncio.to_thread(material_parsing.stop)
             state['running'] = False
     return lifespan

@@ -1,4 +1,5 @@
 """跨科时间统筹：固定已完成/手动任务，按截止日和需求量分配未完成 AI 任务。"""
+from .pressure import beijing_day
 import hashlib
 import json
 import re
@@ -102,7 +103,7 @@ def distribute(tasks: list[dict], exams: dict, budget: int, today: date) -> dict
 
 
 def preview(db: Session, user_id: int) -> dict:
-    today = date.today()
+    today = beijing_day()
     rows = db.query(Task).filter(Task.user_id == user_id).order_by(Task.id).all()
     tasks = [{key: getattr(t, key) for key in SNAPSHOT_FIELDS} for t in rows]
     exams = {e.id: {'exam_date': e.exam_date, 'subject': e.subject} for e in db.query(Exam).filter(Exam.user_id == user_id).all()}

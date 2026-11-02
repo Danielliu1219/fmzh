@@ -1,5 +1,6 @@
 // 各模块接口封装：与 docs/接口文档.md 一一对应
 import request from './request'
+import {modelJob} from './modelJobs'
 
 export const authApi = {
   register: (data) => request.post('/auth/register', data),
@@ -17,6 +18,7 @@ export const authApi = {
 }
 
 export const examApi = {
+  courseOptions: () => request.get('/exams/course-options'),
   list: (params) => request.get('/exams', { params }), // 2.4 支持 subject / date_from / date_to
   create: (data) => request.post('/exams', data),
   update: (id, data) => request.put(`/exams/${id}`, data),
@@ -32,6 +34,8 @@ export const examApi = {
 }
 
 export const materialApi = {
+  storage: () => request.get('/materials/storage'),
+  retry: (id) => request.post(`/materials/${id}/retry`),
   excerpt: (id, params) => request.get(`/materials/${id}/excerpt`, { params }),
   list: (params) => request.get('/materials', { params }),
   upload: (formData) =>
@@ -58,9 +62,10 @@ export const collectionApi = {
 export const aiApi = {
   evidence: (examId, data) => request.post(`/ai/analyses/${examId}/evidence`, data),
   mastery: (examId) => request.get(`/ai/analyses/${examId}/mastery`),
-  profile: (data) => request.post('/ai/profile', data),
+  limits: () => request.get('/ai/limits'),
+  profile: (data) => modelJob('profile', data),
   savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),
-  analyze: (examId) => request.post('/ai/analyze', { exam_id: examId }),
+  analyze: (examId) => modelJob('analysis', { exam_id: examId }),
   // 思维导图与记忆卡片（用例 4.4）
   mindmap: (examId) => request.get(`/ai/analyses/${examId}/mindmap`),
   // 动态调整计划与权重（用例 4.12）
@@ -72,7 +77,7 @@ export const aiApi = {
   createQaConversation: (examId) =>
     request.post('/ai/qa/conversations', { exam_id: examId }),
   qaConversation: (id) => request.get(`/ai/qa/conversations/${id}`),
-  askQa: (id, content) => request.post(`/ai/qa/conversations/${id}/messages`, { content }),
+  askQa: (id, content) => modelJob('qa', { conversation_id:id,content }),
   latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
 }
 
@@ -105,7 +110,7 @@ export const dashboardApi = {
   stats: (examId) => request.get(`/stats/${examId}`),
   statsOverview: (days) => request.get('/stats/overview', { params: { days } }),
   // 5.3 备考周报（按需生成；week_start 为空时统计最近 7 天）
-  weeklyReport: (weekStart) => request.post('/reports/weekly', { week_start: weekStart }),
+  weeklyReport: (weekStart) => modelJob('weekly', { week_start: weekStart }),
 }
 
 export const focusApi = {

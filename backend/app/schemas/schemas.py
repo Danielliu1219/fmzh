@@ -5,7 +5,7 @@
 from datetime import date, datetime, time
 from typing import Any, Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator, field_serializer, model_validator
 from ..services.score_targets import ScoreBand
 from ..services.task_details import task_time
 
@@ -15,10 +15,10 @@ from ..services.task_details import task_time
 class UserRegister(BaseModel):
     username: str = Field(min_length=3, max_length=20, pattern=r"^[a-zA-Z0-9_]+$")
     password: str = Field(min_length=6, max_length=32)
-    nickname: str = ""
-    student_no: str = ""
-    major: str = ""
-    grade: str = ""
+    nickname: str = Field('', max_length=64)
+    student_no: str = Field('', max_length=32)
+    major: str = Field('', max_length=64)
+    grade: str = Field('', max_length=16)
 
 
 class UserLogin(BaseModel):
@@ -27,12 +27,12 @@ class UserLogin(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    nickname: Optional[str] = None
-    student_no: Optional[str] = None
-    major: Optional[str] = None
-    grade: Optional[str] = None
-    class_name: Optional[str] = None  # 班级（FMZH-USR-0005）
-    avatar: Optional[str] = None  # 头像色值（预设色板），空串恢复默认
+    nickname: Optional[str] = Field(None, min_length=1, max_length=64)
+    student_no: Optional[str] = Field(None, max_length=32)
+    major: Optional[str] = Field(None, max_length=64)
+    grade: Optional[str] = Field(None, max_length=16)
+    class_name: Optional[str] = Field(None, max_length=32)
+    avatar: Optional[str] = Field(None, pattern=r'^$|^#[0-9a-fA-F]{6}$')
 
 
 class UserOut(BaseModel):
@@ -80,19 +80,43 @@ class ResetConfirmRequest(BaseModel):
 class ExamCreate(BaseModel):
     subject: str = Field(min_length=1, max_length=64)
     exam_date: date
-    location: str = ""
-    duration_minutes: int = 120
-    note: str = ""
-    color: str = ""  # 科目颜色标签（2.11）
+    exam_time: Optional[time] = None
+    location: str = Field('', max_length=128)
+    duration_minutes: int = Field(120, ge=30, le=300)
+    note: str = Field('', max_length=200)
+    color: str = Field('', pattern=r'^$|^#[0-9a-fA-F]{6}$')
+
+    @field_validator('subject')
+    @classmethod
+    def nonempty_subject(cls, value):
+        if not value.strip(): raise ValueError('科目不能为空')
+        return value.strip()
+
+    @field_validator('exam_time')
+    @classmethod
+    def valid_time(cls, value):
+        return task_time(value)
 
 
 class ExamUpdate(BaseModel):
-    subject: Optional[str] = None
+    subject: Optional[str] = Field(None, min_length=1, max_length=64)
     exam_date: Optional[date] = None
-    location: Optional[str] = None
-    duration_minutes: Optional[int] = None
-    note: Optional[str] = None
-    color: Optional[str] = None  # 科目颜色标签（2.11）
+    exam_time: Optional[time] = None
+    location: Optional[str] = Field(None, max_length=128)
+    duration_minutes: Optional[int] = Field(None, ge=30, le=300)
+    note: Optional[str] = Field(None, max_length=200)
+    color: Optional[str] = Field(None, pattern=r'^$|^#[0-9a-fA-F]{6}$')
+
+    @field_validator('subject')
+    @classmethod
+    def nonempty_subject(cls, value):
+        if value is not None and not value.strip(): raise ValueError('科目不能为空')
+        return value.strip() if value is not None else value
+
+    @field_validator('exam_time')
+    @classmethod
+    def valid_time(cls, value):
+        return task_time(value)
 
 
 class ExamOut(BaseModel):
@@ -101,17 +125,25 @@ class ExamOut(BaseModel):
     id: int
     subject: str
     exam_date: date
+    exam_time: Optional[time] = None
     location: str
     duration_minutes: int
     note: str
     color: str = ""
     created_at: datetime
 
+    @field_serializer('exam_time')
+    def clock(self, value):
+        return value.strftime('%H:%M') if value else None
+
 
 # ==================== 资料 ====================
 
 
 class MaterialOut(BaseModel):
+    file_size: int = 0
+    parse_error: str = ''
+    parse_request_id: str = ''
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -144,12 +176,18 @@ class SourceSuggestionOut(BaseModel):
 class MaterialUpdate(BaseModel):
     """资料编辑 / 移动分类（用例 3.3）：字段均可选，只更新请求里出现的字段"""
 
-    title: Optional[str] = None
+    title: Optional[str] = Field(None, min_length=1, max_length=128)
     exam_id: Optional[int] = None  # 传 null 表示移出科目（回到「未归类」）
     source_type: Optional[str] = None
-    description: Optional[str] = None
-    tags: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=500)
+    tags: Optional[str] = Field(None, max_length=100)
     weight: Optional[float] = Field(None, ge=0, le=1)  # 资料权重手动调整（用例 4.2）
+
+    @field_validator('description', 'tags', mode='before')
+    @classmethod
+    def clear_optional_text(cls, value):
+        # 显式 null 表示清空；遗漏字段仍不修改。响应及数据库统一保存字符串。
+        return '' if value is None else value
 
 
 class MaterialMergeIn(BaseModel):
@@ -388,6 +426,7 @@ class StudyStrategy(BaseModel):
 
 
 class PlanItem(BaseModel):
+    knowledge_point: str = Field('', max_length=128)
     day: int
     date: str  # YYYY-MM-DD
     title: str
@@ -416,6 +455,65 @@ class AnalysisResult(BaseModel):
     review_plan: list[PlanItem] = []
     quiz: list[QuizItem] = []
     strategy: Optional[StudyStrategy] = None  # 旧分析没有此字段，读取时不伪造新结果
+
+
+class GeneratedAnalysis(AnalysisResult):
+    """新生成结果必须完整；历史读取仍使用兼容的 AnalysisResult。"""
+
+    course: str = Field(min_length=1, max_length=128)
+    summary: str = Field(min_length=1, max_length=12000)
+    knowledge_points: list[KnowledgePoint] = Field(min_length=1, max_length=200)
+    review_plan: list[PlanItem] = Field(min_length=1, max_length=366)
+    quiz: list[QuizItem] = Field(min_length=1, max_length=50)
+
+    @field_validator("course", "summary")
+    @classmethod
+    def nonblank_generation(cls, value):
+        if not value.strip():
+            raise ValueError("课程与摘要不能为空白")
+        return value.strip()
+
+    @field_validator("knowledge_points")
+    @classmethod
+    def valid_points(cls, points):
+        if any(
+            not p.name.strip()
+            or len(p.name.strip()) > 128
+            or p.importance not in {"high", "medium", "low"}
+            for p in points
+        ):
+            raise ValueError("知识点名称或重要程度不合法")
+        for point in points:
+            point.name = point.name.strip()
+        if len({point.name for point in points}) != len(points):
+            raise ValueError("知识点名称不能重复")
+        return points
+
+    @field_validator("review_plan")
+    @classmethod
+    def valid_plan(cls, items):
+        if any(
+            not p.title.strip()
+            or len(p.title) > 256
+            or not 1 <= p.day <= 366
+            or not 1 <= p.estimated_minutes <= 1440
+            or p.priority not in (1, 2, 3)
+            for p in items
+        ):
+            raise ValueError("复习计划缺少有效名称、天数、时长或优先级")
+        for item in items:
+            date.fromisoformat(item.date)
+        return items
+
+    @model_validator(mode="after")
+    def valid_links(self):
+        names = {point.name for point in self.knowledge_points}
+        if any(
+            item.knowledge_point and item.knowledge_point not in names
+            for item in self.review_plan
+        ):
+            raise ValueError("计划关联了不存在的知识点")
+        return self
 
 
 class AnalyzeRequest(BaseModel):
@@ -502,6 +600,7 @@ class QuizSubmit(BaseModel):
 
 
 class TaskDetails(BaseModel):
+    knowledge_point: str = Field('', max_length=128)
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     location: str = Field(default='', max_length=120)
@@ -530,7 +629,8 @@ class TaskCreate(TaskDetails):
     plan_date: date
     estimated_minutes: int = Field(default=60, ge=1, le=1440)
     priority: int = Field(default=2, ge=1, le=3)
-    repeat_rule: Literal['none', 'daily', 'weekdays', 'weekly'] = 'none'
+    repeat_rule: Literal['none', 'daily', 'weekdays', 'weekly', 'custom'] = 'none'
+    repeat_dates: list[date] = Field(default_factory=list, max_length=180)
     repeat_until: Optional[date] = None
 
     @field_validator('title', mode='before')
@@ -721,6 +821,7 @@ class StatsOut(BaseModel):
 # ===================== 特色功能（模块 7）=====================
 class PressureValue(BaseModel):
     score: float        # 0~100
+    raw_score: Optional[float] = None
     level: str          # 轻松 / 适中 / 偏压 / 高压
     suggestion: str
     breakdown: dict[str, float]
@@ -765,6 +866,13 @@ class MoodResult(BaseModel):
     pressure_item: float    # 压力项
     streak_item: float      # 达标项
     composite_score: float  # 情绪综合评分 0~5
+    raw_score: Optional[float] = None
+    band: int = 1
+    plan_level: int = 1
+    plan_suggestion: str = ''
+    support_message: str = ''
+    low_days: int = 0
+    need_emergency: bool = False
     suggestion: str         # 复习节奏建议
     need_relief: bool       # <2.5，前端显示减负入口（用例 7.7）
 
@@ -788,6 +896,9 @@ class EmergencyOut(BaseModel):
 
 
 class ReviewItem(BaseModel):
+    kind: str = 'knowledge'
+    material_id: Optional[int] = None
+    collection_id: Optional[int] = None
     name: str               # 知识点名称
     weight: float           # 权重 0~1
     importance: str = "medium"  # high / medium / low
@@ -803,6 +914,7 @@ class ReviewOut(BaseModel):
     exam_date: date
     days_left: int
     items: list[ReviewItem] = []
+    unassigned: list[ReviewItem] = []
     note: str = ""
 
 
@@ -910,24 +1022,42 @@ class ReliefApply(BaseModel):
 
 # ===================== 管理端（模块 8）=====================
 class CourseCreate(BaseModel):
+    color: str = Field('', pattern=r'^$|^#[0-9a-fA-F]{6}$')
+    is_active: bool = True
     name: str = Field(min_length=1, max_length=64)
-    code: str = ""
-    teacher: str = ""
-    credit: float = 0.0
-    term: str = ""
-    note: str = ""
+    code: str = Field('', max_length=32)
+    teacher: str = Field('', max_length=64)
+    credit: float = Field(0, ge=0, le=100)
+    term: str = Field('', max_length=32)
+    note: str = Field('', max_length=200)
+
+    @field_validator('name')
+    @classmethod
+    def nonblank_course(cls, value):
+        if not value.strip(): raise ValueError('课程名称不能为空')
+        return value.strip()
 
 
 class CourseUpdate(BaseModel):
-    name: Optional[str] = None
-    code: Optional[str] = None
-    teacher: Optional[str] = None
-    credit: Optional[float] = None
-    term: Optional[str] = None
-    note: Optional[str] = None
+    color: Optional[str] = Field(None, pattern=r'^$|^#[0-9a-fA-F]{6}$')
+    is_active: Optional[bool] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=64)
+    code: Optional[str] = Field(None, max_length=32)
+    teacher: Optional[str] = Field(None, max_length=64)
+    credit: Optional[float] = Field(None, ge=0, le=100)
+    term: Optional[str] = Field(None, max_length=32)
+    note: Optional[str] = Field(None, max_length=200)
+
+    @field_validator('name')
+    @classmethod
+    def nonblank_course(cls, value):
+        if value is not None and not value.strip(): raise ValueError('课程名称不能为空')
+        return value.strip() if value is not None else value
 
 
 class CourseOut(BaseModel):
+    color: str = ''
+    is_active: bool = True
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -1004,6 +1134,7 @@ class StatsOverviewOut(BaseModel):
 
 
 class FocusSessionCreate(BaseModel):
+    request_id: Optional[str] = Field(None, min_length=1, max_length=64, pattern=r'^[A-Za-z0-9-]+$')
     exam_id: Optional[int] = None  # 为空表示未指定科目的自由专注
     duration_minutes: int = Field(default=25, ge=1, le=180)
     start_time: Optional[datetime] = None  # 不传则按 end_time - duration 推算
@@ -1057,6 +1188,7 @@ class WeeklyReportRequest(BaseModel):
 
 
 class WeeklySubjectOut(BaseModel):
+    evaluation_source: str = 'unavailable'
     exam_id: Optional[int] = None  # None 表示「未指定科目」的自由专注
     subject: str
     archived: bool = False

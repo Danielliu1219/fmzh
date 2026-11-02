@@ -1,6 +1,7 @@
 """关联删除和提交后的文件清理。业务删除失败时不触碰磁盘。"""
 import os
 import logging
+import json
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -24,6 +25,13 @@ def delete_exam(db: Session, user_id: int, exam_id: int):
         if not locked:
             raise HTTPException(404, "考试不存在")
         exam = db.get(Exam, exam_id, populate_existing=True)
+        # 错题本保留历史，但不让JSON里的旧编号关联到后来复用编号的新考试。
+        for item in db.query(Collection).filter(Collection.user_id==user_id,Collection.item_type=='question'):
+            try: content=json.loads(item.content or '{}')
+            except (ValueError,TypeError): continue
+            if isinstance(content,dict) and content.get('exam_id')==exam_id:
+                content.update(exam_id=None,archived_subject=exam.subject)
+                item.content=json.dumps(content,ensure_ascii=False)
         task_ids = db.query(Task.id).filter(Task.user_id == user_id, Task.exam_id == exam_id)
         for model in (Reminder, Notification):
             db.query(model).filter(model.user_id == user_id, (
@@ -51,8 +59,8 @@ def _key(path: str | Path) -> str:
     return os.path.normcase(str(Path(path).resolve()))
 
 
-def _upload_path(path: str) -> Path:
-    target, root = Path(path).resolve(), UPLOAD_DIR.resolve()
+def _upload_path(path: str, upload_root=None) -> Path:
+    target, root = Path(path).resolve(), (upload_root or UPLOAD_DIR).resolve()
     if target == root or not target.is_relative_to(root) or (target.exists() and not target.is_file()):
         raise HTTPException(409, "上传文件路径异常，请联系管理员处理")
     return target
@@ -65,7 +73,7 @@ def _has_reference(db: Session, path: Path, excluding: int | None = None) -> boo
     return any(_key(value) == _key(path) for (value,) in query.all())
 
 
-def retry_file_cleanup(db: Session, limit: int = 20) -> dict:
+def retry_file_cleanup(db: Session, limit: int = 20, *, upload_root=None) -> dict:
     completed = 0
     ids = [row[0] for row in db.query(FileCleanupJob.id).order_by(FileCleanupJob.created_at).limit(limit)]
     for job_id in ids:
@@ -77,7 +85,7 @@ def retry_file_cleanup(db: Session, limit: int = 20) -> dict:
                 continue
             job = db.get(FileCleanupJob, job_id, populate_existing=True)
             try:
-                path = _upload_path(job.file_path)
+                path = _upload_path(job.file_path, upload_root)
                 if not _has_reference(db, path):
                     path.unlink(missing_ok=True)
             except (OSError, HTTPException) as exc:

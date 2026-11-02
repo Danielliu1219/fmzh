@@ -58,12 +58,12 @@ def calculate(exams, tasks, today):
     density = _exam_density(exams, today)
     backlog, done_rate = _task_rates(tasks, today)
     proximity = _exam_proximity(exams, today)
-    score = round(30 * density + 30 * backlog + 20 * (1 - done_rate) + 20 * proximity, 1)
-    level, suggestion = _level_of(score)
-    return dict(score=score, level=level, suggestion=suggestion,
+    raw = 30 * density + 30 * backlog + 20 * (1 - done_rate) + 20 * proximity
+    level, suggestion = _level_of(raw)
+    return dict(score=round(raw,2), raw_score=raw, level=level, suggestion=suggestion,
                 breakdown=dict(exam_density=round(density, 3), task_backlog=round(backlog, 3),
                                task_done_rate=round(done_rate, 3), exam_proximity=round(proximity, 3)),
-                need_emergency=score >= 60)
+                need_emergency=raw >= 60)
 
 
 def compute_pressure(db, user_id, today=None):
@@ -73,9 +73,10 @@ def compute_pressure(db, user_id, today=None):
 
 
 def record_out(row):
-    level, suggestion = _level_of(row.score)
-    return dict(score=row.score, level=level, suggestion=suggestion, breakdown=json.loads(row.breakdown),
-                need_emergency=row.score >= 60, record_date=row.record_date,
+    raw = row.raw_score if row.raw_score is not None else row.score
+    level, suggestion = _level_of(raw)
+    return dict(score=round(row.score,2), raw_score=row.raw_score, level=level, suggestion=suggestion, breakdown=json.loads(row.breakdown),
+                need_emergency=raw >= 60, record_date=row.record_date,
                 computed_at=utc(row.computed_at), source=row.source, formula_version=row.formula_version)
 
 

@@ -22,6 +22,7 @@
       </el-select>
     </div>
 
+    <p v-if="modelLimits" class="course-context">{{ modelLimits.mock ? '本机演示生成，不消耗真实调用额度。' : `今日真实大模型调用 ${modelLimits.used_calls} / ${modelLimits.daily_limit} 次，剩余 ${modelLimits.remaining_calls} 次（重试也计次）。` }}</p>
     <div v-if="!examId" class="course-context">
       <el-icon><InfoFilled /></el-icon>
       <p><strong>先说说你的情况，再选择课程。</strong>你可以先填写自然语言描述、目标区间和每日总时间；选择课程后，再补充该课基础与薄弱章节。</p>
@@ -1555,6 +1556,10 @@ onBeforeUnmount(() => {
   typeChart?.dispose()
   typeChart = null
 })
+const modelLimits=ref(null)
+const loadModelLimits=async()=>{if(!USE_MOCK){try{modelLimits.value=await aiApi.limits()}catch{}}}
+onMounted(loadModelLimits)
+watch([profileLoading,analyzing,qaLoading],values=>{if(values.every(v=>!v))loadModelLimits()})
 </script>
 
 <style scoped>

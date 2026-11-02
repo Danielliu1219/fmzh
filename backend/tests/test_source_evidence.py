@@ -55,6 +55,8 @@ class EvidenceTests(unittest.TestCase):
         self.client = TestClient(app, raise_server_exceptions=False)
 
     def tearDown(self):
+        from app.services import material_parsing
+        material_parsing.stop()
         self.client.close(); self.db.close(); self.engine.dispose(); self.temp.cleanup()
 
     def material(self, body=BODY, owner=None, exam=None, locations=None):
@@ -170,7 +172,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_new_analysis_saves_verified_references_and_sends_material_ids(self):
         material = self.material()
-        model_result = dict(course='数学', knowledge_points=[dict(name='积分', weight=.8, source='老师重点', citations=[dict(material_id=material.id, quote='积分是求和的极限，是微积分的重要概念。')])],
+        model_result = dict(course='数学', summary='资料复习参考', review_plan=[dict(day=1,date=str(date.today()),title='积分复习',estimated_minutes=30)], knowledge_points=[dict(name='积分', weight=.8, source='老师重点', citations=[dict(material_id=material.id, quote='积分是求和的极限，是微积分的重要概念。')])],
                             quiz=[dict(kind='fill', question='积分题', answer='42', knowledge_point='积分')])
         with patch.object(settings, 'LLM_MOCK', False), patch.object(ai, 'chat_json', return_value=model_result) as model:
             response = self.client.post('/api/ai/analyze', json={'exam_id': self.exam.id})
@@ -219,7 +221,11 @@ class EvidenceTests(unittest.TestCase):
             row=self.db.get(Material, response.json()['id']); self.assertTrue(json.loads(row.text_locations))
             response=self.client.post('/api/materials', data={'title':'invalid'}, files={'file':('bad.pdf', b'%PDF-1.4\ninvalid', 'application/pdf')})
             self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual(response.json()['parse_status'], 'failed')
+            self.assertEqual(response.json()['parse_status'], 'pending')
+            from app.services import material_parsing
+            material_parsing.stop()
+            self.db.expire_all()
+            self.assertEqual(self.db.get(Material,response.json()['id']).parse_status, 'failed')
             self.assertEqual(self.db.get(Material,response.json()['id']).text_locations, '[]')
 
     def test_schema_upgrade_preserves_legacy_text_and_is_repeatable(self):

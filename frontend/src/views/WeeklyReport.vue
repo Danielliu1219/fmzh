@@ -135,7 +135,7 @@
               <div class="metric-list">
                 <div><span>学习时长</span><b class="num">{{ s.minutes }}</b><em>分钟</em></div>
                 <div><span>任务完成</span><b class="num">{{ s.done_tasks }} / {{ s.total_tasks }}</b></div>
-                <div><span>完成率</span><b class="num">{{ Math.round(s.rate * 100) }}%</b></div>
+                <div><span>完成率</span><b class="num">{{ (s.rate * 100).toFixed(2) }}%</b></div>
               </div>
             </div>
 
@@ -179,7 +179,7 @@
           </el-table-column>
           <el-table-column label="完成率" min-width="190">
             <template #default="{ row }">
-              <el-progress :percentage="Math.round(row.rate * 100)" :stroke-width="10" color="#e66348" />
+              <el-progress :percentage="Number((row.rate * 100).toFixed(2))" :stroke-width="10" :format="p => `${p.toFixed(2)}%`" color="#e66348" />
             </template>
           </el-table-column>
         </el-table>
@@ -237,14 +237,14 @@ const kpiTiles = computed(() => {
     {
       label: '任务完成',
       value: `${d.done_tasks} / ${d.total_tasks}`,
-      sub: '本周计划任务',
+      sub: '本周计划或实际完成的任务',
       icon: 'CircleCheck',
       color: 'var(--green)',
       soft: 'var(--green-soft)',
     },
     {
       label: '完成率',
-      value: `${Math.round(d.rate * 100)}%`,
+      value: `${(d.rate * 100).toFixed(2)}%`,
       sub: '本周任务口径',
       icon: 'TrendCharts',
       color: 'var(--teal)',
@@ -305,7 +305,7 @@ const onExportMarkdown = () => {
     '## 学习总览',
     '',
     `- 学习时长：${d.total_minutes} 分钟（活跃 ${d.active_days} 天）`,
-    `- 任务完成：${d.done_tasks} / ${d.total_tasks}（完成率 ${Math.round(d.rate * 100)}%）`,
+    `- 任务完成：${d.done_tasks} / ${d.total_tasks}（完成率 ${(d.rate * 100).toFixed(2)}%）`,
     `- 综合掌握度：${d.overall_mastery ?? '—'} 分`,
     '',
     '## AI 周报总评',
@@ -322,7 +322,7 @@ const onExportMarkdown = () => {
     '|---|---|---|---|---|---|',
     ...d.subjects.map(
       (s) =>
-        `| ${s.subject} | ${s.minutes} 分钟 | ${s.done_tasks}/${s.total_tasks} | ${Math.round(s.rate * 100)}% | ${s.mastery ?? '—'} | ${s.level || '—'} |`,
+        `| ${s.subject} | ${s.minutes} 分钟 | ${s.done_tasks}/${s.total_tasks} | ${(s.rate * 100).toFixed(2)}% | ${s.mastery ?? '—'} | ${s.level || '—'} |`,
     ),
     '',
   )
@@ -341,7 +341,7 @@ const onExportMarkdown = () => {
     ...d.days
       .slice()
       .reverse()
-      .map((day) => `| ${day.date} | ${day.minutes} 分钟 | ${day.done}/${day.total} | ${Math.round(day.rate * 100)}% |`),
+      .map((day) => `| ${day.date} | ${day.minutes} 分钟 | ${day.done}/${day.total} | ${(day.rate * 100).toFixed(2)}% |`),
     '',
     '---',
     '',

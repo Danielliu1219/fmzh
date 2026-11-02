@@ -3,7 +3,7 @@
 学生可把资料、重点题收藏到本子；自测答错的题由 4.6 判分调用 `POST /mistakes` 自动入错题本。
 收藏资料与错题共用 collections 表，用 item_type（material / question）区分。
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -53,6 +53,7 @@ def add_collection(
     payload: CollectionCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     if payload.item_type not in ITEM_TYPES:
         raise HTTPException(
@@ -79,6 +80,7 @@ def add_collection(
             .first()
         )
         if exists is not None:
+            if request is not None: request.state.audit_target = exists.id
             return exists
         item = Collection(
             user_id=user.id,
@@ -93,11 +95,13 @@ def add_collection(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="题目内容不能为空")
         item, _ = save_question(db, user.id, title, payload.content, "manual")
         db.commit()
+        if request is not None: request.state.audit_target = item.id
         return item
 
     db.add(item)
     db.commit()
     db.refresh(item)
+    if request is not None: request.state.audit_target = item.id
     return item
 
 

@@ -105,6 +105,7 @@
 </template>
 
 <script setup>
+import { passwordLengthRule } from '../utils/passwordRule'
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -141,7 +142,7 @@ const registerRules = {
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度 6-32 位', trigger: 'blur' },
+    { validator: passwordLengthRule, trigger: 'blur' },
   ],
   confirmPassword: [
     {
@@ -214,7 +215,7 @@ const resetForm = reactive({ new_password: '', confirm: '' })
 const resetRules = {
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度 6-32 位', trigger: 'blur' },
+    { validator: passwordLengthRule, trigger: 'blur' },
   ],
   confirm: [
     {

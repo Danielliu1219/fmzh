@@ -4,17 +4,35 @@ Mock 逻辑在 prompts.py 中，由调用方按 settings.LLM_MOCK 分支选择�
 """
 import json
 import math
+import asyncio
 
 import httpx
 
 from ..config import settings
 
 
-REQUEST_TIMEOUT = 120
+REQUEST_TIMEOUT = 60
 
 
 class LLMError(Exception):
     """大模型调用或返回解析失败"""
+    def __init__(self,message,*,retryable=False):
+        super().__init__(message)
+        self.retryable=retryable
+
+
+def retry_once(function,*args,**kwargs):
+    """画像、问答及周报仅对暂时传输错误重试一次；分析由业务层统一两次校验。"""
+    try: return function(*args,**kwargs)
+    except LLMError as exc:
+        if not exc.retryable: raise
+    return function(*args,**kwargs)
+
+
+async def _post_with_deadline(url,body,headers):
+    # wait_for约束总等待；仅read timeout会被上游心跳空行反复续期。
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        return await asyncio.wait_for(client.post(url,json=body,headers=headers),timeout=REQUEST_TIMEOUT)
 
 
 def _content(system_prompt, messages, max_tokens, *, json_mode=False):
@@ -33,21 +51,20 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False):
     }
     if json_mode:
         body['response_format'] = {'type':'json_object'}
+    from .model_usage import reserve_call
+    reserve_call()
     try:
-        resp = httpx.post(
-            f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",
-            json=body,
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-        )
+        resp = asyncio.run(_post_with_deadline(f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",body,headers))
         resp.raise_for_status()
-    except httpx.TimeoutException as exc:
-        raise LLMError('大模型请求超时，请稍后重试') from exc
+    except (httpx.TimeoutException,TimeoutError) as exc:
+        raise LLMError('大模型请求超时，请稍后重试',retryable=True) from exc
     except httpx.HTTPStatusError as exc:
         # 不透传上游正文/URL，避免错误页或认证信息进入页面与业务日志。
-        raise LLMError(f'大模型服务请求失败（HTTP {exc.response.status_code}），请检查配置或稍后重试') from exc
-    except (httpx.HTTPError,httpx.InvalidURL) as exc:
-        raise LLMError('无法连接大模型服务，请检查后端服务地址或稍后重试') from exc
+        raise LLMError(f'大模型服务请求失败（HTTP {exc.response.status_code}），请检查配置或稍后重试',retryable=exc.response.status_code==429 or exc.response.status_code>=500) from exc
+    except httpx.InvalidURL as exc:
+        raise LLMError('大模型服务地址不合法，请检查后端配置') from exc
+    except httpx.HTTPError as exc:
+        raise LLMError('无法连接大模型服务，请检查后端服务地址或稍后重试',retryable=True) from exc
     try:
         data = resp.json()
         choice = data['choices'][0]

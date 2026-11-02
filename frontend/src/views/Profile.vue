@@ -7,7 +7,7 @@
 
     <el-row :gutter="20">
       <!-- 编辑个人资料（1.6） -->
-      <el-col :span="14">
+      <el-col :xs="24" :sm="24" :md="14">
         <el-card shadow="never">
           <template #header><b>编辑资料</b></template>
           <el-form :model="form" label-width="90px">
@@ -30,13 +30,13 @@
               </div>
             </el-form-item>
             <el-form-item label="姓名">
-              <el-input v-model="form.nickname" placeholder="姓名/昵称" maxlength="32" />
+              <el-input v-model="form.nickname" placeholder="姓名/昵称" maxlength="64" />
             </el-form-item>
             <el-form-item label="学号">
               <el-input v-model="form.student_no" placeholder="找回密码时用于身份验证" maxlength="32" />
             </el-form-item>
             <el-form-item label="专业">
-              <el-input v-model="form.major" placeholder="如：计算机科学与技术" maxlength="32" />
+              <el-input v-model="form.major" placeholder="如：计算机科学与技术" maxlength="64" />
             </el-form-item>
             <el-form-item label="年级">
               <el-input v-model="form.grade" placeholder="如：2024级" maxlength="16" />
@@ -60,7 +60,7 @@
       </el-col>
 
       <!-- 账号安全（1.5 修改密码 / 1.7 注销账号） -->
-      <el-col :span="10">
+      <el-col :xs="24" :sm="24" :md="10">
         <el-card shadow="never" class="sec-card">
           <template #header><b>账号安全</b></template>
           <div class="sec-item">
@@ -108,6 +108,7 @@
 </template>
 
 <script setup>
+import { passwordLengthRule } from '../utils/passwordRule'
 import { onMounted, reactive, ref } from 'vue'
 import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRouter } from 'vue-router'
@@ -137,7 +138,7 @@ const pwdRules = {
   old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
   new_password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度 6-32 位', trigger: 'blur' },
+    { validator: passwordLengthRule, trigger: 'blur' },
   ],
   confirm: [
     {
@@ -273,6 +274,8 @@ onMounted(load)
 }
 .swatches {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 8px;
 }
 .swatch {
@@ -320,4 +323,5 @@ onMounted(load)
   color: var(--text-mid);
   padding: 4px 0;
 }
+@media(max-width:767px){.page-head{display:block}.avatar-row{flex-wrap:wrap}.swatches{max-width:100%}.sec-card{margin-top:16px}.sec-item>div{min-width:0;flex:1}.sec-item .el-button{flex-shrink:0}.info-row{gap:12px;flex-wrap:wrap}}
 </style>

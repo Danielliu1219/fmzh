@@ -24,7 +24,7 @@ export function feedbackReplan(result, examId, tasks, exams, dailyMinutes, today
   const priorities = {}
   const candidate = tasks.map(task => {
     if (task.exam_id !== examId || task.source !== 'ai' || task.is_done) return { ...task }
-    const matches = weights.filter(w => task.title.includes(w.name) || w.name.includes(task.title))
+    const matches = weights.filter(w => task.knowledge_point === w.name || task.title.includes(w.name) || w.name.includes(task.title))
     const weight = Math.max(...matches.map(w => w.new_weight))
     const priority = matches.length ? (weight >= 0.7 ? 1 : weight >= 0.45 ? 2 : 3) : task.priority
     priorities[task.id] = priority
@@ -36,7 +36,7 @@ export function feedbackReplan(result, examId, tasks, exams, dailyMinutes, today
     weights.forEach(weight => {
       const title = `专项练习：${weight.name}`
       if (counts[weight.name] && !own.some(t => t.title === title && !t.is_done)) {
-        candidate.push({ id: nextId++, exam_id: examId, title, plan_date: today, estimated_minutes: 30, priority: 1, source: 'ai', is_done: false, exam: result.course })
+        candidate.push({ id: nextId++, exam_id: examId, title, knowledge_point: weight.name, plan_date: today, estimated_minutes: 30, priority: 1, source: 'ai', is_done: false, exam: result.course })
       }
     })
   }
@@ -44,13 +44,13 @@ export function feedbackReplan(result, examId, tasks, exams, dailyMinutes, today
   const fingerprint = JSON.stringify([result, tasks, exams, dailyMinutes, today, mistakes])
   const plan = scheduling.assignments.filter(a => a.exam_id === examId).map(a => ({
     day: Math.round((Date.parse(a.date + 'T00:00:00Z') - Date.parse(today + 'T00:00:00Z')) / 86400000) + 1,
-    date: a.date, title: a.title, estimated_minutes: a.minutes,
+    date: a.date, title: a.title, knowledge_point: candidate.find(t => t.id === a.task_id)?.knowledge_point || '', estimated_minutes: a.minutes,
     priority: candidate.find(t => t.id === a.task_id)?.priority || 2,
     detail: '依据当前学习反馈在全科共享预算内调整',
   }))
   plan.push(...own.filter(t => !t.is_done && t.start_time).map(t => ({
     day: Math.round((Date.parse(t.plan_date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000)+1,
-    date: t.plan_date, title: t.title, estimated_minutes: t.estimated_minutes, priority: priorities[t.id] || t.priority,
+    date: t.plan_date, title: t.title, knowledge_point: t.knowledge_point || '', estimated_minutes: t.estimated_minutes, priority: priorities[t.id] || t.priority,
     detail: `保留固定时段 ${t.start_time}–${t.end_time}；${t.detail || ''}`,
   })))
   plan.sort((a, b) => a.date.localeCompare(b.date) || a.priority-b.priority)

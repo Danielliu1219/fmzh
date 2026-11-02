@@ -1,9 +1,10 @@
 """文件解析：把上传文件提取成纯文本
 
-MVP 支持：TXT / PDF / DOCX
-扩展预留：PPT（python-pptx）、图片 OCR
+支持 TXT / PDF / DOCX / PPT / PPTX / PNG / JPEG；OCR仅在本机运行。
 """
 from pathlib import Path
+from threading import Lock
+_ocr_lock=Lock()
 
 # 解析出的文本上限（字符），避免超大文件占满内存
 MAX_TEXT_LENGTH = 200_000
@@ -37,6 +38,46 @@ def parse_document(path: Path, file_type: str) -> tuple[str, list[dict]]:
             for row_number, row in enumerate(table.rows, 1):
                 chunks.append((' | '.join(cell.text for cell in row.cells), 'table_row', row_number, f'表 {table_number} · 第 {row_number} 行'))
         text, parts = _join_parts(chunks)
+    elif file_type == 'pptx':
+        from pptx import Presentation
+        slides = []
+        for index, slide in enumerate(Presentation(str(path)).slides,1):
+            lines = []
+            for shape in slide.shapes:
+                if shape.has_text_frame: lines.append(shape.text)
+                if shape.has_table:
+                    lines.extend(' | '.join(cell.text for cell in row.cells) for row in shape.table.rows)
+            slides.append(('\n'.join(lines),'slide',index,f'第 {index} 张幻灯片'))
+        text, parts = _join_parts(slides)
+    elif file_type == 'ppt':
+        import olefile
+        import struct
+        with olefile.OleFileIO(str(path)) as document:
+            raw = document.openstream('PowerPoint Document').read(40*1024*1024+1)
+        if len(raw)>40*1024*1024: raise ValueError('PPT内容过大')
+        lines=[]
+        text_length = records = 0
+        def atoms(start,end,depth=0):
+            nonlocal text_length, records
+            if depth>32: raise ValueError('PPT结构嵌套过深')
+            cursor=start
+            while cursor+8<=end and text_length<MAX_TEXT_LENGTH:
+                records += 1
+                if records > 200000: raise ValueError('PPT记录过多')
+                info,kind,size=struct.unpack_from('<HHI',raw,cursor)
+                body=cursor+8;stop=body+size
+                if stop>end: raise ValueError('PPT记录损坏')
+                if info & 15 == 15: atoms(body,stop,depth+1)
+                elif kind in (4000,4008):
+                    line=raw[body:stop].decode('utf-16-le' if kind==4000 else 'cp1252',errors='replace')[:MAX_TEXT_LENGTH-text_length]
+                    lines.append(line)
+                    text_length += len(line)
+                cursor=stop
+        atoms(0,len(raw))
+        text, parts = _join_parts([(line,'paragraph',i,f'PPT文本段 {i}') for i,line in enumerate(lines,1)])
+    elif file_type in ('png','jpg','jpeg'):
+        lines = _parse_image(path)
+        text, parts = _join_parts([(line,'image_line',i,f'图片识别第 {i} 行') for i,line in enumerate(lines,1)])
     else:
         raise ValueError(f"暂不支持的文件类型：{file_type}")
     left = len(text) - len(text.lstrip())
@@ -47,6 +88,25 @@ def parse_document(path: Path, file_type: str) -> tuple[str, list[dict]]:
         if start < end and retained[start:end].strip():
             locations.append({**part, 'start': start, 'end': end})
     return retained, locations
+
+
+def _parse_image(path):
+    from PIL import Image
+    import numpy as np
+    # 首次初始化会下载免费的OCR权重；用户图片仅在本机推理，不发送第三方。
+    with Image.open(path) as pic:
+        pic = pic.convert('RGB')
+        pic.thumbnail((2400,2400))
+        with _ocr_lock:
+            output = _ocr_engine()(np.asarray(pic))
+    return list(output.txts) if output.txts is not None else []
+
+
+from functools import lru_cache
+@lru_cache(maxsize=1)
+def _ocr_engine():
+    from rapidocr import RapidOCR
+    return RapidOCR(params={'EngineConfig.onnxruntime.intra_op_num_threads':2})
 
 
 def _join_parts(chunks):

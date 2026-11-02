@@ -21,7 +21,7 @@
     </svg>
     <div class="ring-content">
       <slot
-        ><strong>{{ percentage }}<small>%</small></strong></slot
+        ><strong>{{ percentage.toFixed(2) }}<small>%</small></strong></slot
       >
     </div>
   </div>
@@ -34,7 +34,7 @@ const props = defineProps({
   label: { type: String, default: '任务完成率' },
 })
 const percentage = computed(() =>
-  Math.round(Math.min(100, Math.max(0, Number(props.value) || 0))),
+  Number(Math.min(100, Math.max(0, Number(props.value) || 0)).toFixed(2)),
 )
 </script>
 

@@ -6,6 +6,7 @@
 
 LLM_MOCK=true 时使用本文件的启发式提取器/示例数据，无需 API Key。
 """
+from .pressure import beijing_day
 import json
 import re
 from datetime import date, timedelta
@@ -128,7 +129,7 @@ ANALYZE_SYSTEM_PROMPT = """你是"期末周别慌"系统的复习分析助手。
     {"type": "计算题", "count": 8, "frequency": 0.4, "basis": "近 4 年每年约 2 道", "source": "历年题", "citations": []}
   ],
   "review_plan": [
-    {"day": 1, "date": "2026-09-08", "title": "当天复习主题", "estimated_minutes": 180, "priority": 1, "detail": "具体做什么"}
+    {"day": 1, "date": "2026-09-08", "title": "当天复习主题", "knowledge_point": "前述知识点的准确名称", "estimated_minutes": 180, "priority": 1, "detail": "具体做什么"}
   ],
   "quiz": [
     {"kind": "single", "question": "题目", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "answer": "B", "analysis": "解析", "knowledge_point": "对应知识点", "accepted_answers": []}
@@ -158,7 +159,7 @@ def build_analyze_user_prompt(profile_text: str, materials_text: str) -> str:
 
 def mock_generate_analysis(subject: str, profile: dict) -> dict:
     """Mock 分析：返回结构完整、内容通用的示例数据（标注了 Mock）"""
-    today = date.today()
+    today = beijing_day()
     kp_templates = [
         ("核心概念与定义", 0.95, "high", "历年题多次出现，属于必得分内容", "历年题"),
         ("高频计算与解题方法", 0.9, "high", "老师课堂上反复强调", "老师重点"),
@@ -259,6 +260,7 @@ def mock_generate_analysis(subject: str, profile: dict) -> dict:
                 "day": i + 1,
                 "date": (today + timedelta(days=i)).isoformat(),
                 "title": f"（Mock）第{i + 1}天：{plan_titles[i]}",
+                "knowledge_point": kp_templates[i % len(kp_templates)][0],
                 "estimated_minutes": minutes,
                 "priority": 1 if i < 2 else 2,
                 "detail": "结合资料中的重点内容复习，完成后做对应自测题。",

@@ -150,7 +150,7 @@ class DailyPressureTests(unittest.TestCase):
         with self.factory() as db:before=[(r.id,r.title,r.plan_date,r.is_done) for r in db.query(Task)]
         DailyPressure.__table__.drop(self.engine)
         Base.metadata.create_all(self.engine);Base.metadata.create_all(self.engine)
-        self.assertEqual(len(inspect(self.engine).get_table_names()),22)
+        self.assertEqual(set(inspect(self.engine).get_table_names()),set(Base.metadata.tables))
         with self.factory() as db:self.assertEqual(before,[(r.id,r.title,r.plan_date,r.is_done) for r in db.query(Task)])
         self.assertEqual(daily_pressure.run_due(self.factory,NOW,'startup')['created'],2)
 

@@ -17,7 +17,7 @@ from app.config import settings
 from app.database import Base, get_db
 from app.models.models import Analysis, Exam, Material, StudySetting, Task, User, UserProfile
 from app.routers import ai, features
-from app.schemas.schemas import AnalysisResult, KnowledgePoint, PlanItem
+from app.schemas.schemas import AnalysisResult, KnowledgePoint, PlanItem, QuizItem
 from app.services.recommendation_strategy import apply_strategy, refresh_strategy, split_minutes, strategy_for
 from app.services.score_targets import SCORE_BANDS, band_strategy
 from app.utils.security import get_current_user
@@ -31,7 +31,8 @@ def profile(band='B+', **changes):
 def analysis():
     return AnalysisResult(course='数学', summary='仅参考资料',
         knowledge_points=[KnowledgePoint(name='极限', weight=.8), KnowledgePoint(name='积分', weight=.8), KnowledgePoint(name='级数', weight=.2)],
-        review_plan=[PlanItem(day=1, date='2000-01-01', title='极限', estimated_minutes=120), PlanItem(day=2, date='2000-01-01', title='积分', estimated_minutes=120)])
+        review_plan=[PlanItem(day=1, date='2000-01-01', title='极限', estimated_minutes=120), PlanItem(day=2, date='2000-01-01', title='积分', estimated_minutes=120)],
+        quiz=[QuizItem(kind='fill', question='极限示例题', answer='42')])
 
 
 class RecommendationStrategyTests(unittest.TestCase):

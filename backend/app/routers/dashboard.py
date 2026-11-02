@@ -1,4 +1,5 @@
 """首页聚合与统计接口"""
+from ..services.pressure import beijing_day
 import json
 from datetime import date, datetime, time, timedelta
 
@@ -23,15 +24,17 @@ from ..schemas.schemas import (
     WeeklySubjectOut,
 )
 from ..services import prompts
-from ..services.focus_history import archived_subjects
-from ..services.llm_client import LLMError, chat_json
+from ..services.focus_history import archived_subjects, counted_sessions
+from ..services.task_statistics import window as task_window
+from ..services.llm_client import LLMError, chat_json, retry_once
 from ..utils.security import get_current_user
+from ..services.model_usage import metered
 
 router = APIRouter()
 
 
 def _days_left(exam_date: date) -> int:
-    return max((exam_date - date.today()).days, 0)
+    return max((exam_date - beijing_day()).days, 0)
 
 
 WEEKLY_LEVELS = ("优秀", "良好", "一般", "薄弱")
@@ -60,7 +63,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     )
     today_tasks = (
         db.query(Task)
-        .filter(Task.user_id == user.id, Task.plan_date == date.today())
+        .filter(Task.user_id == user.id, Task.plan_date == beijing_day())
         .order_by(Task.is_done, Task.priority, Task.sort_order, Task.id)
         .all()
     )
@@ -93,7 +96,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
                 duration_minutes=exam.duration_minutes,
                 total_tasks=total,
                 done_tasks=done,
-                progress=round(done / total, 3) if total else 0.0,
+                progress=(done / total) if total else 0.0,
             )
         )
 
@@ -102,7 +105,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     overall = {
         "total": total_all,
         "done": done_all,
-        "rate": round(done_all / total_all, 3) if total_all else 0.0,
+        "rate": (done_all / total_all) if total_all else 0.0,
     }
     return DashboardOut(exams=exam_list, today_tasks=today_tasks, overall=overall)
 
@@ -112,13 +115,14 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     response_model=WeeklyReportOut,
     summary="备考周报：近 7 天学习统计 + 大模型各科掌握度评测（FMZH-SRS-5.3.0）",
 )
+@metered
 def weekly_report(
     payload: WeeklyReportRequest | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     # 周报窗口：默认最近 7 天（含今天）；指定起始日时最多到第 7 天，且不统计未来
-    today = date.today()
+    today = beijing_day()
     week_start = payload.week_start if payload else None
     if week_start is None:
         end = today
@@ -137,11 +141,12 @@ def weekly_report(
         db.query(FocusSession)
         .filter(
             FocusSession.user_id == user.id,
-            FocusSession.start_time >= start_dt,
+            FocusSession.end_time > start_dt,
             FocusSession.start_time < end_dt,
         )
         .all()
     )
+    sessions=counted_sessions(sessions,start_dt,end_dt)
     minutes_by_exam: dict[int | None, int] = {}
     minutes_by_day: dict[str, int] = {}
     for s in sessions:
@@ -149,31 +154,11 @@ def weekly_report(
         key = s.start_time.date().isoformat()
         minutes_by_day[key] = minutes_by_day.get(key, 0) + s.duration_minutes
 
-    # 窗口内任务：只统计本区间计划的任务，完成率不会因为未来的任务被拉低
-    tasks = (
-        db.query(Task)
-        .filter(
-            Task.user_id == user.id,
-            Task.plan_date >= start,
-            Task.plan_date <= end,
-        )
-        .all()
-    )
-    totals_by_exam: dict[int, int] = {}
-    dones_by_exam: dict[int, int] = {}
-    total_by_day: dict[str, int] = {}
-    done_by_day: dict[str, int] = {}
-    for t in tasks:
-        key = t.plan_date.isoformat()
-        totals_by_exam[t.exam_id] = totals_by_exam.get(t.exam_id, 0) + 1
-        total_by_day[key] = total_by_day.get(key, 0) + 1
-        if t.is_done:
-            dones_by_exam[t.exam_id] = dones_by_exam.get(t.exam_id, 0) + 1
-            done_by_day[key] = done_by_day.get(key, 0) + 1
-
-    total_tasks = len(tasks)
-    done_tasks = sum(dones_by_exam.values())
-    rate = round(done_tasks / total_tasks, 3) if total_tasks else 0.0
+    window=task_window(db,user.id,start,end)
+    totals_by_exam,dones_by_exam=window['totals'],window['dones']
+    total_by_day,done_by_day=window['total_days'],window['done_days']
+    total_tasks,done_tasks=window['total'],window['done']
+    rate = (done_tasks / total_tasks) if total_tasks else 0.0
     total_minutes = sum(minutes_by_exam.values())
 
     # 科目 = 有专注记录 ∪ 有任务的科目
@@ -193,7 +178,7 @@ def weekly_report(
                 minutes=minutes_by_exam.get(eid, 0),
                 total_tasks=total,
                 done_tasks=done,
-                rate=round(done / total, 3) if total else 0.0,
+                rate=(done / total) if total else 0.0,
                 exam_date=exam.exam_date,
                 days_left=_days_left(exam.exam_date),
             )
@@ -232,7 +217,7 @@ def weekly_report(
             if settings.LLM_MOCK:
                 ai = prompts.mock_generate_weekly_report(metrics)
             else:
-                ai = chat_json(
+                ai = retry_once(chat_json,
                     prompts.WEEKLY_REPORT_SYSTEM_PROMPT,
                     prompts.build_weekly_report_user_prompt(start.isoformat(), end.isoformat(), metrics),
                     max_tokens=2000,
@@ -248,37 +233,31 @@ def weekly_report(
             if name:
                 by_subject[name] = item
 
-    # 合并评测：大模型缺项/非法值时用启发式评分兜底，保证每科都有结果
+    # 无有效模型分数时只展示统计，不能把规则估算冒充掌握度。
     for s in subjects:
         if s.exam_id is None:
             continue
-        fallback = prompts.mock_subject_evaluation(
-            {
-                "subject": s.subject,
-                "minutes": s.minutes,
-                "total_tasks": s.total_tasks,
-                "done_tasks": s.done_tasks,
-                "rate": s.rate,
-                "days_left": s.days_left,
-            }
-        )
         item = by_subject.get(s.subject) or {}
-        try:
-            mastery = int(item.get("mastery"))
-        except (TypeError, ValueError):
-            mastery = fallback["mastery"]
-        mastery = max(0, min(100, mastery))
+        value = item.get('mastery')
+        if not isinstance(value,(int,float)) or isinstance(value,bool) or not 0<=value<=100 or int(value)!=value:
+            s.mastery = None
+            s.level = '未评测'
+            s.comment = '大模型未返回有效的本科目评测，仅展示学习统计。'
+            s.suggestions = []
+            s.evaluation_source = 'unavailable'
+            continue
+        mastery = int(value)
         s.mastery = mastery
+        s.evaluation_source = 'mock' if settings.LLM_MOCK else 'model'
         s.level = item.get("level") if item.get("level") in WEEKLY_LEVELS else _mastery_level(mastery)
-        s.comment = str(item.get("comment") or "").strip() or fallback["comment"]
-        s.suggestions = _str_list(item.get("suggestions")) or fallback["suggestions"]
+        s.comment = str(item.get("comment") or "").strip() or '本次评测未附说明'
+        s.suggestions = _str_list(item.get("suggestions"))
 
     scored = [s.mastery for s in subjects if s.exam_id is not None and s.mastery is not None]
     overall_mastery = None
-    try:
-        overall_mastery = int(ai.get("overall_mastery"))
-    except (TypeError, ValueError):
-        pass
+    value = ai.get('overall_mastery')
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 100 and int(value) == value:
+        overall_mastery = int(value)
     if overall_mastery is None and scored:
         overall_mastery = int(round(sum(scored) / len(scored)))
     if overall_mastery is not None:
@@ -302,11 +281,16 @@ def weekly_report(
     if not advice and metrics:
         advice = ["保持每天至少 1 个番茄钟的节奏。", "考前留出整卷自测时间，及时清理错题。"]
 
-    note = ""
+    note = '；'.join(filter(None,[
+        '当前为本机演示评测，未调用真实大模型' if settings.LLM_MOCK else '',
+        '部分科目缺少有效大模型评测，不生成这些科目的掌握度分数' if any(s.exam_id is not None and s.mastery is None for s in subjects) else ''
+    ]))
     if not subjects:
         note = "该区间还没有学习记录，完成一些任务或用番茄钟专注一次后再生成周报。"
     elif not metrics:
         note = "该区间只有自由专注或已删除考试的历史时长，保留分钟数，不生成当前科目掌握度评测。"
+    note='；'.join(filter(None,[note,'完成任务按北京时间实际打卡日期归属；分母为本区间计划或实际完成的任务，每项只计一次',
+        f"{window['unknown']}项旧任务无完成时刻，未推算其完成日期" if window['unknown'] else '']))
 
     # 每日序列：窗口内每天补一条，保证报表连续
     daily: list[WeeklyDayOut] = []
@@ -321,7 +305,7 @@ def weekly_report(
                 minutes=minutes_by_day.get(key, 0),
                 total=total,
                 done=done,
-                rate=round(done / total, 3) if total else 0.0,
+                rate=(done / total) if total else 0.0,
             )
         )
         cur += timedelta(days=1)
@@ -358,21 +342,22 @@ def stats_overview(
     db: Session = Depends(get_db),
 ):
     days = max(1, min(days, 90))
-    end = date.today()
+    end = beijing_day()
     start = end - timedelta(days=days - 1)
     start_dt = datetime.combine(start, time.min)
     end_dt = datetime.combine(end + timedelta(days=1), time.min)
 
-    # 番茄钟：窗口内一次取回，Python 侧按科目 / 按天累加（口径同 focus.py，半开区间只比 start_time）
+    # 与今日专注共用区间去重和跨日切分，历史原始记录保持不变。
     sessions = (
         db.query(FocusSession)
         .filter(
             FocusSession.user_id == user.id,
-            FocusSession.start_time >= start_dt,
+            FocusSession.end_time > start_dt,
             FocusSession.start_time < end_dt,
         )
         .all()
     )
+    sessions = counted_sessions(sessions, start_dt, end_dt)
     minutes_by_exam: dict[int | None, int] = {}
     minutes_by_day: dict[str, int] = {}
     for s in sessions:
@@ -395,22 +380,8 @@ def stats_overview(
     )
 
     # 历史报表：窗口内按计划日期聚合任务
-    window_tasks = (
-        db.query(Task)
-        .filter(
-            Task.user_id == user.id,
-            Task.plan_date >= start,
-            Task.plan_date <= end,
-        )
-        .all()
-    )
-    total_by_day: dict[str, int] = {}
-    done_by_day: dict[str, int] = {}
-    for t in window_tasks:
-        key = t.plan_date.isoformat()
-        total_by_day[key] = total_by_day.get(key, 0) + 1
-        if t.is_done:
-            done_by_day[key] = done_by_day.get(key, 0) + 1
+    window=task_window(db,user.id,start,end)
+    total_by_day,done_by_day=window['total_days'],window['done_days']
 
     # 按科目汇总：番茄钟涉及的科目 ∪ 有任务的科目
     exams = {e.id: e for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
@@ -429,7 +400,7 @@ def stats_overview(
                 minutes=minutes_by_exam.get(eid, 0),
                 total_tasks=total,
                 done_tasks=done,
-                rate=round(done / total, 3) if total else 0.0,
+                rate=(done / total) if total else 0.0,
                 exam_date=exam.exam_date,
                 days_left=_days_left(exam.exam_date),
             )
@@ -462,7 +433,7 @@ def stats_overview(
                 minutes=minutes_by_day.get(key, 0),
                 total=total,
                 done=done,
-                rate=round(done / total, 3) if total else 0.0,
+                rate=(done / total) if total else 0.0,
             )
         )
         cur += timedelta(days=1)
@@ -476,7 +447,7 @@ def stats_overview(
         total_minutes=sum(minutes_by_exam.values()),
         total_tasks=total_all,
         done_tasks=done_all,
-        rate=round(done_all / total_all, 3) if total_all else 0.0,
+        rate=(done_all / total_all) if total_all else 0.0,
         subjects=subjects,
         days=daily,
     )
@@ -534,7 +505,7 @@ def exam_stats(
         days_left=_days_left(exam.exam_date),
         total_tasks=total,
         done_tasks=done,
-        rate=round(done / total, 3) if total else 0.0,
+        rate=(done / total) if total else 0.0,
         by_date=list(by_date.values()),
         knowledge_points=knowledge_points,
     )

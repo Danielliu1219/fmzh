@@ -71,7 +71,7 @@
           <div class="cover-progress">
             <ProgressRing :value="overall.rate * 100" label="全部科目复习总进度"
               ><strong
-                >{{ Math.round(overall.rate * 100) }}<small>%</small></strong
+                >{{ (overall.rate * 100).toFixed(2) }}<small>%</small></strong
               ></ProgressRing
             ><span
               ><b>所有科目，一起向前</b
@@ -308,6 +308,9 @@
                 '记录 1～5 分的心情，结合复习情况获得节奏建议。'
               }}
             </p>
+            <p v-if="mood?.plan_suggestion" class="mood-explain">{{ mood.plan_suggestion }}</p>
+            <p v-if="mood?.support_message" class="mood-explain">{{ mood.support_message }}</p>
+            <p v-if="mood?.need_emergency" class="mood-explain">连续 {{ mood.low_days }} 天状态偏低，可以查看救急清单或适当降低备考目标。</p>
             <div class="mood-bottom">
               <span v-if="mood"
                 >综合评分 <b class="num">{{ mood.composite_score }}</b> /
@@ -921,7 +924,7 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
-const rateText = computed(() => `${Math.round(overall.value.rate * 100)}%`)
+const rateText = computed(() => `${(overall.value.rate * 100).toFixed(2)}%`)
 const todayTotal = computed(
   () => tasks.value.filter((t) => t.plan_date === getToday()).length,
 )
@@ -1171,20 +1174,16 @@ const onMoodChange = async (val) => {
     const completion = todayTotal.value
       ? (5 * todayDone.value) / todayTotal.value
       : 0
-    const score =
-      Math.round(
-        (0.4 * emotion +
-          0.3 * completion +
-          0.2 * (5 - pressure.value.score / 20)) *
-          100,
-      ) / 100
+    const raw = 0.4 * emotion + 0.3 * completion + 0.2 * (5 - (pressure.value.raw_score ?? pressure.value.score) / 20) + 0.1 * (mockMood.streak_item || 0)
+    const score = Number(raw.toFixed(2))
     mood.value = {
       ...mockMood,
       mood_score: val,
       composite_score: score,
-      need_relief: score < 2.5,
+      raw_score: raw,
+      need_relief: raw < 2.5,
       suggestion:
-        score < 2.5
+        raw < 2.5
           ? '状态偏低，建议减轻今日任务或暂停半天'
           : '按自己的节奏复习，记得穿插休息',
     }
@@ -1260,16 +1259,11 @@ const confirmRelief = async () => {
 const loadFocus = async () => {
   const [today, sessions] = await Promise.all([
     focusApi.today(),
-    focusApi.sessions(),
+    dashboardApi.statsOverview(7),
   ])
   focusData.value = today
   goalInput.value = today.goal_minutes
-  const cutoff = new Date()
-  cutoff.setHours(0, 0, 0, 0)
-  cutoff.setDate(cutoff.getDate() - 6)
-  weekFocus.value = sessions
-    .filter((s) => new Date(s.start_time) >= cutoff)
-    .reduce((sum, s) => sum + s.duration_minutes, 0)
+  weekFocus.value = sessions.total_minutes
 }
 
 const onDurationChange = () => {
@@ -1287,6 +1281,7 @@ const tickFocus = () => {
 
 // 把本轮"自上次落盘以来"已专注的整分钟写入统计；不足 1 分钟不计。
 // 暂停 / 重置 / 倒计时结束都走这里，靠 recordedMin 保证不重复计。
+const pendingFocusRecord = ref(null)
 const flushFocus = async () => {
   const elapsedMin = Math.floor(
     (focusMinutes.value * 60 - Math.max(remainSec.value, 0)) / 60,
@@ -1309,11 +1304,16 @@ const flushFocus = async () => {
     extras.value = { ...extras.value, focus_minutes: weekFocus.value }
     return pending
   }
-  await focusApi.createSession({
-    exam_id: focusExamId.value,
-    duration_minutes: pending,
-  })
-  recordedMin.value = elapsedMin
+  if (!pendingFocusRecord.value) {
+    const end = new Date()
+    pendingFocusRecord.value = { elapsedMin, data: {
+      request_id: crypto.randomUUID(), exam_id: focusExamId.value, duration_minutes: pending,
+      start_time: new Date(end.getTime() - pending * 60000).toISOString(), end_time: end.toISOString(),
+    }}
+  }
+  await focusApi.createSession(pendingFocusRecord.value.data)
+  recordedMin.value = pendingFocusRecord.value.elapsedMin
+  pendingFocusRecord.value = null
   await loadFocus()
   timeslotRevision.value++
   extras.value = { ...extras.value, focus_minutes: weekFocus.value }
