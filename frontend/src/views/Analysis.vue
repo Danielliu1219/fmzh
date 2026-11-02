@@ -398,9 +398,10 @@
             <b>思维导图与记忆卡片</b>
             <span class="hint">提纲可视化 · 点击卡片翻面背诵</span>
           </template>
-          <div ref="mindmapRef" class="mindmap-chart"></div>
+          <MindmapTree :data="study.mindmap" />
           <el-divider />
           <div v-if="cards.length" class="flash-area">
+            <p class="flash-instructions">先看正面回忆要点，再翻面核对资料；可切换或打乱卡片反复自查。</p>
             <div
               class="flash-card"
               :class="{ flipped: cardFlipped }"
@@ -703,6 +704,7 @@ import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail, mockMastery } fr
 import { masteryLabels, masteryTypes } from '../utils/mastery'
 import { feedbackReplan } from '../utils/replan'
 import ScoreGoalSlider from '../components/ScoreGoalSlider.vue'
+import MindmapTree from '../components/MindmapTree.vue'
 import { scoreBand, scoreBandText } from '../utils/scoreTargets'
 import * as echarts from 'echarts'
 
@@ -800,8 +802,6 @@ const completeForm = reactive({
 const study = ref(null)
 const cardIndex = ref(0)
 const cardFlipped = ref(false)
-const mindmapRef = ref(null)
-let mindmapChart = null
 const cards = computed(() => study.value?.cards || [])
 const currentCard = computed(() => cards.value[cardIndex.value] || null)
 
@@ -1058,56 +1058,7 @@ const buildMockStudy = () => {
   }
 }
 
-const renderMindmap = async () => {
-  await nextTick()
-  if (!mindmapRef.value || !study.value) return
-  if (!mindmapChart) mindmapChart = echarts.init(mindmapRef.value)
-  mindmapChart.setOption(
-    {
-      tooltip: { trigger: 'item', triggerOn: 'mousemove' },
-      series: [
-        {
-          type: 'tree',
-          orient: 'LR',
-          data: [study.value.mindmap],
-          top: '3%',
-          left: '8%',
-          bottom: '3%',
-          right: '18%',
-          symbol: 'circle',
-          symbolSize: 9,
-          initialTreeDepth: 3,
-          expandAndCollapse: true,
-          label: {
-            position: 'left',
-            verticalAlign: 'middle',
-            align: 'right',
-            fontSize: 12,
-            color: '#0c1614',
-            width: 200,
-            overflow: 'break',
-          },
-          leaves: {
-            label: { position: 'right', align: 'left', width: 220, overflow: 'break' },
-          },
-          lineStyle: { color: '#d9d4c3', width: 1.2, curveness: 0.5 },
-          itemStyle: { color: '#e66348', borderColor: '#e66348' },
-          emphasis: { focus: 'descendant' },
-          animationDuration: 400,
-        },
-      ],
-    },
-    true,
-  )
-  mindmapChart.resize()
-}
-
 const loadStudy = async () => {
-  // 重建图表，避免 v-if 切换后复用已脱离 DOM 的旧实例
-  if (mindmapChart) {
-    mindmapChart.dispose()
-    mindmapChart = null
-  }
   if (!examId.value) {
     study.value = null
     return
@@ -1123,7 +1074,6 @@ const loadStudy = async () => {
   }
   cardIndex.value = 0
   cardFlipped.value = false
-  await renderMindmap()
 }
 
 const prevCard = () => {
@@ -1189,8 +1139,7 @@ const renderTypeChart = async () => {
   typeChart.resize()
 }
 
-const resizeMindmap = () => {
-  mindmapChart?.resize()
+const resizeCharts = () => {
   typeChart?.resize()
 }
 
@@ -1523,7 +1472,7 @@ watch([examId, analysisId], () => { evidenceVisible.value = false; evidenceData.
 usePendingWork(() => ({busy:[analyzing.value && '分析生成',profileLoading.value && '画像保存',replanApplying.value && '反馈重排',qaLoading.value && '资料问答'].filter(Boolean),warning:[analysisBaseline.value && analysisBaseline.value!==analysisSnapshot() && '备考描述或目标表单有未保存修改，离开会丢弃当前页面的草稿。',[...courseDrafts.values()].some(d => d.dirty) && '其他科目还有只保存在当前页面的备考草稿，离开会丢弃。',qaInput.value.trim() && '资料问答有尚未发送的文字，离开会丢弃。'].filter(Boolean)}))
 
 onMounted(async () => {
-  window.addEventListener('resize', resizeMindmap)
+  window.addEventListener('resize', resizeCharts)
   if (USE_MOCK) {
     exams.value = structuredClone(mockStudySession.exams)
     brief.daily_hours = mockStudySession.daily_minutes / 60
@@ -1547,9 +1496,7 @@ watch([step, analysisId], async () => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', resizeMindmap)
-  mindmapChart?.dispose()
-  mindmapChart = null
+  window.removeEventListener('resize', resizeCharts)
   typeChart?.dispose()
   typeChart = null
 })
@@ -1929,10 +1876,7 @@ watch([profileLoading,analyzing,qaLoading],values=>{if(values.every(v=>!v))loadM
   color: var(--text-mid);
   font-size: 13px;
 }
-.mindmap-chart {
-  width: 100%;
-  height: 460px;
-}
+.flash-instructions { margin: 0; color: var(--text-low); font-size: 12px; line-height: 1.8; text-align: center; }
 .type-block {
   margin-bottom: 8px;
 }
