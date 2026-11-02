@@ -256,7 +256,7 @@ class LlmTransportTests(unittest.TestCase):
             result = self.call('POST', '/ai/analyze', {'exam_id': 1})
         body = self.upstream.requests[-1]['body']
         self.assertEqual(body['max_tokens'], settings.LLM_ANALYSIS_MAX_TOKENS)
-        self.assertEqual(body['max_tokens'], 16000)
+        self.assertEqual(body['max_tokens'], 65536)
         self.assertIn('完整的复习建议', result['result']['summary'])
         self.assertEqual(len(self.upstream.requests), 1)
 
@@ -273,3 +273,22 @@ class LlmTransportTests(unittest.TestCase):
         self.upstream.add('{"ok":true}', heartbeats=30)
         with self.assertRaisesRegex(llm_client.LLMError, '超时'):
             llm_client.chat_json('system', 'question', timeout=.05)
+
+
+class ResponseStatsTests(unittest.TestCase):
+    def test_usage_separates_reasoning_from_answer_without_recording_text(self):
+        payload = envelope('private answer')
+        payload['choices'][0]['message']['reasoning_content'] = 'private reasoning'
+        payload['usage'] = {'prompt_tokens': 100, 'completion_tokens': 16000,
+            'completion_tokens_details': {'reasoning_tokens': 15000}}
+        stats = llm_client.response_stats(payload, 65536)
+        self.assertEqual((stats['reasoning_tokens'], stats['answer_tokens']), (15000, 1000))
+        self.assertNotIn('private', json.dumps(stats))
+        self.assertEqual(stats['answer_chars'], len('private answer'))
+
+    def test_missing_or_invalid_usage_does_not_invent_token_counts(self):
+        for usage in (None, 'bad', {'completion_tokens': True}, {'completion_tokens': -1},
+                {'completion_tokens': 10, 'completion_tokens_details': {'reasoning_tokens': 99}}):
+            stats = llm_client.response_stats({'usage': usage, 'choices': []}, 65536)
+            self.assertIsNone(stats['answer_tokens'])
+            self.assertEqual(stats['finish_reason'], 'unknown')

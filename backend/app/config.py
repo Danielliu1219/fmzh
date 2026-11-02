@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
     # 思考模式保留；分析需要容纳思考与完整JSON，按实际生成量计费。
-    LLM_ANALYSIS_MAX_TOKENS: int = Field(16000, ge=4000, le=65536)
-    LLM_ANALYSIS_TIMEOUT_SECONDS: int = Field(180, ge=60, le=300)
+    LLM_ANALYSIS_MAX_TOKENS: int = Field(65536, ge=4000, le=131072)
+    LLM_ANALYSIS_TIMEOUT_SECONDS: int = Field(420, ge=60, le=900)
 
 
 settings = Settings()

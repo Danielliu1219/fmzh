@@ -5,6 +5,7 @@ Mock 逻辑在 prompts.py 中，由调用方按 settings.LLM_MOCK 分支选择�
 import json
 import math
 import asyncio
+import logging
 from urllib.parse import urlsplit
 
 import httpx
@@ -13,6 +14,25 @@ from ..config import settings
 
 
 REQUEST_TIMEOUT = 60
+logger = logging.getLogger(__name__)
+
+
+def response_stats(data, limit):
+    """仅提取用量与长度，不记录提示词、思考正文、资料、Key或响应正文。"""
+    def number(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10**9 else None
+    usage = data.get('usage') if isinstance(data.get('usage'), dict) else {}
+    details = usage.get('completion_tokens_details') if isinstance(usage.get('completion_tokens_details'), dict) else {}
+    completion, reasoning = number(usage.get('completion_tokens')), number(details.get('reasoning_tokens'))
+    choices = data.get('choices') or []
+    choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    message = choice.get('message') if isinstance(choice.get('message'), dict) else {}
+    return {'max_tokens': limit, 'prompt_tokens': number(usage.get('prompt_tokens')),
+        'completion_tokens': completion, 'reasoning_tokens': reasoning,
+        'answer_tokens': completion - reasoning if completion is not None and reasoning is not None and completion >= reasoning else None,
+        'reasoning_chars': len(message.get('reasoning_content')) if isinstance(message.get('reasoning_content'), str) else 0,
+        'answer_chars': len(message.get('content')) if isinstance(message.get('content'), str) else 0,
+        'finish_reason': choice.get('finish_reason') if choice.get('finish_reason') in ('stop','length','content_filter','tool_calls') else 'unknown'}
 
 
 class LLMError(Exception):
@@ -79,7 +99,10 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False, timeout=No
         data = resp.json()
         choice = data['choices'][0]
         if choice.get('finish_reason') == 'length':
-            raise LLMError('大模型输出达到单次Token上限，未生成完整方案；本次未自动重试，原计划已保留',code='output_truncated')
+            stats = response_stats(data, max_tokens)
+            logger.warning('model_response_truncated stats=%s', stats)
+            counts = f"；思考 {stats['reasoning_tokens']}、正文 {stats['answer_tokens']} Token" if stats['answer_tokens'] is not None else ''
+            raise LLMError(f'大模型输出达到单次Token上限（{max_tokens}{counts}），未生成完整方案；本次未自动重试，原计划已保留',code='output_truncated')
         content = choice['message']['content']
         if not isinstance(content,str) or not content.strip():
             raise LLMError('大模型未返回有效文字，请重试')
