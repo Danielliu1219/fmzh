@@ -107,9 +107,15 @@ def export_calendar(exams, tasks, user_id: int) -> bytes:
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//fmzh//Study Calendar//CN", "CALSCALE:GREGORIAN", "X-WR-CALNAME:" + escape_text("期末周别慌！备考日历")]
     subjects = {exam.id: exam.subject for exam in exams}
     for exam in exams:
+        clock = getattr(exam, 'exam_time', None)
+        if clock:
+            start = datetime.combine(exam.exam_date, clock, tzinfo=LOCAL_ZONE)
+            end = start + timedelta(minutes=exam.duration_minutes)
+            dates = [f"DTSTART:{start.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}", f"DTEND:{end.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"]
+        else:
+            dates = [f"DTSTART;VALUE=DATE:{exam.exam_date:%Y%m%d}", f"DTEND;VALUE=DATE:{exam.exam_date + timedelta(days=1):%Y%m%d}"]
         lines.extend(["BEGIN:VEVENT", f"UID:exam-{exam.id}-{user_id}@fmzh", f"DTSTAMP:{stamp}",
-                      f"DTSTART;VALUE=DATE:{exam.exam_date:%Y%m%d}",
-                      f"DTEND;VALUE=DATE:{exam.exam_date + timedelta(days=1):%Y%m%d}",
+                      *dates,
                       "SUMMARY:" + escape_text("【考试】" + exam.subject),
                       "LOCATION:" + escape_text(exam.location or "地点待定"),
                       "DESCRIPTION:" + escape_text(f"时长 {exam.duration_minutes} 分钟｜{exam.note or ''}"), "END:VEVENT"])

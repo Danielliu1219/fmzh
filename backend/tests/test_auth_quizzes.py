@@ -55,7 +55,7 @@ class AuthQuizTests(unittest.TestCase):
         self.temp.cleanup()
 
     def register(self, name):
-        r = self.client.post('/api/auth/register', json=dict(username=name, password='StudyQA123', student_no='20240001'))
+        r = self.client.post('/api/auth/register', json=dict(username=name, password='StudyQA123', student_no='20240001' if name == 'owner' else '20240001_'+name))
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 

@@ -3,9 +3,11 @@
 计时结束后记录一条专注记录，时长按科目归入学习统计；
 学生可设定当日学习时长目标，系统统计达成情况。
 """
+from ..services.pressure import beijing_day
 from datetime import date, datetime, time, timedelta
+import hashlib
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -60,7 +62,19 @@ def create_session(
     payload: FocusSessionCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
+    from ..services.task_conflicts import lock_schedule
+    lock_schedule(db, user.id, auth_key=user.auth_key)
+    if payload.request_id:
+        prior = db.query(FocusSession).filter_by(user_id=user.id, request_id=payload.request_id).first()
+        if prior:
+            if (prior.exam_id != payload.exam_id or prior.duration_minutes != payload.duration_minutes
+                    or (payload.start_time is not None and local_time(payload.start_time)!=prior.start_time)
+                    or (payload.end_time is not None and local_time(payload.end_time)!=prior.end_time)):
+                raise HTTPException(409, '专注保存标识已用于其他记录，请刷新后重试')
+            if request is not None: request.state.audit_target = prior.id
+            return _to_out(prior, _subject_map(db, user, {prior.exam_id}).get(prior.exam_id, ''))
     if payload.exam_id is not None:
         exam = (
             db.query(Exam)
@@ -77,6 +91,15 @@ def create_session(
             or abs((end_time-start_time).total_seconds()/60-payload.duration_minutes) > 1):
         raise HTTPException(status_code=422, detail="专注起止需与记录分钟一致，且不能晚于当前时间")
 
+    duplicate = db.query(FocusSession).filter_by(user_id=user.id, exam_id=payload.exam_id,
+        start_time=start_time, end_time=end_time, duration_minutes=payload.duration_minutes).first()
+    if duplicate:
+        if request is not None: request.state.audit_target = duplicate.id
+        return _to_out(duplicate, _subject_map(db, user, {duplicate.exam_id}).get(duplicate.exam_id,''))
+    if db.query(FocusSession.id).filter(FocusSession.user_id == user.id,
+        FocusSession.start_time < end_time, FocusSession.end_time > start_time).first():
+        raise HTTPException(409, '这段时间已有专注记录，不能重复计时')
+
     session = FocusSession(
         user_id=user.id,
         exam_id=payload.exam_id,
@@ -84,10 +107,12 @@ def create_session(
         start_time=start_time,
         end_time=end_time,
         duration_minutes=payload.duration_minutes,
+        request_id=payload.request_id or hashlib.sha256(f'{payload.exam_id}:{start_time.isoformat()}:{end_time.isoformat()}:{payload.duration_minutes}'.encode()).hexdigest(),
     )
     db.add(session)
     db.commit()
     db.refresh(session)
+    if request is not None: request.state.audit_target = session.id
 
     subject = _subject_map(db, user, {payload.exam_id}).get(payload.exam_id, "")
     return _to_out(session, subject)
@@ -95,18 +120,20 @@ def create_session(
 
 @router.get("/today", response_model=FocusTodayOut, summary="今日专注汇总与目标达成")
 def today_summary(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    today = date.today()
+    today = beijing_day()
     start, end = _day_range(today)
     sessions = (
         db.query(FocusSession)
         .filter(
             FocusSession.user_id == user.id,
-            FocusSession.start_time >= start,
+            FocusSession.end_time > start,
             FocusSession.start_time < end,
         )
         .order_by(FocusSession.start_time)
         .all()
     )
+    from ..services.focus_history import counted_sessions
+    sessions=counted_sessions(sessions,start,end)
 
     goal = (
         db.query(FocusGoal)
@@ -138,7 +165,7 @@ def today_summary(user: User = Depends(get_current_user), db: Session = Depends(
         total_minutes=total_minutes,
         goal_minutes=goal_minutes,
         achieved=goal_minutes > 0 and total_minutes >= goal_minutes,
-        session_count=len(sessions),
+        session_count=len({s.id for s in sessions}),
         by_exam=by_exam,
     )
 
@@ -149,7 +176,7 @@ def set_goal(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    goal_date = payload.goal_date or date.today()
+    goal_date = payload.goal_date or beijing_day()
     goal = (
         db.query(FocusGoal)
         .filter(FocusGoal.user_id == user.id, FocusGoal.goal_date == goal_date)

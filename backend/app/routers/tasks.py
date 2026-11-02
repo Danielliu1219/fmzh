@@ -1,7 +1,8 @@
 """任务接口：今日待办 / 按条件查询 / 手动添加 / 编辑 / 冲突预检 / 打卡"""
+from ..services.pressure import beijing_day
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -40,7 +41,7 @@ def _get_own_task(db: Session, user: User, task_id: int) -> Task:
 def today_tasks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return (
         db.query(Task)
-        .filter(Task.user_id == user.id, Task.plan_date == date.today())
+        .filter(Task.user_id == user.id, Task.plan_date == beijing_day())
         .order_by(Task.is_done, Task.priority, Task.sort_order, Task.id)
         .all()
     )
@@ -69,10 +70,13 @@ def preview_task(payload: TaskPreviewRequest, user: User = Depends(get_current_u
 @router.post("", response_model=TaskCreateOut, summary="手动添加任务或有限重复任务")
 def create_task(
     payload: TaskCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return task_service.create_tasks(db, user.id, payload)
+    result = task_service.create_tasks(db, user.id, payload)
+    request.state.audit_target = result['id']
+    return result
 
 
 @router.post("/check-conflict", response_model=ConflictCheckOut, summary="任务固定时段重叠及全科日预算预检（2.8）")

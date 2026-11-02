@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 # backend/ 目录（所有相对路径以此为基准，避免启动目录不同导致找不到文件）
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -23,7 +24,13 @@ class Settings(BaseSettings):
 
     # 文件上传
     UPLOAD_DIR: str = "uploads"
-    MAX_UPLOAD_SIZE_MB: int = 20
+    MAX_UPLOAD_SIZE_MB: int = Field(20, ge=1, le=20)
+    USER_STORAGE_LIMIT_MB: int = Field(256, ge=1)
+    LLM_DAILY_LIMIT: int = Field(50, ge=1)
+    BACKUP_ENABLED: bool = True
+    BACKUP_INTERVAL_HOURS: float = Field(24, gt=0, le=24)
+    BACKUP_DIR: str = ''
+    BACKUP_KEY_FILE: str = ''
 
     # 大模型：LLM_MOCK=true 时走内置 Mock，不需要 API Key
     LLM_MOCK: bool = True

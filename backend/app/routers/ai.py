@@ -5,12 +5,13 @@
 
 LLM_MOCK=true 时使用 prompts.py 中的 Mock 实现，无需 API Key。
 """
+from ..services.pressure import beijing_day
 import json
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from fractions import Fraction
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -30,6 +31,7 @@ from ..models.models import (
 from ..schemas.schemas import (
     AnalysisOut,
     AnalysisResult,
+    GeneratedAnalysis,
     AnalyzeRequest,
     MindmapOut,
     MasteryOut,
@@ -48,7 +50,7 @@ from ..schemas.schemas import (
     EvidenceOut,
 )
 from ..services import prompts
-from ..services.llm_client import LLMError, chat_json, chat_text
+from ..services.llm_client import LLMError, chat_json, chat_text, retry_once
 from ..services.material_weight import default_weight_for
 from ..services.plan_service import create_tasks_from_plan
 from ..services.study_planner import daily_budget
@@ -60,6 +62,7 @@ from ..services.recommendation_strategy import apply_strategy, strategy_context
 from ..services.study_cards import build_cards, build_mindmap
 from ..services.source_evidence import attach_references, references_for, excerpt_for, item_title
 from ..utils.security import get_current_user
+from ..services.model_usage import metered
 
 router = APIRouter()
 
@@ -225,10 +228,12 @@ def _build_materials_text(materials: list[Material]) -> str:
 
 
 @router.post("/profile", response_model=ProfileOut, summary="第一次调用：自然语言 -> 用户画像（不完整时返回缺失字段）")
+@metered
 def create_profile(
     payload: ProfileRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     user_id, auth_key = user.id, user.auth_key
     lock_schedule(db, user_id, auth_key=auth_key)
@@ -256,7 +261,7 @@ def create_profile(
         if settings.LLM_MOCK:
             data = prompts.mock_extract_profile(raw_text)
         else:
-            data = chat_json(
+            data = retry_once(chat_json,
                 prompts.PROFILE_SYSTEM_PROMPT,
                 prompts.build_profile_user_prompt(subject, raw_text),
                 max_tokens=1000,
@@ -292,6 +297,7 @@ def create_profile(
     profile.missing_fields = json.dumps(data["missing_fields"], ensure_ascii=False)
     db.commit()
 
+    if request is not None: request.state.audit_target = profile.id
     return ProfileOut(
         exam_id=payload.exam_id,
         raw_text=raw_text,
@@ -324,15 +330,17 @@ def saved_profile(exam_id: int, user: User = Depends(get_current_user), db: Sess
 
 
 @router.post("/analyze", response_model=AnalysisOut, summary="第二次调用：画像 + 资料 -> 复习分析（并生成每日任务）")
+@metered
 def analyze(
     payload: AnalyzeRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     user_id, auth_key = user.id, user.auth_key
     lock_schedule(db, user_id, auth_key=auth_key)
     exam = _get_own_exam(db, user, payload.exam_id)
-    if exam.exam_date < date.today():
+    if exam.exam_date < beijing_day():
         raise HTTPException(409, "该考试已经结束，不能再生成备考任务")
 
     profile = (
@@ -365,11 +373,11 @@ def analyze(
         )
 
     # 先看所有考试再估算本科份额，避免每一科都占满同一份全科预算。
-    all_exams = db.query(Exam).filter(Exam.user_id == user.id, Exam.exam_date >= date.today()).all()
-    weights = {e.id: Fraction(1, max(1, (e.exam_date - date.today()).days)) for e in all_exams}
+    all_exams = db.query(Exam).filter(Exam.user_id == user.id, Exam.exam_date >= beijing_day()).all()
+    weights = {e.id: Fraction(1, max(1, (e.exam_date - beijing_day()).days)) for e in all_exams}
     budget = daily_budget(db, user.id)
     share = max(1, int(budget * weights[exam.id] / sum(weights.values())))
-    remaining_days = max(1, (exam.exam_date - date.today()).days)
+    remaining_days = max(1, (exam.exam_date - beijing_day()).days)
     planning_profile = SimpleNamespace(
         available_days=min(profile.available_days, remaining_days), daily_hours=share / 60,
         target=profile.target, learning_status=profile.learning_status,
@@ -397,18 +405,21 @@ def analyze(
                     prompts.build_analyze_user_prompt(context, materials_text),
                     max_tokens=4000,
                 )
-            result = AnalysisResult.model_validate(data)  # 校验大模型输出格式
-            prepare_questions([q.model_dump() for q in result.quiz])
+            candidate = GeneratedAnalysis.model_validate(data)
+            prepare_questions([q.model_dump() for q in candidate.quiz])
+            result = candidate
             break
         except (LLMError, ValidationError, ValueError) as e:
             last_err = e
     if result is None:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI 生成失败：{last_err}"
+            status_code=status.HTTP_502_BAD_GATEWAY, detail='大模型结果缺少必需内容或格式不合法，请重新生成；原计划已保留' if isinstance(last_err,ValidationError) else f"AI 生成失败：{last_err}"
         )
 
     # 内容/时间侧重（4.11）与原文依据在真实模型和 Mock 两条路径上统一校验。
     apply_strategy(result, planning_profile)
+    if not result.review_plan:
+        raise HTTPException(502, '生成的计划没有可执行任务，请检查可用时间并重新生成；原计划已保留')
     ensure_recommendation_basis(result)
     ensure_question_type_analysis(result)
     attach_references(result, materials)
@@ -429,6 +440,7 @@ def analyze(
         db.rollback()
         raise
 
+    if request is not None: request.state.audit_target = analysis.id
     return AnalysisOut(
         id=analysis.id,
         exam_id=analysis.exam_id,
@@ -622,6 +634,7 @@ def create_qa_conversation(
     payload: QaConversationCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     exam = _get_own_exam(db, user, payload.exam_id)
     conversation = QaConversation(
@@ -632,6 +645,7 @@ def create_qa_conversation(
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
+    if request is not None: request.state.audit_target = conversation.id
     return _qa_conversation_out(db, conversation)
 
 
@@ -667,6 +681,7 @@ def delete_qa_conversation(
     response_model=QaConversationOut,
     summary="资料问答：提问并保存多轮对话（用例 4.5）",
 )
+@metered
 def ask_qa(
     conversation_id: int,
     payload: QaAskIn,
@@ -697,25 +712,28 @@ def ask_qa(
             detail="该科目还没有可用的复习资料，请先上传 TXT/PDF/Word 资料",
         )
 
-    # 先落用户问题，再取最近若干条消息作为多轮上下文
-    db.add(QaMessage(conversation_id=conversation.id, role="user", content=question))
-    db.flush()
+    # 模型等待前只复制输入，不持有SQLite写锁，也不保存未得到回答的提问。
+    uid, auth_key, subject = user.id, user.auth_key, exam.subject
+    original_created, original_updated = conversation.created_at, conversation.updated_at
+    original_materials = materials_text
     history_rows = (
         db.query(QaMessage)
         .filter(QaMessage.conversation_id == conversation.id)
         .order_by(QaMessage.id.desc())
-        .limit(QA_HISTORY_LIMIT)
+        .limit(QA_HISTORY_LIMIT-1)
         .all()
     )
     history = [
         {"role": row.role, "content": row.content} for row in reversed(history_rows)
-    ]
+    ] + [{'role':'user','content':question}]
+    latest_id = history_rows[0].id if history_rows else None
+    db.rollback()
 
     try:
         if settings.LLM_MOCK:
-            answer = prompts.mock_qa_answer(exam.subject, question, materials_text)
+            answer = prompts.mock_qa_answer(subject, question, materials_text)
         else:
-            answer = chat_text(
+            answer = retry_once(chat_text,
                 prompts.build_qa_system_prompt(materials_text), history, max_tokens=1200
             )
     except LLMError as exc:
@@ -724,6 +742,14 @@ def ask_qa(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI 回答失败：{exc}"
         ) from exc
 
+    lock_schedule(db,uid,auth_key=auth_key)
+    conversation = db.query(QaConversation).filter(QaConversation.id==conversation_id,QaConversation.user_id==uid).first()
+    latest = db.query(QaMessage.id).filter(QaMessage.conversation_id==conversation_id).order_by(QaMessage.id.desc()).first()
+    current_materials = db.query(Material).filter(Material.user_id==uid,Material.exam_id==conversation.exam_id,Material.parse_status=='done').order_by(Material.id).all() if conversation else []
+    if (conversation is None or conversation.created_at!=original_created or conversation.updated_at!=original_updated
+            or (latest[0] if latest else None)!=latest_id or _build_materials_text(current_materials)[:QA_MATERIALS_LIMIT]!=original_materials):
+        raise HTTPException(409,'会话或资料已变化，请查看最新消息后重新提问')
+    db.add(QaMessage(conversation_id=conversation.id, role="user", content=question))
     db.add(QaMessage(conversation_id=conversation.id, role="assistant", content=answer))
     conversation.updated_at = datetime.now()
     db.commit()

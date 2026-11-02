@@ -8,6 +8,10 @@ $ErrorActionPreference='Stop'
 $repoRoot=$PSScriptRoot
 $pythonPath=Join-Path $repoRoot 'backend/.venv/Scripts/python.exe'
 $frontendPath=Join-Path $repoRoot 'frontend'
+function Assert-PythonVersion($Executable){
+    & $Executable -c 'import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)'
+    if($LASTEXITCODE -ne 0){throw '需要Python 3.12或更高版本；请用新版本建立backend/.venv，已有数据库与uploads无需删除'}
+}
 if($Check){
     if(-not(Test-Path -LiteralPath $pythonPath)){throw '先运行 .\start.ps1 -PrepareOnly 安装依赖和构建'}
     & $pythonPath (Join-Path $repoRoot 'backend/run.py') --check
@@ -15,19 +19,26 @@ if($Check){
 }
 if(-not(Test-Path -LiteralPath $pythonPath)){
     $pythonCommand=Get-Command python -ErrorAction Stop
+    Assert-PythonVersion $pythonCommand.Source
     & $pythonCommand.Source -m venv (Join-Path $repoRoot 'backend/.venv')
     if($LASTEXITCODE -ne 0){throw '创建Python虚拟环境失败'}
 }
+Assert-PythonVersion $pythonPath
 & $pythonPath -m pip install -r (Join-Path $repoRoot 'backend/requirements.lock.txt')
 if($LASTEXITCODE -ne 0){throw '后端依赖安装失败，请修复后重试'}
 & $pythonPath -m pip check
 if($LASTEXITCODE -ne 0){throw '后端依赖冲突，请运行 .\start.ps1 -Setup'}
 $npmCommand=Get-Command npm.cmd -ErrorAction Stop
+$nodeVersion=(& node --version).TrimStart('v')
+if([version]$nodeVersion -lt [version]'22.12.0'){throw '前端需要Node.js 22.12或更高版本'}
 Push-Location -LiteralPath $frontendPath
 try{
-    if($Setup -or -not(Test-Path -LiteralPath 'node_modules/vite/bin/vite.js')){
+    $lockHash=(Get-FileHash -LiteralPath 'package-lock.json' -Algorithm SHA256).Hash
+    $installedHash=if(Test-Path -LiteralPath 'node_modules/.fmzh-lock-sha256'){(Get-Content -LiteralPath 'node_modules/.fmzh-lock-sha256' -Raw).Trim()}else{''}
+    if($Setup -or $installedHash -ne $lockHash -or -not(Test-Path -LiteralPath 'node_modules/vite/bin/vite.js')){
         & $npmCommand.Source ci --no-audit --no-fund
         if($LASTEXITCODE -ne 0){throw '前端依赖安装失败，请修复后重试'}
+        Set-Content -LiteralPath 'node_modules/.fmzh-lock-sha256' -Value $lockHash
     }
     & $npmCommand.Source run build:app
     if($LASTEXITCODE -ne 0){throw '完整应用前端构建失败'}

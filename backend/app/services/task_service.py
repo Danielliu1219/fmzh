@@ -52,11 +52,14 @@ def normalize_fields(data):
 def expand(db, user_id, payload, *, lock=False):
     exam = own_exam(db, user_id, payload.exam_id, lock=lock)
     fields = normalize_fields(payload.model_dump(exclude={'exclude_task_id'}))
+    custom_dates = fields.pop('repeat_dates', [])
+    if fields['repeat_rule'] == 'custom' and custom_dates and not fields['repeat_until']:
+        fields['repeat_until'] = max(custom_dates)
     until = fields['repeat_until'] or fields['plan_date']
     if until > exam.exam_date:
         raise HTTPException(422, '任务日期和重复截止日不能晚于考试日期')
     try:
-        days = occurrence_dates(fields['plan_date'], fields['repeat_rule'], fields['repeat_until'])
+        days = occurrence_dates(fields['plan_date'], fields['repeat_rule'], fields['repeat_until'], custom_dates)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     return [{**fields, 'plan_date': day} for day in days]

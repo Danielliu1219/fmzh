@@ -24,6 +24,27 @@ test('每天、工作日和每周按截止日期展开，跨年闰日正确', ()
   assert.deepEqual(occurrenceDates(TODAY), [TODAY])
 })
 
+test('自定义日期排序去重，并在所有选中日检查全科预算', () => {
+  const dates=['2026-11-02','2026-10-29','2026-11-02']
+  assert.deepEqual(occurrenceDates(TODAY,'custom','2026-11-02',dates),[TODAY,'2026-11-02'])
+  const tasks=[{id:4,exam_id:2,plan_date:'2026-11-02',estimated_minutes:90}]
+  const preview=buildTaskPreview(payload({repeat_rule:'custom',repeat_dates:dates}),tasks,exams,120)
+  assert.equal(preview.count,2); assert.equal(preview.total_minutes,120)
+  assert.equal(preview.warnings[0].date,'2026-11-02')
+  assert.equal(preview.items[0].repeat_until,'2026-11-02')
+  assert.throws(()=>occurrenceDates(TODAY,'custom','2026-11-02',[]))
+  assert.throws(()=>occurrenceDates(TODAY,'custom','2026-11-02',['2026-11-03']))
+  assert.throws(()=>buildTaskPreview(payload({repeat_rule:'custom',repeat_dates:['2027-05-01']}),[],exams,120))
+})
+
+test('反馈重排用显式知识点关联，并保留计划关联信息', () => {
+  const result={course:'数学',knowledge_points:[{name:'积分',weight:.7}]}
+  const tasks=[{id:1,exam_id:1,title:'刷真题一套',knowledge_point:'积分',plan_date:TODAY,estimated_minutes:60,priority:3,source:'ai',is_done:false}]
+  const preview=feedbackReplan(result,1,tasks,exams,120,TODAY)
+  assert.equal(preview.candidate[0].priority,1)
+  assert.ok(preview.plan.every(p=>p.knowledge_point==='积分'))
+})
+
 test('重复任务拒绝无截止、超180项、超一年、无工作日及非法字段', () => {
   for (const args of [[TODAY,'daily'],[TODAY,'none',TODAY],[TODAY,'daily','2027-04-27'],[TODAY,'weekly','2027-10-31'],['2026-10-31','weekdays','2026-11-01'],['2026-02-30','none']]) assert.throws(() => occurrenceDates(...args))
   for (const change of [{ title:' ' },{ estimated_minutes:0 },{ difficulty:'invalid' },{ location:'x'.repeat(121) },{ detail:'x'.repeat(2001) }]) assert.throws(() => normalizeTask(payload(change)))

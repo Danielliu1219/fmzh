@@ -20,7 +20,7 @@ from ..config import UPLOAD_DIR
 from ..database import Base, get_db
 from ..models.models import Analysis, Exam, FocusGoal, FocusSession, Material, StudySetting, Task, User, UserProfile
 from ..models.models import Notification, NotificationPreference, Reminder, Collection, MoodRecord, QuizAttempt
-from ..models.models import QaConversation, QaMessage, IcsImportReceipt, DailyPressure
+from ..models.models import QaConversation, QaMessage, IcsImportReceipt, DailyPressure, FileCleanupJob, AIJob, ModelUsage
 from ..schemas.schemas import (
     ChangePasswordRequest,
     ResetConfirmRequest,
@@ -62,11 +62,15 @@ def register(payload: UserRegister, request: Request, db: Session = Depends(get_
     exists = db.query(User).filter(User.username == payload.username).first()
     if exists:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="账号已存在，请换一个账号")
+    number = payload.student_no.strip()
+    if number and db.query(User.id).filter(func.trim(User.student_no) == number).first():
+        raise HTTPException(409, '学号已被使用，请核对学号或找回已有账号')
     user = User(
         username=payload.username,
         hashed_password=hash_password(payload.password),
         nickname=payload.nickname or payload.username,
-        student_no=payload.student_no,
+        student_no=number,
+        student_no_key=number or None,
         major=payload.major,
         grade=payload.grade,
     )
@@ -84,16 +88,23 @@ def register(payload: UserRegister, request: Request, db: Session = Depends(get_
             db.rollback()
             if db.query(User).filter(User.username == payload.username).first():
                 raise HTTPException(409, "账号已存在，请换一个账号")
+            if number and db.query(User.id).filter(func.trim(User.student_no) == number).first():
+                raise HTTPException(409, '学号已被使用，请核对学号或找回已有账号')
             if retry == 2:
                 raise HTTPException(409, "注册请求冲突，请重试")
     db.refresh(user)
     request.state.audit_actor = {"id": user.id, "name": user.username}
+    request.state.audit_target = user.id
     return _token_response(user)
 
 
 @router.post("/login", response_model=TokenResponse, summary="登录（连续 3 次失败锁定 30 分钟）")
 def login(payload: UserLogin, request: Request, db: Session = Depends(get_db)):
     request.state.audit_actor = {"name": payload.username}
+    # 账号状态的读取/加一/锁定在同一写事务内，避免并发失败覆盖计数。
+    if not db.query(User).filter(User.username == payload.username).update({User.id: User.id}, synchronize_session=False):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
+    db.expire_all()
     user = db.query(User).filter(User.username == payload.username).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
@@ -104,7 +115,6 @@ def login(payload: UserLogin, request: Request, db: Session = Depends(get_db)):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_locked_message(user))
         user.locked_until = None
         user.failed_attempts = 0
-        db.commit()
 
     if not verify_password(payload.password, user.hashed_password):
         user.failed_attempts = (user.failed_attempts or 0) + 1
@@ -206,9 +216,22 @@ def update_me(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    for field, value in payload.model_dump(exclude_none=True).items():
+    from ..services.task_conflicts import lock_schedule
+    lock_schedule(db, user.id, auth_key=user.auth_key)
+    data = payload.model_dump(exclude_none=True)
+    if 'student_no' in data:
+        number = data['student_no'].strip()
+        if number and db.query(User.id).filter(User.id != user.id, func.trim(User.student_no) == number).first():
+            raise HTTPException(409, '学号已被其他账号使用')
+        data['student_no'] = number
+        user.student_no_key = number or None
+    for field, value in data.items():
         setattr(user, field, value)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, '学号已被使用，请刷新后重试')
     db.refresh(user)
     return user
 
@@ -232,14 +255,8 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
             raise HTTPException(409, "上传文件路径异常，请联系管理员处理")
         if db.query(Material).filter(Material.file_path == material.file_path, Material.user_id != user.id).first() is None:
             paths.append(path)  # 演示库可能多用户共用同一文件，仍有引用时保留。
-    for path in paths:
-        path.unlink(missing_ok=True)
-    user_dir = UPLOAD_DIR / str(user.id)
-    if user_dir.exists() and not any(user_dir.iterdir()):
-        user_dir.rmdir()
-
     # 清理该用户全部业务数据（需求口径：清理或匿名化，此处物理删除）
-    for model in (DailyPressure, IcsImportReceipt, Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
+    for model in (AIJob, ModelUsage, DailyPressure, IcsImportReceipt, Notification, Reminder, NotificationPreference, StudySetting, FocusSession, FocusGoal, Collection, MoodRecord, QuizAttempt, Task, Analysis, UserProfile):
         db.query(model).filter(model.user_id == user.id).delete()
     # 资料问答（4.5）：先删消息再删会话
     conversation_ids = [
@@ -252,7 +269,18 @@ def deactivate_me(user: User = Depends(get_current_user), db: Session = Depends(
         )
     db.query(QaConversation).filter(QaConversation.user_id == user.id).delete()
     db.query(Material).filter(Material.user_id == user.id).delete()
+    from ..services import deletion
+    for path in set(paths):
+        if not deletion._has_reference(db, path) and db.query(FileCleanupJob.id).filter(FileCleanupJob.file_path == str(path)).first() is None:
+            db.add(FileCleanupJob(file_path=str(path)))
     db.query(Exam).filter(Exam.user_id == user.id).delete()
     db.delete(user)  # users 表记录随注销删除，同账号名可重新注册
     db.commit()
-    return {"ok": True, "message": "账号已注销，个人数据已清理"}
+    # 提交成功后才操作磁盘；失败任务仍持久化，管理员可重试。
+    try:
+        deletion.retry_file_cleanup(db, upload_root=UPLOAD_DIR)
+        pending = any(db.query(FileCleanupJob.id).filter(FileCleanupJob.file_path == str(path)).first() is not None for path in paths)
+    except Exception:
+        db.rollback()
+        pending = True
+    return {"ok": True, "cleanup_pending": pending, "message": "账号已注销，文件清理待重试" if pending else "账号已注销，个人数据已清理"}

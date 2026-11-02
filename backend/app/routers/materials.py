@@ -5,8 +5,11 @@ import json
 from datetime import date, datetime, time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import sessionmaker
+from starlette.concurrency import run_in_threadpool
 
 from ..config import UPLOAD_DIR, settings
 from ..database import get_db
@@ -34,7 +37,7 @@ from ..utils.security import get_current_user
 
 router = APIRouter()
 
-ALLOWED_TYPES = {"txt", "pdf", "docx"}
+ALLOWED_TYPES = {"txt", "pdf", "docx", "ppt", "pptx", "png", "jpg", "jpeg"}
 
 # 资料七类来源（需求分析 3.3.3.2 / FMZH-USR-0029），外加「其他」作为兜底默认值
 SOURCE_TYPES = ("历年题", "老师重点", "平时作业", "课堂笔记", "教材章节", "实验报告", "练习题", "其他")
@@ -80,14 +83,15 @@ def _get_own_material(db: Session, user: User, material_id: int) -> Material:
     return material
 
 
-@router.post("", response_model=MaterialOut, summary="上传复习资料（TXT/PDF/DOCX，上传后自动解析）")
+@router.post("", response_model=MaterialOut, summary="上传资料；文档、课件和图片在后台解析")
 async def upload_material(
+    request: Request,
     file: UploadFile = File(...),
-    title: str = Form(...),
+    title: str = Form(..., max_length=128),
     exam_id: int | None = Form(None),
     source_type: str = Form("其他"),
-    description: str = Form(""),
-    tags: str = Form(""),
+    description: str = Form("", max_length=500),
+    tags: str = Form("", max_length=100),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -98,6 +102,9 @@ async def upload_material(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     _check_source_type(source_type)
+    chosen_title=title.strip() or (file.filename or '未命名资料')
+    if len(chosen_title)>128:
+        raise HTTPException(422,'默认资料标题超过128字，请填写一个较短的标题')
     if exam_id is not None:
         exam = db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user.id).first()
         if exam is None:
@@ -108,10 +115,17 @@ async def upload_material(
     content = await file.read(max_bytes + 1)
     try:
         check_size(content, settings.MAX_UPLOAD_SIZE_MB)
-        check_content_head(content, ext)
+        await run_in_threadpool(check_content_head,content,ext)
     except UploadRejected as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    from ..services.task_conflicts import lock_schedule
+    lock_schedule(db,user.id,auth_key=user.auth_key)
+    if exam_id is not None and not db.query(Exam.id).filter(Exam.id==exam_id,Exam.user_id==user.id).first():
+        raise HTTPException(404,'考试已变化，请重新选择科目')
+    used=db.query(func.coalesce(func.sum(Material.file_size),0)).filter(Material.user_id==user.id).scalar()
+    if used+len(content)>max(1,settings.USER_STORAGE_LIMIT_MB)*1024*1024:
+        raise HTTPException(413,'上传将超过个人资料容量，请先清理不需要的资料')
     # 保存到 uploads/{user_id}/{随机名}.{ext}
     user_dir = UPLOAD_DIR / str(user.id)
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -121,31 +135,44 @@ async def upload_material(
     # 解析正文
     text_content = ""
     text_locations = []
-    parse_status = "done"
-    try:
-        text_content, text_locations = parse_document(stored_path, ext)
-    except Exception:
-        # 解析失败不阻断上传：资料仍保存，标记为 failed，前端展示提示
-        parse_status = "failed"
+    parse_status = 'pending'
+    parse_error = ''
+    if ext=='txt':
+        try:
+            text_content,text_locations=await run_in_threadpool(parse_document,stored_path,ext)
+            parse_status='done' if text_content.strip() else 'failed'
+        except Exception:
+            parse_status='failed'
+        if parse_status=='failed': parse_error='无法提取文字，请检查文本编码或内容后重试'
 
     material = Material(
         user_id=user.id,
         exam_id=exam_id,
-        title=title.strip() or (file.filename or "未命名资料"),
+        title=chosen_title,
         source_type=source_type,
         file_path=str(stored_path),  # 存绝对路径，删除文件时不依赖启动目录
         file_type=ext,
         text_content=text_content,
         text_locations=json.dumps(text_locations, ensure_ascii=False),
         parse_status=parse_status,
+        parse_error=parse_error, file_size=len(content), parse_request_id=getattr(request.state,'request_id',''),
         description=description,
         tags=tags,
         # 资料权重（用例 4.2）：先按来源层级给默认值，学生可再手动调整
         weight=default_weight_for(source_type),
     )
     db.add(material)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        stored_path.unlink(missing_ok=True)
+        raise
     db.refresh(material)
+    request.state.audit_target = material.id
+    if material.parse_status=='pending':
+        from ..services import material_parsing
+        material_parsing.enqueue(sessionmaker(bind=db.get_bind()),material.id,UPLOAD_DIR,getattr(request.state,'request_id',''))
     return material
 
 
@@ -168,7 +195,7 @@ async def suggest_material_source(
     content = await file.read(max_bytes + 1)
     try:
         check_size(content, settings.MAX_UPLOAD_SIZE_MB)
-        check_content_head(content, ext)
+        await run_in_threadpool(check_content_head,content,ext)
     except UploadRejected as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -179,7 +206,8 @@ async def suggest_material_source(
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
             tmp.write(content)
             tmp_path = Path(tmp.name)
-        text = parse_file(tmp_path, ext)
+        if ext not in ('png','jpg','jpeg'):
+            text = await run_in_threadpool(parse_file,tmp_path,ext)
     except Exception:
         text = ""
     finally:
@@ -230,6 +258,23 @@ def list_materials(
             item.snippet = _match_snippet(item.text_content or "", keyword)
     return items
 
+
+@router.get('/storage',summary='个人资料容量')
+def storage(user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    used=db.query(func.coalesce(func.sum(Material.file_size),0)).filter(Material.user_id==user.id).scalar()
+    limit=max(1,settings.USER_STORAGE_LIMIT_MB)*1024*1024
+    return dict(used_bytes=used,limit_bytes=limit,remaining_bytes=max(0,limit-used),single_file_mb=settings.MAX_UPLOAD_SIZE_MB)
+
+@router.post('/{material_id}/retry',response_model=MaterialOut,summary='重新解析已有资料')
+def retry_parse(material_id:int,request:Request,user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    from ..services.task_conflicts import lock_schedule
+    from ..services import material_parsing
+    lock_schedule(db,user.id,auth_key=user.auth_key)
+    item=_get_own_material(db,user,material_id)
+    if item.parse_status!='pending':
+        item.parse_status='pending';item.parse_error='';item.parse_request_id=getattr(request.state,'request_id','');db.commit();db.refresh(item)
+    material_parsing.enqueue(sessionmaker(bind=db.get_bind()),item.id,UPLOAD_DIR,item.parse_request_id)
+    return item
 
 @router.get("/{material_id}", response_model=MaterialDetailOut, summary="资料详情（含解析文本预览）")
 def get_material(

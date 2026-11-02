@@ -1,4 +1,5 @@
 """学习反馈重排：保持未完成工作量，按全科预算预览；确认时校验快照并原子保存。"""
+from .pressure import beijing_day
 import hashlib
 import json
 from copy import deepcopy
@@ -62,7 +63,7 @@ def snapshot(db, user, exam_id):
     exam = db.query(Exam).filter(Exam.id == exam_id, Exam.user_id == user.id).first()
     if exam is None:
         raise HTTPException(404, '考试不存在')
-    if exam.exam_date < date.today():
+    if exam.exam_date < beijing_day():
         raise HTTPException(409, '该考试已经结束，不能再安排备考任务')
     analysis = db.query(Analysis).filter(Analysis.user_id == user.id, Analysis.exam_id == exam_id).order_by(Analysis.id.desc()).first()
     if analysis is None:
@@ -78,7 +79,7 @@ def snapshot(db, user, exam_id):
     rate = done / len(own) if own else 0.0
     wrong, evidence = feedback(db, user.id, exam_id)
     feedback_key = hashlib.sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    days_left = (exam.exam_date - date.today()).days
+    days_left = (exam.exam_date - beijing_day()).days
     # 反馈始终叠加在分析的原始权重上，重复点击不会反复抬高同一错题的权重。
     base = data.get('replan_base_weights') or {kp.name: kp.weight for kp in result.knowledge_points}
     changes = []
@@ -102,7 +103,7 @@ def snapshot(db, user, exam_id):
     for task in rows:
         item = {k: getattr(task, k) for k in SNAPSHOT_FIELDS}
         if task.exam_id == exam_id and task.source == 'ai' and not task.is_done:
-            matches = [c.new_weight for c in changes if c.name in task.title or task.title in c.name]
+            matches = [c.new_weight for c in changes if c.name == task.knowledge_point or c.name in task.title or task.title in c.name]
             if matches:
                 weight = max(matches)
                 item['priority'] = 1 if weight >= 0.7 else 2 if weight >= 0.45 else 3
@@ -113,16 +114,17 @@ def snapshot(db, user, exam_id):
         for change in changes:
             title = f'专项练习：{change.name}'[:256]
             if _matching(change.name, wrong) and not any(t.title == title and not t.is_done for t in own):
-                additions.append(dict(id=-len(additions)-1, user_id=user.id, exam_id=exam_id, analysis_id=analysis.id, title=title, plan_date=date.today(), estimated_minutes=30, priority=1, sort_order=len(own)+len(additions), source='ai', is_done=False))
+                additions.append(dict(id=-len(additions)-1, user_id=user.id, exam_id=exam_id, analysis_id=analysis.id, title=title, knowledge_point=change.name, plan_date=beijing_day(), estimated_minutes=30, priority=1, sort_order=len(own)+len(additions), source='ai', is_done=False))
     tasks.extend(additions)
     exams = {e.id: {'exam_date': e.exam_date, 'subject': e.subject} for e in db.query(Exam).filter(Exam.user_id == user.id).all()}
     budget = study_planner.daily_budget(db, user.id)
-    scheduling = study_planner.distribute(tasks, exams, budget, date.today())
-    fingerprint = hashlib.sha256(json.dumps([date.today(), budget, tasks, exams, analysis.id, data, evidence], ensure_ascii=False, default=str, sort_keys=True).encode()).hexdigest()
+    scheduling = study_planner.distribute(tasks, exams, budget, beijing_day())
+    fingerprint = hashlib.sha256(json.dumps([beijing_day(), budget, tasks, exams, analysis.id, data, evidence], ensure_ascii=False, default=str, sort_keys=True).encode()).hexdigest()
     scheduling['fingerprint'] = fingerprint
     priority_map = {t['id']: t['priority'] for t in tasks}
-    plan = [PlanItem(day=(date.fromisoformat(a['date'])-date.today()).days+1, date=a['date'], title=a['title'], estimated_minutes=a['minutes'], priority=priority_map[a['task_id']], detail='依据当前学习反馈在全科共享预算内调整') for a in scheduling['assignments'] if a['exam_id'] == exam_id]
-    plan.extend(PlanItem(day=(t.plan_date-date.today()).days+1, date=t.plan_date.isoformat(), title=t.title,
+    task_map = {t['id']:t for t in tasks}
+    plan = [PlanItem(day=(date.fromisoformat(a['date'])-beijing_day()).days+1, date=a['date'], title=a['title'], knowledge_point=task_map[a['task_id']].get('knowledge_point',''), estimated_minutes=a['minutes'], priority=priority_map[a['task_id']], detail='依据当前学习反馈在全科共享预算内调整') for a in scheduling['assignments'] if a['exam_id'] == exam_id]
+    plan.extend(PlanItem(day=(t.plan_date-beijing_day()).days+1, date=t.plan_date.isoformat(), title=t.title, knowledge_point=t.knowledge_point,
                         estimated_minutes=t.estimated_minutes, priority=priorities.get(t.id, t.priority),
                         detail=f'保留固定时段 {t.start_time:%H:%M}–{t.end_time:%H:%M}；{t.detail or ""}')
                 for t in own if not t.is_done and t.start_time is not None)

@@ -2,6 +2,7 @@
 import logging
 import re
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from starlette.concurrency import run_in_threadpool
 
@@ -12,6 +13,19 @@ logger = logging.getLogger(__name__)
 
 # 使用路由模板匹配，避免把用户输入、查询参数和任意 URL 写进日志。
 ACTIONS = {
+    ('POST','/api/ai/qa/conversations'): ('ai.qa.create','创建问答会话'),
+    ('POST', '/api/ai/jobs'): ('ai.job', '受理大模型任务'),
+    ('POST', '/api/ai/qa/conversations/{conversation_id}/messages'): ('ai.qa', '资料问答'),
+    ('POST', '/api/reports/weekly'): ('ai.weekly', '生成周报'),
+    ('POST', '/api/exams/{exam_id}/generate-schedule'): ('exam.schedule', '倒推复习计划'),
+    ('POST', '/api/focus/sessions'): ('focus.save', '保存专注'),
+    ('POST', '/api/features/mood'): ('mood.save', '记录心情'),
+    ('POST', '/api/features/relief/apply'): ('plan.relief', '确认减负'),
+    ('PUT', '/api/study/settings'): ('plan.budget', '更新全科预算'),
+    ('POST', '/api/study/plan/confirm'): ('plan.confirm', '确认全科重排'),
+    ('POST', '/api/collections'): ('collection.add', '添加收藏'),
+    ('DELETE', '/api/collections/{collection_id}'): ('collection.delete', '移除收藏'),
+    ('POST', '/api/materials/{material_id}/retry'): ('material.retry', '重新解析资料'),
     ('POST', '/api/auth/register'): ('auth.register', '注册账号'),
     ('POST', '/api/auth/login'): ('auth.login', '登录'),
     ('POST', '/api/auth/logout'): ('auth.logout', '退出登录'),
@@ -47,6 +61,8 @@ ACTIONS = {
     ('POST', '/api/admin/file-cleanups/retry'): ('admin.files.retry', '重试文件清理'),
 }
 ACTION_LABELS = {action: label for action, label in ACTIONS.values()}
+ACTION_LABELS['request.failure'] = '请求失败'
+ACTION_LABELS['material.parse'] = '解析资料'
 
 
 class AuditMiddleware:
@@ -57,11 +73,14 @@ class AuditMiddleware:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        request_id = uuid4().hex
+        scope.setdefault('state',{})['request_id'] = request_id
         status_code = 500
         async def capture(message):
             nonlocal status_code
             if message['type'] == 'http.response.start':
                 status_code = message['status']
+                message['headers'] = [*message.get('headers',[]),(b'x-request-id',request_id.encode())]
             await send(message)
         try:
             await self.app(scope, receive, capture)
@@ -74,14 +93,14 @@ class AuditMiddleware:
                           and template.endswith(matched_route)
                           and re.fullmatch(re.sub(r'\{[^}]+\}', '[^/]+', template), scope['path'])), '')
             action = ACTIONS.get((scope['method'], route))
-            if action:
+            if action or status_code >= 400:
                 state = scope.get('state', {})
                 actor = state.get('audit_actor', {})
-                target = next((str(value) for key, value in scope.get('path_params', {}).items() if key.endswith('_id')), '')
+                target = str(state.get('audit_target') or next((str(value) for key, value in scope.get('path_params', {}).items() if key.endswith('_id')), ''))
                 if not re.fullmatch(r'[A-Za-z0-9-]{1,64}', target):
                     target = ''
-                record = dict(actor_id=actor.get('id'), actor_name=actor.get('name', '')[:64],
-                              action=action[0], target_id=target, method=scope['method'], path=route,
+                record = dict(request_id=request_id, actor_id=actor.get('id'), actor_name=actor.get('name', '')[:64],
+                              action=action[0] if action else 'request.failure', target_id=target, method=scope['method'][:8], path=route or matched_route or '/unmatched',
                               status_code=status_code, created_at=datetime.now(timezone.utc).replace(tzinfo=None))
                 await run_in_threadpool(self.record, record)
 
@@ -90,6 +109,6 @@ class AuditMiddleware:
             with self.session_factory() as db:
                 db.add(OperationLog(**values))
                 db.commit()
-        except Exception:
+        except Exception as exc:
             # 审计故障不将已经成功的业务操作伪装成失败；异常写入服务端日志。
-            logger.exception('Operation log persistence failed')
+            logger.error('Operation log persistence failed request_id=%s exception=%s',values.get('request_id',''),type(exc).__name__)

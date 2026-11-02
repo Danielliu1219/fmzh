@@ -90,7 +90,7 @@
           </el-table-column>
           <el-table-column label="完成率" min-width="200">
             <template #default="{ row }">
-              <el-progress :percentage="Math.round(row.rate * 100)" :stroke-width="10" color="#e66348" />
+              <el-progress :percentage="Number((row.rate * 100).toFixed(2))" :stroke-width="10" :format="p => `${p.toFixed(2)}%`" color="#e66348" />
             </template>
           </el-table-column>
         </el-table>
@@ -138,7 +138,7 @@ const kpiTiles = computed(() => {
   return [
     { label: '学习时长', value: `${d.total_minutes} 分`, sub: '窗口内总专注分钟', icon: 'Timer', color: 'var(--coral-deep)', soft: 'var(--coral-soft)' },
     { label: '任务完成', value: `${d.done_tasks} / ${d.total_tasks}`, sub: '已完成 / 全部任务', icon: 'CircleCheck', color: 'var(--green)', soft: 'var(--green-soft)' },
-    { label: '任务完成率', value: `${Math.round(d.rate * 100)}%`, sub: '全部任务口径', icon: 'TrendCharts', color: 'var(--teal)', soft: 'var(--teal-soft)' },
+    { label: '任务完成率', value: `${(d.rate * 100).toFixed(2)}%`, sub: '全部任务口径', icon: 'TrendCharts', color: 'var(--teal)', soft: 'var(--teal-soft)' },
     { label: '覆盖科目', value: `${d.subjects.length} 科`, sub: '有记录或任务', icon: 'Collection', color: 'var(--amber)', soft: 'var(--amber-soft)' },
   ]
 })
@@ -264,7 +264,7 @@ const renderRate = (subjects) => {
           backgroundStyle: { color: TRACK },
           itemStyle: { color: CORAL, borderRadius: [0, 4, 4, 0] },
           label: { show: true, position: 'right', color: AXIS, formatter: '{c}%' },
-          data: subjects.map((s) => Math.round(s.rate * 100)),
+          data: subjects.map((s) => Number((s.rate * 100).toFixed(2))),
         },
       ],
     },

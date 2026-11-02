@@ -115,7 +115,7 @@
               <b>{{ row.subject }}</b>
             </template>
           </el-table-column>
-          <el-table-column prop="exam_date" label="考试日期" width="120" />
+          <el-table-column label="考试时间" width="160"><template #default="{row}">{{ row.exam_date }} {{ row.exam_time || '时刻待定' }}</template></el-table-column>
           <el-table-column prop="location" label="地点" min-width="110">
             <template #default="{ row }">{{ row.location || '-' }}</template>
           </el-table-column>
@@ -125,9 +125,10 @@
           <el-table-column prop="note" label="备注" min-width="120">
             <template #default="{ row }">{{ row.note || '-' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="290" fixed="right">
+          <el-table-column label="操作" width="350" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openPlanDialog(row)" title="按考试日期倒推生成复习计划">倒推计划</el-button>
+              <el-button link type="primary" @click="reviewExam = row">考前回顾</el-button>
               <el-button link type="primary" @click="onPickIcs(row)" title="把课表/日历 ICS 导入为本科目任务">导入 ICS</el-button>
               <el-button link @click="openDialog(row)">编辑</el-button>
               <el-button link type="primary" @click="openReminder('exam', row.id)">提醒</el-button>
@@ -140,21 +141,27 @@
 
     <StudyCalendar v-else :tasks="tasks" :exams="exams" :today="getToday()" :busy="calendarMoving" :loading="loading" :feedback="calendarFeedback"
       @move="onCalendarMove" @edit="openTaskDialog" @edit-exam="openDialog" @create="createCalendarTask" @clear-feedback="calendarFeedback = {}" />
+    <el-dialog :model-value="!!reviewExam" :title="`${reviewExam?.subject || ''} · 考前回顾`" width="680px" @close="reviewExam=null"><CourseReview v-if="reviewExam" :exam-id="reviewExam.id" /></el-dialog>
 
     <!-- 课程编辑对话框（含科目颜色 2.11） -->
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑课程' : '添加课程'" width="460px" :before-close="examDraft.beforeClose">
+      <p class="exam-lookup">
+        <a href="https://jxyw.scu.edu.cn/cas/login" target="_blank" rel="noopener noreferrer">前往四川大学教务系统查询考表 ↗</a>
+        <span>登录后查看考试安排，再填写下方信息。</span>
+      </p>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
         <el-form-item label="科目" prop="subject">
-          <el-input v-model="form.subject" placeholder="如：高等数学" />
+          <el-select v-model="form.subject" filterable allow-create default-first-option placeholder="选择启用课程，或输入自建科目" style="width:100%" @change="selectCatalogCourse"><el-option v-for="course in courseOptions" :key="course.id" :label="course.code ? `${course.name}（${course.code}）` : course.name" :value="course.name" /></el-select>
         </el-form-item>
         <el-form-item label="考试日期" prop="exam_date">
           <el-date-picker v-model="form.exam_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" placeholder="选择日期" />
         </el-form-item>
+        <el-form-item label="开始时刻"><el-time-picker v-model="form.exam_time" value-format="HH:mm" format="HH:mm" placeholder="选填，按北京时间" style="width:100%" /></el-form-item>
         <el-form-item label="地点" prop="location">
           <el-input v-model="form.location" placeholder="如：教三 101（选填）" />
         </el-form-item>
         <el-form-item label="时长" prop="duration_minutes">
-          <el-input-number v-model="form.duration_minutes" :min="10" :max="480" :step="10" />
+          <el-input-number v-model="form.duration_minutes" :min="30" :max="300" :step="10" />
           <span class="unit">分钟</span>
         </el-form-item>
         <el-form-item label="科目颜色" prop="color">
@@ -208,9 +215,11 @@
         <el-form-item label="复习地点"><el-input v-model="taskForm.location" placeholder="如：图书馆三楼" maxlength="120" /></el-form-item>
         <el-form-item label="难度"><el-radio-group v-model="taskForm.difficulty"><el-radio-button value="easy">简单</el-radio-button><el-radio-button value="medium">适中</el-radio-button><el-radio-button value="hard">较难</el-radio-button></el-radio-group></el-form-item>
         <el-form-item label="复习内容"><el-input v-model="taskForm.detail" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="准备复习什么、使用哪些资料（选填）" /></el-form-item>
+        <el-form-item label="知识点"><el-input v-model="taskForm.knowledge_point" maxlength="128" placeholder="填写分析中的知识点名称，供今日重点排序（选填）" /></el-form-item>
         <template v-if="!taskForm.id">
           <el-form-item label="重复"><el-select v-model="taskForm.repeat_rule"><el-option v-for="(label, key) in repeatLabels" :key="key" :label="label" :value="key" /></el-select></el-form-item>
-          <el-form-item v-if="taskForm.repeat_rule !== 'none'" label="重复截止"><el-date-picker v-model="taskForm.repeat_until" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledRepeatDate" placeholder="不晚于考试日期" /></el-form-item>
+          <el-form-item v-if="taskForm.repeat_rule !== 'none' && taskForm.repeat_rule !== 'custom'" label="重复截止"><el-date-picker v-model="taskForm.repeat_until" type="date" value-format="YYYY-MM-DD" :disabled-date="disabledRepeatDate" placeholder="不晚于考试日期" /></el-form-item>
+          <el-form-item v-if="taskForm.repeat_rule === 'custom'" label="重复日期"><el-date-picker v-model="taskForm.repeat_dates" type="dates" value-format="YYYY-MM-DD" :disabled-date="disabledRepeatDate" placeholder="选择要复习的日期" /></el-form-item>
           <p v-if="taskForm.repeat_rule === 'weekdays'" class="plan-tip">工作日指周一至周五，不按节假日调休。</p>
         </template>
         <p v-else-if="taskForm.repeat_group_id" class="plan-tip">{{ taskRepeatLabel(taskForm) }}。本次编辑只影响这一项；改期或换科目后，本项会转为单次任务。</p>
@@ -296,6 +305,7 @@ import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '..
 import { useRoute } from 'vue-router'
 import ReminderDialog from '../components/ReminderDialog.vue'
 import StudyCalendar from '../components/StudyCalendar.vue'
+import CourseReview from '../components/CourseReview.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi, taskApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
@@ -306,6 +316,7 @@ import { describeOverlap, findTaskOverlaps } from '../utils/taskConflicts'
 import { applyMockCalendarMove, moveCandidate, previewCalendarMove } from '../utils/calendar.js'
 
 const viewMode = ref('list')
+const reviewExam = ref(null)
 const route = useRoute(), examTable = ref()
 const reminderVisible = ref(false), reminderKind = ref('exam'), reminderTarget = ref(null)
 function openReminder(kind, id) { reminderKind.value = kind; reminderTarget.value = id; reminderVisible.value = true }
@@ -333,12 +344,18 @@ const emptyForm = () => ({
   id: null,
   subject: '',
   exam_date: '',
+  exam_time: null,
   location: '',
   duration_minutes: 120,
   note: '',
   color: '',
 })
 const form = reactive(emptyForm())
+const courseOptions=ref([])
+const selectCatalogCourse=name=>{
+  const course=courseOptions.value.find(c=>c.name===name)
+  if(course && !form.id && !form.color) form.color=course.color || ''
+}
 const examDraft = useDialogDraft(form,dialogVisible,saving,'课程信息')
 const examAction = useActionLock('课程或任务操作')
 const rules = {
@@ -353,7 +370,8 @@ const load = async () => {
     if (USE_MOCK) {
       exams.value = structuredClone(mockStudySession.exams)
     } else {
-      exams.value = await examApi.list() // 保留全科上下文，科目列表筛选仅影响展示。
+      const [listed,options]=await Promise.all([examApi.list(),examApi.courseOptions()])
+      exams.value=listed;courseOptions.value=options
     }
     await loadTasks()
     await revealTarget()
@@ -459,6 +477,7 @@ const tasksOf = (examId) => tasks.value.filter((t) => t.exam_id === examId)
 const openTaskDialog = (task, exam) => {
   taskPreview.value = null; preparedTask.value = null; taskPreviewVisible.value = false
   Object.assign(taskForm, {
+    repeat_dates: [], knowledge_point: task?.knowledge_point || '',
     id: task?.id || null,
     exam_id: task?.exam_id || exam?.id || exams.value[0]?.id || null,
     title: task?.title || '',
@@ -479,8 +498,9 @@ const onSaveTask = async () => {
     const payload = normalizeTask({ exam_id: taskForm.exam_id, title: taskForm.title, plan_date: taskForm.plan_date,
       estimated_minutes: taskForm.estimated_minutes, priority: taskForm.priority,
       start_time: taskForm.timed ? taskForm.start_time : null, end_time: taskForm.timed ? taskForm.end_time : null,
-      location: taskForm.location, difficulty: taskForm.difficulty, detail: taskForm.detail,
+      location: taskForm.location, difficulty: taskForm.difficulty, detail: taskForm.detail, knowledge_point: taskForm.knowledge_point || '',
       repeat_rule: taskForm.id ? 'none' : taskForm.repeat_rule,
+      repeat_dates: taskForm.id || taskForm.repeat_rule !== 'custom' ? [] : taskForm.repeat_dates,
       repeat_until: taskForm.id || taskForm.repeat_rule === 'none' ? null : taskForm.repeat_until })
     if (taskForm.timed && !payload.start_time) throw new Error('请填写完整的开始和结束时间')
     const preview = USE_MOCK ? buildTaskPreview(payload, tasks.value, exams.value, mockStudySession.daily_minutes, taskForm.id)
@@ -503,7 +523,7 @@ const commitPreparedTask = async () => {
     const { id } = preparedTask.value
     const payload = { ...preparedTask.value.payload }
     let count = taskPreview.value.count
-    if (id) { delete payload.repeat_rule; delete payload.repeat_until }
+    if (id) { delete payload.repeat_rule; delete payload.repeat_until; delete payload.repeat_dates }
     if (USE_MOCK) {
       const latest = buildTaskPreview(preparedTask.value.payload, tasks.value, exams.value, mockStudySession.daily_minutes, id)
       if (!latest.can_save) { taskPreview.value = latest; taskPreviewVisible.value = true; throw new Error('日程已变化，请先处理时段重叠') }
@@ -724,6 +744,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+.exam-lookup { display: flex; flex-direction: column; gap: 4px; margin: 0 0 18px; font-size: 13px; line-height: 1.7; color: var(--text-low); }
+.exam-lookup a { width: fit-content; max-width: 100%; color: var(--coral-deep); text-underline-offset: 3px; }
+.exam-lookup a:focus-visible { outline: 2px solid var(--coral-deep); outline-offset: 3px; }
 .overlap-banner { margin-bottom: 16px; }
 .overlap-banner p { margin: 6px 0; overflow-wrap: anywhere; }
 .task-preview-confirm.is-disabled { opacity: 0.5; }

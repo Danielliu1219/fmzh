@@ -46,7 +46,8 @@ def reminder_data(db, user_id, kind, target_id):
     rule = db.query(Reminder).filter_by(user_id=user_id, target_type=kind, target_id=target_id).first()
     if rule and rule.target_created_at != row.created_at:
         rule = None
-    clock = rule.event_time if rule else '09:00'
+    default_time = row.exam_time if kind == 'exam' else row.start_time
+    clock = rule.event_time if rule else (default_time.strftime('%H:%M') if default_time else '09:00')
     advance = rule.advance_minutes if rule else (1440 if kind == 'exam' else 15)
     return {'target_type': kind, 'target_id': target_id, 'title': row.subject if kind == 'exam' else row.title,
             'event_date': str(row.exam_date if kind == 'exam' else row.plan_date),

@@ -4,8 +4,8 @@ import hashlib
 import json
 from datetime import date, time, timedelta
 
-REPEAT_RULES = {'none', 'daily', 'weekdays', 'weekly'}
-DETAIL_FIELDS = ('start_time', 'end_time', 'location', 'difficulty', 'detail')
+REPEAT_RULES = {'none', 'daily', 'weekdays', 'weekly', 'custom'}
+DETAIL_FIELDS = ('start_time', 'end_time', 'location', 'difficulty', 'detail', 'knowledge_point')
 SNAPSHOT_FIELDS = ('id', 'exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', 'source', 'is_done',
                    *DETAIL_FIELDS, 'repeat_rule', 'repeat_until', 'repeat_group_id')
 
@@ -43,7 +43,7 @@ def timed_minutes(start, end):
     return minutes
 
 
-def occurrence_dates(start, rule='none', until=None):
+def occurrence_dates(start, rule='none', until=None, custom_dates=None):
     if rule not in REPEAT_RULES:
         raise ValueError('不支持的重复规则')
     if rule == 'none':
@@ -54,6 +54,11 @@ def occurrence_dates(start, rule='none', until=None):
         raise ValueError('重复截止日需填写，且不能早于开始日期')
     if (until - start).days > 365:
         raise ValueError('重复任务的日期范围最多一年')
+    if rule == 'custom':
+        days = sorted(set(custom_dates or []))
+        if not days or len(days)>180 or days[0]<start or days[-1]>until:
+            raise ValueError('请选择1至180个自定义日期，且处于开始日与截止日之间')
+        return days
     days = []
     current = start
     while current <= until:

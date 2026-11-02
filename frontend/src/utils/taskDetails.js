@@ -1,7 +1,7 @@
 import { findTaskOverlaps, scheduleChanged } from './taskConflicts.js'
 
 export const difficultyLabels = { easy: '简单', medium: '适中', hard: '较难' }
-export const repeatLabels = { none: '单次', daily: '每天', weekdays: '工作日', weekly: '每周' }
+export const repeatLabels = { none: '单次', daily: '每天', weekdays: '工作日', weekly: '每周', custom:'自选日期' }
 const dayNumber = day => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '')) throw new Error('请选择有效日期')
   const value = Date.parse(day + 'T00:00:00Z')
@@ -23,7 +23,7 @@ export function timeDuration(start, end) {
   return result
 }
 
-export function occurrenceDates(start, rule = 'none', until = null) {
+export function occurrenceDates(start, rule = 'none', until = null, customDates = []) {
   const first = dayNumber(start)
   if (!Object.hasOwn(repeatLabels, rule)) throw new Error('不支持的重复规则')
   if (rule === 'none') {
@@ -33,6 +33,11 @@ export function occurrenceDates(start, rule = 'none', until = null) {
   if (!until || dayNumber(until) < first) throw new Error('重复截止日需填写，且不能早于开始日期')
   const last = dayNumber(until)
   if (last - first > 365) throw new Error('重复任务的日期范围最多一年')
+  if (rule === 'custom') {
+    const dates = [...new Set(customDates)].sort()
+    if (!dates.length || dates.length>180 || dates.some(d => dayNumber(d)<first || dayNumber(d)>last)) throw new Error('请选择1至180个范围内的自定义日期')
+    return dates
+  }
   const dates = []
   for (let day = first; day <= last; day++) {
     const weekday = new Date(day * 86400000).getUTCDay()
@@ -53,6 +58,7 @@ export function normalizeTask(payload) {
   item.estimated_minutes = duration ?? Number(item.estimated_minutes)
   if (!Number.isInteger(item.estimated_minutes) || item.estimated_minutes < 1 || item.estimated_minutes > 1440) throw new Error('预计时长需为1～1440分钟')
   if (![1, 2, 3].includes(item.priority)) throw new Error('优先级无效')
+  if (item.repeat_rule === 'custom' && !item.repeat_until && item.repeat_dates?.length) item.repeat_until = [...item.repeat_dates].sort().at(-1)
   return item
 }
 
@@ -60,7 +66,7 @@ export function buildTaskPreview(payload, tasks, exams, budget, excludeId = null
   const item = normalizeTask(payload)
   const exam = exams.find(e => e.id === item.exam_id)
   if (!exam) throw new Error('请选择有效科目')
-  const dates = occurrenceDates(item.plan_date, item.repeat_rule, item.repeat_until)
+  const dates = occurrenceDates(item.plan_date, item.repeat_rule, item.repeat_until, item.repeat_dates || [])
   if ((item.repeat_until || item.plan_date) > exam.exam_date) throw new Error('任务日期和重复截止日不能晚于考试日期')
   const items = dates.map(plan_date => ({ ...item, plan_date }))
   const warnings = dates.flatMap(day => {

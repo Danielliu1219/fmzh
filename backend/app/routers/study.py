@@ -1,4 +1,5 @@
 """全科每日预算与可确认的跨科排程。"""
+from ..services.pressure import beijing_day
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,9 +36,9 @@ def save_settings(payload: BudgetIn, user: User = Depends(get_current_user), db:
         row = StudySetting(user_id=user.id)
         db.add(row)
     row.daily_minutes = payload.daily_minutes
-    goal = db.query(FocusGoal).filter(FocusGoal.user_id == user.id, FocusGoal.goal_date == date.today()).first()
+    goal = db.query(FocusGoal).filter(FocusGoal.user_id == user.id, FocusGoal.goal_date == beijing_day()).first()
     if goal is None:
-        goal = FocusGoal(user_id=user.id, goal_date=date.today())
+        goal = FocusGoal(user_id=user.id, goal_date=beijing_day())
         db.add(goal)
     goal.target_minutes = payload.daily_minutes
     db.commit()

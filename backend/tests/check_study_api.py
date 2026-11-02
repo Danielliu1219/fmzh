@@ -20,7 +20,7 @@ def request(method,path,headers,**kwargs):
     assert r.status_code==200,(path,r.status_code,r.text)
     return r.json()
 def account():
-    data=request('POST','/auth/register',{},json={'username':'ws_'+uuid.uuid4().hex[:10],'password':'StudyQA123','student_no':'20240001'})
+    data=request('POST','/auth/register',{},json={'username':'ws_'+uuid.uuid4().hex[:10],'password':'StudyQA123','student_no':uuid.uuid4().hex[:20]})
     return {'Authorization':'Bearer '+data['access_token']}
 h=account();today=date.today().isoformat()
 check('daily budget defaults to 240 shared minutes',request('GET','/study/settings',h)['daily_minutes']==240)

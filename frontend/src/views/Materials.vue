@@ -11,18 +11,18 @@
         :limit="1"
         :on-change="onFileChange"
         :on-remove="onFileRemove"
-        accept=".txt,.pdf,.docx"
+        accept=".txt,.pdf,.docx,.ppt,.pptx,.png,.jpg,.jpeg"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到这里，或 <em>点击选择</em></div>
         <template #tip>
           <div class="el-upload__tip">
-            MVP 支持 TXT / PDF / Word（.docx），单个文件不超过 20MB；上传时会校验格式与文件内容
+            支持 TXT / PDF / Word（.docx）/ PPT / PNG / JPEG，单个文件不超过 20MB；图片使用本机文字识别
           </div>
         </template>
       </el-upload>
       <div class="upload-form">
-        <el-input v-model="uploadForm.title" placeholder="资料标题（默认取文件名）" />
+        <el-input v-model="uploadForm.title" placeholder="资料标题（默认取文件名）" maxlength="128" />
         <el-select v-model="uploadForm.exam_id" placeholder="所属科目（选填）" clearable>
           <el-option v-for="e in exams" :key="e.id" :label="e.subject" :value="e.id" />
         </el-select>
@@ -38,6 +38,7 @@
           上传并解析
         </el-button>
       </div>
+      <p v-if="storageInfo" class="upload-weight-hint">资料容量 {{ (storageInfo.used_bytes/1048576).toFixed(2) }} / {{ (storageInfo.limit_bytes/1048576).toFixed(0) }} MB · 剩余 {{ (storageInfo.remaining_bytes/1048576).toFixed(2) }} MB</p>
       <div v-if="suggestingSource" class="source-suggest">正在识别资料来源…</div>
       <div v-else-if="sourceSuggestion" class="source-suggest">
         <span>
@@ -150,7 +151,7 @@
                   </el-tag>
                   <el-tag size="small" type="info">{{ row.file_type.toUpperCase() }}</el-tag>
                   <el-tag size="small" :type="row.parse_status === 'done' ? 'success' : 'danger'">
-                    {{ row.parse_status === 'done' ? '解析成功' : '解析失败' }}
+                    {{ parseLabel(row) }}
                   </el-tag>
                   <span class="lib-desc">{{ row.description || '' }}</span>
                 </div>
@@ -158,6 +159,7 @@
               </div>
               <div class="lib-ops">
                 <el-button link type="primary" @click="onPreview(row)">预览</el-button>
+                <el-button v-if="row.parse_status === 'failed' || row.parse_status === 'pending'" link type="primary" @click="retryParse(row)" :title="`${row.parse_error}${row.parse_request_id ? `（请求编号 ${row.parse_request_id}）` : ''}`">{{ row.parse_status === 'failed' ? '重试解析' : '检查解析' }}</el-button>
                 <el-button link type="primary" @click="onEdit(row)">编辑</el-button>
                 <el-button
                   link
@@ -271,7 +273,7 @@
         <el-table-column label="解析状态" width="100">
           <template #default="{ row }">
             <el-tag size="small" :type="row.parse_status === 'done' ? 'success' : 'danger'">
-              {{ row.parse_status === 'done' ? '解析成功' : '解析失败' }}
+              {{ parseLabel(row) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -281,6 +283,7 @@
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="onPreview(row)">预览</el-button>
+            <el-button v-if="row.parse_status === 'failed' || row.parse_status === 'pending'" link type="primary" @click="retryParse(row)" :title="`${row.parse_error}${row.parse_request_id ? `（请求编号 ${row.parse_request_id}）` : ''}`">{{ row.parse_status === 'failed' ? '重试解析' : '检查解析' }}</el-button>
             <el-button link type="primary" @click="onEdit(row)">编辑</el-button>
             <el-button
               link
@@ -301,6 +304,7 @@
     </el-dialog>
     <el-dialog v-model="previewVisible" :title="previewTitle" width="min(760px, 94vw)">
       <div class="preview-box" v-loading="previewLoading">
+        <el-alert v-if="parseNotice" :title="parseNotice" type="warning" :closable="false" />
         <el-alert v-if="previewError" :title="previewError" type="warning" :closable="false" />
         <SourceExcerpt v-else-if="linkedExcerpt" :reference="linkedExcerpt" />
         <pre v-else>{{ previewText || '（无解析文本，可能是解析失败或文件为扫描图片）' }}</pre>
@@ -389,7 +393,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -397,6 +401,9 @@ import { collectionApi, examApi, materialApi } from '../api'
 import { USE_MOCK, mockStudySession } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
 import SourceExcerpt from '../components/SourceExcerpt.vue'
+const storageInfo=ref(null)
+const parseLabel=row=>row.parse_status==='done'?'解析成功':row.parse_status==='pending'?'正在解析':'解析失败'
+async function retryParse(row){if(USE_MOCK)return;await materialApi.retry(row.id);ElMessage.success('已重新受理解析');load()}
 import { mockNotebook as mockCollections } from '../mock/quizzes'
 import { readMistake } from '../utils/quiz'
 import QuizFeedback from '../components/QuizFeedback.vue'
@@ -523,6 +530,7 @@ const previewLoading = ref(false)
 const previewTitle = ref('')
 const previewText = ref('')
 const previewError = ref('')
+const parseNotice = ref('')
 const linkedExcerpt = ref(null)
 let previewRequest = 0
 
@@ -604,7 +612,10 @@ const mockFiltered = () => {
   return list
 }
 
+let parsePoll=null, disposed=false
+onUnmounted(()=>{disposed=true;clearTimeout(parsePoll)})
 const load = async () => {
+  clearTimeout(parsePoll)
   loading.value = true
   try {
     if (USE_MOCK) {
@@ -620,6 +631,8 @@ const load = async () => {
         date_to: to || undefined,
         sort: filter.sort,
       })
+      storageInfo.value=await materialApi.storage()
+      if(!disposed && materials.value.some(m=>m.parse_status==='pending')) parsePoll=setTimeout(load,1500)
     }
   } finally {
     loading.value = false
@@ -662,7 +675,7 @@ const requestSourceSuggestion = async (rawFile) => {
 
 const onFileChange = (uploadFile) => {
   file.value = uploadFile.raw
-  if (!uploadForm.title) uploadForm.title = uploadFile.name.replace(/\.[^.]+$/, '')
+  if (!uploadForm.title) uploadForm.title = uploadFile.name.replace(/\.[^.]+$/, '').slice(0,128)
   requestSourceSuggestion(uploadFile.raw)
 }
 
@@ -703,9 +716,10 @@ const onUpload = async () => {
       if (uploadForm.exam_id) formData.append('exam_id', uploadForm.exam_id)
       formData.append('source_type', uploadForm.source_type)
       formData.append('description', uploadForm.description)
-      await materialApi.upload(formData)
+      const accepted=await materialApi.upload(formData)
+      ElMessage.success(accepted.parse_status==='pending'?'资料已保存，正在后台解析':accepted.parse_status==='done'?'上传成功，解析完成':'资料已保存，未能提取文字，可检查文件后重试')
     }
-    ElMessage.success('上传成功，解析完成')
+    if(USE_MOCK) ElMessage.success('已添加演示资料')
     file.value = null
     uploadForm.title = ''
     uploadForm.description = ''
@@ -723,6 +737,7 @@ const onPreview = async (row) => {
   previewTitle.value = row.title
   previewText.value = ''
   previewError.value = ''
+  parseNotice.value = ''
   linkedExcerpt.value = null
   if (USE_MOCK) {
     previewText.value = row.text_preview || ''
@@ -731,7 +746,10 @@ const onPreview = async (row) => {
   previewLoading.value = true
   try {
     const detail = await materialApi.detail(row.id)
-    if (requestId === previewRequest) previewText.value = detail.text_preview || ''
+    if (requestId === previewRequest) {
+      previewText.value = detail.text_preview || ''
+      parseNotice.value = detail.parse_error ? `${detail.parse_error}${detail.parse_request_id ? `（请求编号 ${detail.parse_request_id}）` : ''}` : ''
+    }
   } finally {
     if (requestId === previewRequest) previewLoading.value = false
   }
@@ -745,6 +763,7 @@ const openLinkedExcerpt = async () => {
   previewTitle.value = '引用原文'
   previewText.value = ''
   previewError.value = ''
+  parseNotice.value = ''
   linkedExcerpt.value = null
   previewLoading.value = true
   try {
@@ -1047,6 +1066,8 @@ watch(() => route.query.exam, value => {
   gap: 12px;
   margin-top: 16px;
 }
+@media(max-width:900px){.upload-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.upload-form>*{min-width:0;width:100%}}
+@media(max-width:560px){.upload-form{grid-template-columns:minmax(0,1fr)}.upload-form .el-button{margin-left:0}.filters>*{max-width:100%}.lib-row{flex-wrap:wrap}.lib-actions{flex-wrap:wrap}}
 .list-card {
   min-height: 200px;
 }

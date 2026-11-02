@@ -1,4 +1,4 @@
-"""数据库表模型（共 22 张表）
+"""数据库表模型（共 24 张表）
 
 users ──< exams ──< materials ──< collections
   │         │
@@ -28,13 +28,20 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
+from sqlalchemy.dialects.mysql import LONGTEXT, DATETIME, DOUBLE
 from ..database import Base
+
+# MySQL TEXT只有64KB；解析正文/模型JSON需容纳既有200000字上限。
+LargeText = Text().with_variant(LONGTEXT(), "mysql")
+PreciseDateTime = DateTime().with_variant(DATETIME(fsp=6), "mysql")
+PreciseFloat = Float().with_variant(DOUBLE(asdecimal=False), 'mysql')
 
 
 class User(Base):
     """用户"""
 
     __tablename__ = "users"
+    __table_args__ = (Index('uq_users_student_no_key', 'student_no_key', unique=True),)
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(32), unique=True, index=True, nullable=False)
@@ -42,6 +49,7 @@ class User(Base):
     auth_key = Column(String(64), nullable=False, default=lambda: uuid4().hex)
     nickname = Column(String(64), default="")
     student_no = Column(String(32), default="")
+    student_no_key = Column(String(32), nullable=True)
     major = Column(String(64), default="")
     grade = Column(String(16), default="")
     class_name = Column(String(32), default="")  # 班级（FMZH-USR-0005）
@@ -49,8 +57,8 @@ class User(Base):
     is_admin = Column(Boolean, default=False)  # 管理端 8.x：管理员身份
     is_banned = Column(Boolean, default=False)  # 管理端 8.2：异常账号封禁
     failed_attempts = Column(Integer, default=0)  # 连续登录失败次数（成功登录后清零）
-    locked_until = Column(DateTime, nullable=True)  # 锁定截止时间；空表示未锁定
-    created_at = Column(DateTime, default=datetime.now)
+    locked_until = Column(PreciseDateTime, nullable=True)  # 锁定截止时间；空表示未锁定
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class Exam(Base):
@@ -62,11 +70,12 @@ class Exam(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     subject = Column(String(64), nullable=False)
     exam_date = Column(Date, nullable=False)
+    exam_time = Column(Time, nullable=True)  # 未录入时刻时保持未知
     location = Column(String(128), default="")
     duration_minutes = Column(Integer, default=120)
     note = Column(String(256), default="")
     color = Column(String(16), default="")  # 科目颜色标签（2.11，全站统一），空则按科目名取默认色
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class Material(Base):
@@ -81,14 +90,17 @@ class Material(Base):
     source_type = Column(String(32), default="其他")  # 历年题/老师重点/平时作业/课堂笔记/教材章节/实验报告/练习题/其他
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(16), nullable=False)  # txt / pdf / docx
-    text_content = Column(Text, default="")  # 解析出的纯文本，AI 分析的数据源
-    text_locations = Column(Text, nullable=False, default="[]")  # 页/段落/行 → 解析文本偏移
+    text_content = Column(LargeText, default="")  # 解析出的纯文本，AI 分析的数据源
+    text_locations = Column(LargeText, nullable=False, default="[]")  # 页/段落/行 → 解析文本偏移
     parse_status = Column(String(16), default="done")  # done / failed
+    parse_error = Column(String(256), nullable=False, default='')
+    parse_request_id = Column(String(32), nullable=False, default='')
+    file_size = Column(Integer, nullable=False, default=0)
     description = Column(String(512), default="")
     tags = Column(String(256), default="")
     # 资料权重（用例 4.2）：上传时按来源层级给默认值，学生可手动调整（0~1）
-    weight = Column(Float, default=0.5)
-    created_at = Column(DateTime, default=datetime.now)
+    weight = Column(PreciseFloat, default=0.5)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
     @property
     def default_weight(self) -> float:
@@ -113,18 +125,18 @@ class UserProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
-    raw_text = Column(Text, default="")  # 用户原始自然语言描述（含补全内容）
+    raw_text = Column(LargeText, default="")  # 用户原始自然语言描述（含补全内容）
     target = Column(String(16), nullable=True)  # pass / medium / high
     target_band = Column(String(8), nullable=True)  # 川大本科目标成绩区间 D 至 A
     learning_status = Column(String(16), nullable=True)  # weak / medium / good
     available_days = Column(Integer, nullable=True)
-    daily_hours = Column(Float, nullable=True)
-    weak_chapters = Column(Text, default="[]")  # JSON 数组
-    output_need = Column(Text, default="[]")  # JSON 数组
+    daily_hours = Column(PreciseFloat, nullable=True)
+    weak_chapters = Column(LargeText, default="[]")  # JSON 数组
+    output_need = Column(LargeText, default="[]")  # JSON 数组
     is_complete = Column(Boolean, default=False)
-    missing_fields = Column(Text, default="[]")  # JSON 数组
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    missing_fields = Column(LargeText, default="[]")  # JSON 数组
+    created_at = Column(PreciseDateTime, default=datetime.now)
+    updated_at = Column(PreciseDateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class Analysis(Base):
@@ -136,10 +148,10 @@ class Analysis(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
     profile_id = Column(Integer, ForeignKey("user_profiles.id"), nullable=False)
-    result_json = Column(Text, nullable=False)
+    result_json = Column(LargeText, nullable=False)
     status = Column(String(16), default="success")  # success / failed
-    error_msg = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.now)
+    error_msg = Column(LargeText, default="")
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class Task(Base):
@@ -158,16 +170,17 @@ class Task(Base):
     end_time = Column(Time, nullable=True)
     location = Column(String(120), nullable=False, default='')
     difficulty = Column(String(16), nullable=False, default='medium')
-    detail = Column(Text, nullable=False, default='')
+    detail = Column(LargeText, nullable=False, default='')
+    knowledge_point = Column(String(128), nullable=False, default='')
     repeat_rule = Column(String(16), nullable=False, default='none')
     repeat_until = Column(Date, nullable=True)
     repeat_group_id = Column(String(32), nullable=True, index=True)
     priority = Column(Integer, default=2)  # 1 高 / 2 中 / 3 低
     sort_order = Column(Integer, default=0)
     is_done = Column(Boolean, default=False)
-    done_at = Column(DateTime, nullable=True)
+    done_at = Column(PreciseDateTime, nullable=True)
     source = Column(String(16), default="ai")  # ai / manual
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
     @property
     def move_fingerprint(self):
@@ -183,9 +196,10 @@ class DailyPressure(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), index=True, nullable=False)
     record_date = Column(Date, nullable=False)
-    score = Column(Float, nullable=False)
-    breakdown = Column(Text, nullable=False)
-    computed_at = Column(DateTime, nullable=False)  # UTC，响应补回时区
+    score = Column(PreciseFloat, nullable=False)
+    raw_score = Column(PreciseFloat, nullable=True)
+    breakdown = Column(LargeText, nullable=False)
+    computed_at = Column(PreciseDateTime, nullable=False)  # UTC，响应补回时区
     source = Column(String(16), nullable=False)  # startup / scheduled
     formula_version = Column(String(16), nullable=False)
 
@@ -199,8 +213,9 @@ class MoodRecord(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     record_date = Column(Date, index=True, nullable=False)  # 记录当天
     mood_score = Column(Integer, nullable=False)  # 情绪自评 1~5
+    composite_raw = Column(PreciseFloat, nullable=True)  # 提交时快照；旧记录未知，不伪造
     note = Column(String(256), default="")
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class Course(Base):
@@ -210,12 +225,14 @@ class Course(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(64), nullable=False)  # 课程/科目名称
+    color = Column(String(16), nullable=False, default='')
+    is_active = Column(Boolean, nullable=False, default=True)
     code = Column(String(32), default="")  # 课程代码
     teacher = Column(String(64), default="")  # 任课教师
-    credit = Column(Float, default=0.0)  # 学分
+    credit = Column(PreciseFloat, default=0.0)  # 学分
     term = Column(String(32), default="")  # 开课学期
     note = Column(String(256), default="")
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class Collection(Base):
@@ -229,10 +246,10 @@ class Collection(Base):
     item_type = Column(String(16), nullable=False)  # material=资料 / question=题目
     material_id = Column(Integer, ForeignKey("materials.id"), nullable=True)  # 收藏资料时指向资料
     title = Column(String(256), default="")  # 展示用：资料标题或题干
-    content = Column(Text, default="")  # 题目详情 JSON（选项/答案/解析/知识点）
+    content = Column(LargeText, default="")  # 题目详情 JSON（选项/答案/解析/知识点）
     question_key = Column(String(64), nullable=True)
     source = Column(String(16), default="manual")  # manual=学生手动收藏 / quiz=自测答错自动入本
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class QuizAttempt(Base):
@@ -244,12 +261,12 @@ class QuizAttempt(Base):
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
     analysis_id = Column(Integer, ForeignKey("analyses.id"), index=True, nullable=False)
     subject = Column(String(64), nullable=False)
-    questions_json = Column(Text, nullable=False)
+    questions_json = Column(LargeText, nullable=False)
     status = Column(String(16), nullable=False, default="active")
-    answers_json = Column(Text, nullable=True)
-    result_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.now, nullable=False)
-    submitted_at = Column(DateTime, nullable=True)
+    answers_json = Column(LargeText, nullable=True)
+    result_json = Column(LargeText, nullable=True)
+    created_at = Column(PreciseDateTime, default=datetime.now, nullable=False)
+    submitted_at = Column(PreciseDateTime, nullable=True)
 
 
 class QaConversation(Base):
@@ -261,8 +278,8 @@ class QaConversation(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
     title = Column(String(128), default="")
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
+    updated_at = Column(PreciseDateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class QaMessage(Base):
@@ -275,8 +292,8 @@ class QaMessage(Base):
         Integer, ForeignKey("qa_conversations.id"), index=True, nullable=False
     )
     role = Column(String(16), nullable=False)  # user / assistant
-    content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.now)
+    content = Column(LargeText, nullable=False)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class FocusSession(Base):
@@ -286,15 +303,17 @@ class FocusSession(Base):
     """
 
     __tablename__ = "focus_sessions"
+    __table_args__ = (Index('uq_focus_user_request', 'user_id', 'request_id', unique=True),)
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=True)
     subject_snapshot = Column(String(64), nullable=False, default="")
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime, nullable=False)
+    request_id = Column(String(64), nullable=True)
+    start_time = Column(PreciseDateTime, nullable=False)
+    end_time = Column(PreciseDateTime, nullable=False)
     duration_minutes = Column(Integer, nullable=False)  # 1~180，单个默认 25
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
 
 
 class FocusGoal(Base):
@@ -307,8 +326,8 @@ class FocusGoal(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     goal_date = Column(Date, index=True, nullable=False)
     target_minutes = Column(Integer, default=0)  # 0 表示未设定
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(PreciseDateTime, default=datetime.now)
+    updated_at = Column(PreciseDateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class StudySetting(Base):
@@ -335,7 +354,7 @@ class Reminder(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     target_type = Column(String(8), nullable=False)
     target_id = Column(Integer, nullable=False)
-    target_created_at = Column(DateTime, nullable=False)  # 防止删除后的事项 ID 重用继承设置
+    target_created_at = Column(PreciseDateTime, nullable=False)  # 防止删除后的事项 ID 重用继承设置
     enabled = Column(Boolean, nullable=False, default=True)
     event_time = Column(String(5), nullable=False, default="09:00")
     advance_minutes = Column(Integer, nullable=False, default=0)
@@ -349,13 +368,13 @@ class Notification(Base):
     occurrence_key = Column(String(64), nullable=False)
     target_type = Column(String(8), nullable=False)
     target_id = Column(Integer, nullable=False)
-    target_created_at = Column(DateTime, nullable=False)
+    target_created_at = Column(PreciseDateTime, nullable=False)
     title = Column(String(50), nullable=False)
     content = Column(String(200), nullable=False)
-    due_at = Column(DateTime, nullable=False)  # UTC
-    created_at = Column(DateTime, nullable=False)  # UTC，实际打开页面生成的时间
+    due_at = Column(PreciseDateTime, nullable=False)  # UTC
+    created_at = Column(PreciseDateTime, nullable=False)  # UTC，实际打开页面生成的时间
     is_read = Column(Boolean, nullable=False, default=False)
-    deleted_at = Column(DateTime, nullable=True)  # 保留去重凭据，删除后刷新不会再生成
+    deleted_at = Column(PreciseDateTime, nullable=True)  # 保留去重凭据，删除后刷新不会再生成
 
 
 class FileCleanupJob(Base):
@@ -366,7 +385,7 @@ class FileCleanupJob(Base):
     file_path = Column(String(512), unique=True, nullable=False)
     attempts = Column(Integer, nullable=False, default=0)
     last_error = Column(String(80), nullable=False, default="")
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(PreciseDateTime, nullable=False, default=datetime.now)
 
 
 class IcsImportReceipt(Base):
@@ -377,7 +396,33 @@ class IcsImportReceipt(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     exam_id = Column(Integer, ForeignKey("exams.id"), index=True, nullable=False)
     imported = Column(Integer, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(PreciseDateTime, nullable=False, default=datetime.now)
+
+
+class ModelUsage(Base):
+    __tablename__ = 'model_usage'
+    user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
+    usage_date = Column(Date, primary_key=True)
+    calls = Column(Integer, nullable=False, default=0)
+
+
+class AIJob(Base):
+    __tablename__ = 'ai_jobs'
+    __table_args__ = (Index('uq_ai_job_request','user_id','request_key',unique=True),)
+    id = Column(String(32), primary_key=True, default=lambda:uuid4().hex)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    auth_key = Column(String(64), nullable=False)
+    request_key = Column(String(64), nullable=False)
+    request_id = Column(String(32), nullable=False, default='')
+    kind = Column(String(16), nullable=False)
+    payload_json = Column(LargeText, nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default='queued')
+    result_json = Column(LargeText, nullable=True)
+    error_message = Column(String(512), nullable=False, default='')
+    error_status = Column(Integer, nullable=False, default=0)
+    created_at = Column(PreciseDateTime, nullable=False, default=datetime.now)
+    finished_at = Column(PreciseDateTime, nullable=True)
 
 
 class OperationLog(Base):
@@ -385,6 +430,7 @@ class OperationLog(Base):
 
     __tablename__ = "operation_logs"
     id = Column(Integer, primary_key=True)
+    request_id = Column(String(32), nullable=False, default='', index=True)
     actor_id = Column(Integer, nullable=True, index=True)
     actor_name = Column(String(64), nullable=False, default="")
     action = Column(String(48), nullable=False, index=True)
@@ -392,4 +438,4 @@ class OperationLog(Base):
     method = Column(String(8), nullable=False)
     path = Column(String(160), nullable=False)
     status_code = Column(Integer, nullable=False)
-    created_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(PreciseDateTime, nullable=False, index=True)

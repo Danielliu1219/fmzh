@@ -76,6 +76,13 @@ class ReplanningTests(unittest.TestCase):
         self.assertEqual(sum(a['minutes'] for a in p['scheduling']['assignments']),90)
         self.assertEqual(sum(a['minutes'] for a in p['scheduling']['assignments'] if a['date']==str(date.today())),15)
 
+    def test_explicit_knowledge_link_drives_priority_and_survives_replanning(self):
+        self.ai_task.title='刷真题一套';self.ai_task.knowledge_point='积分';self.ai_task.priority=3;self.db.commit()
+        preview=self.preview()
+        self.assertTrue(all(item['knowledge_point']=='积分' and item['priority']==1 for item in preview['plan']))
+        self.apply(preview);self.db.expire_all()
+        self.assertTrue(all(task.knowledge_point=='积分' for task in self.db.query(Task).filter(Task.source=='ai')))
+
     def test_confirm_matches_preview_and_preserves_total_and_manual(self):
         p=self.preview();self.apply(p);self.db.expire_all()
         self.assertEqual(sum(t.estimated_minutes for t in self.db.query(Task)),135)

@@ -17,6 +17,8 @@
         </div>
         <el-table :data="courses" stripe v-loading="loading">
           <el-table-column prop="name" label="课程/科目" min-width="140" />
+          <el-table-column label="颜色" width="70"><template #default="{row}"><span :style="{color:row.color||'inherit'}">●</span></template></el-table-column>
+          <el-table-column label="状态" width="90"><template #default="{row}">{{ row.is_active === false ? '已停用' : '启用中' }}</template></el-table-column>
           <el-table-column prop="code" label="课程代码" width="120" />
           <el-table-column prop="teacher" label="任课教师" width="110" />
           <el-table-column prop="credit" label="学分" width="80" />
@@ -81,12 +83,14 @@
             <el-option label="成功" value="success" /><el-option label="失败" value="failure" />
           </el-select>
           <el-button :loading="logsLoading" @click="searchLogs">查询</el-button>
+          <el-input v-model="logFilters.request_id" placeholder="请求编号" clearable style="width:240px" @keyup.enter="searchLogs" />
         </div>
         <p class="muted">仅记录操作与结果。账号注销后保留审计快照，不保存密码、令牌或资料正文。</p>
         <el-table :data="auditLogs.items" v-loading="logsLoading" stripe empty-text="暂无符合条件的操作记录">
           <el-table-column label="时间（北京）" min-width="170"><template #default="{ row }">{{ logTime(row.created_at) }}</template></el-table-column>
           <el-table-column label="账号" min-width="140"><template #default="{ row }">{{ row.actor_name || '未知账号' }}{{ row.actor_id == null ? '（未认证）' : '' }}</template></el-table-column>
           <el-table-column prop="label" label="操作" min-width="140" />
+          <el-table-column prop="request_id" label="请求编号" min-width="260" show-overflow-tooltip />
           <el-table-column label="对象编号" width="110"><template #default="{ row }">{{ row.target_id || '—' }}</template></el-table-column>
           <el-table-column label="结果" width="125"><template #default="{ row }"><el-tag :type="row.outcome === 'success' ? 'success' : 'danger'">{{ row.outcome === 'success' ? '成功' : '失败' }} · {{ row.status_code }}</el-tag></template></el-table-column>
         </el-table>
@@ -106,6 +110,8 @@
         <el-form-item label="任课教师">
           <el-input v-model="courseForm.teacher" />
         </el-form-item>
+        <el-form-item label="颜色标签"><el-color-picker v-model="courseForm.color" /></el-form-item>
+        <el-form-item label="启用课程"><el-switch v-model="courseForm.is_active" /><span>停用保留记录，不改动个人考试</span></el-form-item>
         <el-form-item label="学分">
           <el-input-number v-model="courseForm.credit" :min="0" :max="20" :step="0.5" />
         </el-form-item>
@@ -144,7 +150,7 @@ const materials = ref([])
 const cleanupLoading = ref(false)
 const logsLoading = ref(false)
 const logPage = ref(1)
-const logFilters = reactive({ actor: '', action: '', outcome: '' })
+const logFilters = reactive({ actor: '', action: '', outcome: '', request_id:'' })
 const auditLogs = ref({ items: [], actions: [], total: 0 })
 const logTime = (value) => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const loadLogs = async () => {
@@ -180,6 +186,7 @@ const adminAction = useActionLock('管理端操作')
 const courseDialog = ref(false)
 const editing = ref(false)
 const courseForm = reactive({
+  color: '', is_active: true,
   id: null,
   name: '',
   code: '',
@@ -216,13 +223,13 @@ const loadAll = async () => {
 
 const openCreate = () => {
   editing.value = false
-  Object.assign(courseForm, { id: null, name: '', code: '', teacher: '', credit: 0, term: '', note: '' })
+  Object.assign(courseForm, { id: null, name: '', code: '', teacher: '', credit: 0, term: '', note: '', color:'', is_active:true })
   courseDialog.value = true
 }
 
 const openEdit = (row) => {
   editing.value = true
-  Object.assign(courseForm, row)
+  Object.assign(courseForm, {color:'', is_active:true}, row)
   courseDialog.value = true
 }
 
@@ -233,6 +240,7 @@ const saveCourse = async () => {
     return
   }
   const payload = {
+    color: courseForm.color || '', is_active: courseForm.is_active,
     name: courseForm.name.trim(),
     code: courseForm.code,
     teacher: courseForm.teacher,

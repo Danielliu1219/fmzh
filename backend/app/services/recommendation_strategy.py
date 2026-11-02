@@ -1,4 +1,5 @@
 """在既有目标/绩点定义之上分配复习内容；不改成绩区间，不增加任务总时长。"""
+from .pressure import beijing_day
 import json
 import math
 from collections import defaultdict
@@ -105,7 +106,7 @@ def refresh_strategy(result):
 
 def apply_strategy(result, profile, today=None):
     """收口模型结果：按天累计限额，说明未安排部分，再生成等量的练习拆分。"""
-    today = today or date.today()
+    today = today or beijing_day()
     strategy = strategy_for(profile)
     result.strategy = strategy
     load = defaultdict(int)
