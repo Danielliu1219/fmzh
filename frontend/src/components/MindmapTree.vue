@@ -31,7 +31,7 @@ import { layoutMindmap, mindmapDetailBranches } from '../utils/mindmapLayout.js'
 
 const props = defineProps({ data: { type: Object, default: null } })
 const viewport = ref(null), width = ref(1100), fontRevision = ref(0), collapsed = ref(new Set())
-let observer, context, fontFamily = 'sans-serif', disposed = false
+let observer, context, resizeFrame, fontFamily = 'sans-serif', disposed = false
 const measure = (text, depth) => {
   if (!context) return Array.from(text).reduce((sum, char) => sum + (/[^\u0000-\u00ff]/.test(char) ? 13 : 7.8), 0)
   context.font = `${depth < 2 ? 600 : 400} 13px ${fontFamily}`
@@ -53,11 +53,17 @@ onMounted(() => {
   fontFamily = getComputedStyle(viewport.value).fontFamily
   width.value = Math.max(1, viewport.value.clientWidth)
   fontRevision.value++
-  observer = new ResizeObserver(entries => { width.value = Math.max(1, entries[0].contentRect.width) })
+  observer = new ResizeObserver(entries => {
+    const nextWidth = Math.max(1, entries[0].contentRect.width)
+    if (Math.abs(nextWidth - width.value) < 1) return
+    cancelAnimationFrame(resizeFrame)
+    // 下一帧再写入尺寸，避免在observer交付时改变布局而触发循环警告。
+    resizeFrame = requestAnimationFrame(() => { if (!disposed) width.value = nextWidth })
+  })
   observer.observe(viewport.value)
   document.fonts?.ready.then(() => { if (!disposed) fontRevision.value++ })
 })
-onBeforeUnmount(() => { disposed = true; observer?.disconnect() })
+onBeforeUnmount(() => { disposed = true; observer?.disconnect(); cancelAnimationFrame(resizeFrame) })
 </script>
 
 <style scoped>
