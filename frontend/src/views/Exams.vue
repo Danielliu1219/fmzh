@@ -146,7 +146,7 @@
     <!-- 课程编辑对话框（含科目颜色 2.11） -->
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑课程' : '添加课程'" width="460px" :before-close="examDraft.beforeClose">
       <p class="exam-lookup">
-        <a href="https://jxyw.scu.edu.cn/cas/login" target="_blank" rel="noopener noreferrer">前往四川大学教务系统查询考表 ↗</a>
+        <a href="http://zhjw.scu.edu.cn/login" target="_blank" rel="noopener noreferrer">前往四川大学教务系统查询考表 ↗</a>
         <span>登录后查看考试安排，再填写下方信息。</span>
       </p>
       <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
