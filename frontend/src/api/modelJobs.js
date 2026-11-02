@@ -6,7 +6,7 @@ export async function modelJob(kind,payload){
   let job
   try { job=await request.post('/ai/jobs',{kind,payload,request_key:pending.get(key)},{timeout:10000}) }
   catch(error){ if(error.response) pending.delete(key); throw error }
-  const until=Date.now()+(kind==='analysis'?660000:150000)
+  const until=Date.now()+(kind==='analysis'?1860000:150000)
   while(job.status==='queued'||job.status==='running'){
     if(Date.now()>until) {
       const message=`任务仍在处理中，请稍后点击生成以继续查询（任务 ${job.id}）`
