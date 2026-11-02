@@ -3,12 +3,13 @@ import json
 import socket
 import time
 import unittest
+import httpx
 from collections import deque
 from contextlib import ExitStack
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from sqlalchemy.orm import Session
 
@@ -232,9 +233,43 @@ class LlmTransportTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
 
     def test_profile_transient_timeout_retries_once_then_saves_valid_response(self):
-        self.upstream.add('delayed',delay=.12)
+        self.upstream.add('delayed',delay=.45)
         self.upstream.add(json.dumps({'target':'pass','learning_status':'weak','available_days':5,'daily_hours':2,'missing_fields':[]}))
-        with patch.object(llm_client,'REQUEST_TIMEOUT',.02):
+        with patch.object(llm_client,'REQUEST_TIMEOUT',.2):
             result=self.call('POST','/ai/profile',{'exam_id':1,'raw_text':'重试后的有效画像'})
         self.assertEqual(result['target'],'pass')
         self.assertEqual(len(self.upstream.requests),2)
+
+    def test_analysis_truncation_does_not_retry_or_replace_existing_plan(self):
+        before = self.state()
+        self.upstream.responses.append({'payload': envelope('{"course":"unfinished"', 'length')})
+        response = self.call('POST', '/ai/analyze', {'exam_id': 1}, status=502)
+        self.assertIn('未自动重试', response['detail'])
+        self.assertEqual(len(self.upstream.requests), 1)
+        self.assertEqual(before, self.state())
+
+    def test_analysis_uses_larger_budget_and_its_own_wait_limit(self):
+        content = json.loads(self.result())
+        content['summary'] = '完整的复习建议。' * 600
+        self.upstream.add(json.dumps(content, ensure_ascii=False), delay=.08)
+        with patch.object(llm_client, 'REQUEST_TIMEOUT', .02):
+            result = self.call('POST', '/ai/analyze', {'exam_id': 1})
+        body = self.upstream.requests[-1]['body']
+        self.assertEqual(body['max_tokens'], settings.LLM_ANALYSIS_MAX_TOKENS)
+        self.assertEqual(body['max_tokens'], 16000)
+        self.assertIn('完整的复习建议', result['result']['summary'])
+        self.assertEqual(len(self.upstream.requests), 1)
+
+    def test_deepseek_flash_keeps_thinking_enabled_without_external_request(self):
+        response = httpx.Response(200, json=envelope('{"ok":true}'), request=httpx.Request('POST', 'https://api.deepseek.com/chat/completions'))
+        # Mock transport first, then change host; never contact the real platform.
+        with patch.object(llm_client, '_post_with_deadline', new_callable=AsyncMock, return_value=response) as post:
+            with patch.object(settings, 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com'), patch.object(settings, 'DEEPSEEK_MODEL', 'deepseek-flash'):
+                self.assertEqual(llm_client.chat_json('fixed JSON system', 'question'), {'ok': True})
+            self.assertEqual(post.call_args.args[1]['thinking'], {'type': 'enabled'})
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_custom_total_deadline_still_stops_heartbeat_stream(self):
+        self.upstream.add('{"ok":true}', heartbeats=30)
+        with self.assertRaisesRegex(llm_client.LLMError, '超时'):
+            llm_client.chat_json('system', 'question', timeout=.05)

@@ -26,7 +26,10 @@ class Submit(BaseModel):
 
 @router.get("/limits")
 def limits(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return model_usage.limits(db, user.id)
+    from ..config import settings
+    return {**model_usage.limits(db, user.id),
+        'analysis_max_tokens': settings.LLM_ANALYSIS_MAX_TOKENS,
+        'analysis_timeout_seconds': settings.LLM_ANALYSIS_TIMEOUT_SECONDS}
 
 
 @router.post("/jobs", status_code=202)

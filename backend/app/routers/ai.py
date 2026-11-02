@@ -38,6 +38,7 @@ from ..schemas.schemas import (
     PlanItem,
     ProfileOut,
     ProfileRequest,
+    ProfileComplete,
     QaAskIn,
     QaConversationCreate,
     QaConversationOut,
@@ -313,6 +314,29 @@ def create_profile(
     )
 
 
+@router.post('/profile/complete', response_model=ProfileOut, summary='直接保存手动补全字段，不调用大模型')
+def complete_profile(payload: ProfileComplete, user: User = Depends(get_current_user), db: Session = Depends(get_db), request: Request = None):
+    lock_schedule(db, user.id, auth_key=user.auth_key)
+    _get_own_exam(db, user, payload.exam_id)
+    profile = db.query(UserProfile).filter(UserProfile.user_id == user.id, UserProfile.exam_id == payload.exam_id).order_by(UserProfile.id.desc()).first()
+    if profile is None:
+        raise HTTPException(400, '请先提取学习画像，再补全缺失字段')
+    if payload.target_band is not None:
+        profile.target_band = payload.target_band
+        profile.target = band_strategy(payload.target_band)
+    for field in ('learning_status', 'available_days', 'daily_hours'):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(profile, field, value)
+    missing = [field for field in PROFILE_REQUIRED if getattr(profile, field) is None]
+    profile.is_complete = not missing
+    profile.missing_fields = json.dumps(missing, ensure_ascii=False)
+    db.commit()
+    if request is not None:
+        request.state.audit_target = profile.id
+    return saved_profile(payload.exam_id, user, db)
+
+
 @router.get("/profile/{exam_id}", response_model=ProfileOut, summary="读取本科已保存画像，供重新描述与调整目标")
 def saved_profile(exam_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _get_own_exam(db, user, exam_id)
@@ -384,7 +408,7 @@ def analyze(
         target_band=profile.target_band,
         weak_chapters=profile.weak_chapters,
     )
-    context = _profile_to_text(profile) + strategy_context(planning_profile) + f"\n注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
+    context = _profile_to_text(profile) + strategy_context(planning_profile) + f"\n北京时间起始日期：{beijing_day().isoformat()}。注意：每天可用 {budget} 分钟是所有科目合计。本科建议每天最多 {share} 分钟；计划天数最多 {planning_profile.available_days} 天。请据此生成本科内容，系统随后做跨科容量校验。\n全部考试：" + "；".join(f"{e.subject} {e.exam_date}" for e in all_exams)
 
     before = input_signature(db, user_id, payload.exam_id, analysis=True)
     profile_id = profile.id
@@ -403,7 +427,8 @@ def analyze(
                 data = chat_json(
                     prompts.ANALYZE_SYSTEM_PROMPT,
                     prompts.build_analyze_user_prompt(context, materials_text),
-                    max_tokens=4000,
+                    max_tokens=settings.LLM_ANALYSIS_MAX_TOKENS,
+                    timeout=settings.LLM_ANALYSIS_TIMEOUT_SECONDS,
                 )
             candidate = GeneratedAnalysis.model_validate(data)
             prepare_questions([q.model_dump() for q in candidate.quiz])
@@ -411,6 +436,8 @@ def analyze(
             break
         except (LLMError, ValidationError, ValueError) as e:
             last_err = e
+            if isinstance(e, LLMError) and e.code == 'output_truncated':
+                break  # 相同额度重放仍可能截断，不再次花费用户Token。
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail='大模型结果缺少必需内容或格式不合法，请重新生成；原计划已保留' if isinstance(last_err,ValidationError) else f"AI 生成失败：{last_err}"
