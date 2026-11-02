@@ -20,6 +20,7 @@ from ..schemas.schemas import (
     MaterialMergeOut,
     MaterialOut,
     MaterialUpdate,
+    MaterialBatchUpdate,
     SourceSuggestionOut,
     SourceReference,
     SourceExcerpt,
@@ -92,6 +93,7 @@ async def upload_material(
     source_type: str = Form("其他"),
     description: str = Form("", max_length=500),
     tags: str = Form("", max_length=100),
+    weight: float | None = Form(None, ge=0, le=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -159,7 +161,7 @@ async def upload_material(
         description=description,
         tags=tags,
         # 资料权重（用例 4.2）：先按来源层级给默认值，学生可再手动调整
-        weight=default_weight_for(source_type),
+        weight=weight if weight is not None else default_weight_for(source_type),
     )
     db.add(material)
     try:
@@ -342,6 +344,32 @@ def update_material(
 
 
 MERGE_MAX_CHARS_PER_MATERIAL = 20000  # 单份资料导出时的正文上限，防止合成出超大文件
+
+
+@router.post("/batch-update", response_model=list[MaterialOut], summary="统一修改已选资料的来源与权重")
+def batch_update_materials(
+    payload: MaterialBatchUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from ..services.task_conflicts import lock_schedule
+    lock_schedule(db, user.id, auth_key=user.auth_key)
+    ids = list(dict.fromkeys(payload.material_ids))
+    rows = db.query(Material).filter(Material.user_id == user.id, Material.id.in_(ids)).all()
+    if len(rows) != len(ids):
+        raise HTTPException(404, '部分资料不存在或不属于当前用户，未修改任何资料')
+    if payload.source_type is not None:
+        _check_source_type(payload.source_type)
+    for row in rows:
+        if payload.source_type is not None:
+            row.source_type = payload.source_type
+            row.weight = default_weight_for(payload.source_type)
+        if payload.weight is not None:
+            row.weight = payload.weight
+    db.commit()
+    refreshed = db.query(Material).filter(Material.user_id == user.id, Material.id.in_(ids)).all()
+    by_id = {row.id: row for row in refreshed}
+    return [by_id[item_id] for item_id in ids]
 
 
 @router.post("/merge", response_model=MaterialMergeOut, summary="合并多份资料为一份复习笔记（用例 3.6）")

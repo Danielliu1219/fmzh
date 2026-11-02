@@ -190,6 +190,18 @@ class MaterialUpdate(BaseModel):
         return '' if value is None else value
 
 
+class MaterialBatchUpdate(BaseModel):
+    material_ids: list[int] = Field(min_length=1)
+    source_type: Optional[str] = None
+    weight: Optional[float] = Field(None, ge=0, le=1)
+
+    @model_validator(mode='after')
+    def require_change(self):
+        if self.source_type is None and self.weight is None:
+            raise ValueError('请选择要统一设置的来源或权重')
+        return self
+
+
 class MaterialMergeIn(BaseModel):
     """合并导出复习笔记（用例 3.6）：勾选多份资料合并为一份"""
 
@@ -249,6 +261,14 @@ class ProfileRequest(BaseModel):
     raw_text: str = ""  # 用户自然语言描述；补全时可为空串
     supplement: Optional[str] = None  # 补全内容，与已保存的 raw_text 合并后重新提取
     target_band: Optional[ScoreBand] = None
+
+
+class ProfileComplete(BaseModel):
+    exam_id: int
+    target_band: Optional[ScoreBand] = None
+    learning_status: Optional[Literal['weak', 'medium', 'good']] = None
+    available_days: Optional[int] = Field(None, ge=1, le=366)
+    daily_hours: Optional[float] = Field(None, ge=.5, le=16)
 
 
 class ProfileOut(BaseModel):

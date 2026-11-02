@@ -6,36 +6,53 @@
 
     <el-card shadow="never" class="upload-card">
       <el-upload
+        ref="uploadRef"
         drag
+        multiple
         :auto-upload="false"
-        :limit="1"
+        :disabled="uploading"
+        :show-file-list="false"
         :on-change="onFileChange"
-        :on-remove="onFileRemove"
         accept=".txt,.pdf,.docx,.ppt,.pptx,.png,.jpg,.jpeg"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-        <div class="el-upload__text">拖拽文件到这里，或 <em>点击选择</em></div>
+        <div class="el-upload__text">拖拽文件到这里，或 <em>点击多选文件</em></div>
         <template #tip>
           <div class="el-upload__tip">
-            支持 TXT / PDF / Word（.docx）/ PPT / PNG / JPEG，单个文件不超过 20MB；图片使用本机文字识别
+            支持 TXT / PDF / Word（.docx）/ PPT / PNG / JPEG，单个文件不超过 20MB；文件夹包含的子目录一并选择，总大小不超过剩余资料容量
           </div>
         </template>
       </el-upload>
+      <div class="upload-toolbar">
+        <el-button :disabled="uploading" @click="folderInput?.click()">选择文件夹</el-button>
+        <input ref="folderInput" type="file" webkitdirectory multiple hidden @change="onFolderChange" />
+        <span>待上传 {{ uploadQueue.length }} 份 · {{ (queuedBytes / 1048576).toFixed(2) }} MB</span>
+        <el-button v-if="uploadQueue.length" link :disabled="uploading" @click="clearUploadQueue">清空暂存</el-button>
+      </div>
+      <ul v-if="uploadQueue.length" class="upload-queue" aria-label="待上传资料">
+        <li v-for="item in uploadQueue" :key="item.id">
+          <div><span>{{ item.path }}</span><small v-if="item.error" class="upload-file-error">{{ item.error }}</small></div>
+          <el-button link :disabled="uploading" :aria-label="`移除${item.path}`" @click="removeQueuedFile(item.id)">移除</el-button>
+        </li>
+      </ul>
+      <p v-if="selectionNotice" class="upload-weight-hint" role="status">{{ selectionNotice }}</p>
+      <p v-if="uploading" class="upload-weight-hint" role="status">正在保存 {{ uploadProgress }} / {{ uploadTotal }} 份，成功项会自动清除；解析在后台继续。</p>
       <div class="upload-form">
-        <el-input v-model="uploadForm.title" placeholder="资料标题（默认取文件名）" maxlength="128" />
-        <el-select v-model="uploadForm.exam_id" placeholder="所属科目（选填）" clearable>
+        <el-input v-model="uploadForm.title" :disabled="uploading || uploadQueue.length > 1" :placeholder="uploadQueue.length > 1 ? '批量资料分别使用原文件名' : '资料标题（默认取文件名）'" maxlength="128" />
+        <el-select v-model="uploadForm.exam_id" :disabled="uploading" placeholder="所属科目（选填）" clearable>
           <el-option v-for="e in exams" :key="e.id" :label="e.subject" :value="e.id" />
         </el-select>
         <el-select
           v-model="uploadForm.source_type"
+          :disabled="uploading"
           placeholder="来源类型"
           @change="sourceTouched = true"
         >
           <el-option v-for="s in sourceTypes" :key="s" :label="`${s}（${sourceLevelLabel(s)}）`" :value="s" />
         </el-select>
-        <el-input v-model="uploadForm.description" placeholder="说明（选填）" />
-        <el-button type="primary" :loading="uploading" :disabled="!file" @click="onUpload">
-          上传并解析
+        <el-input v-model="uploadForm.description" :disabled="uploading" placeholder="统一说明（选填）" maxlength="500" />
+        <el-button type="primary" :loading="uploading" :disabled="!uploadQueue.length" @click="onUpload">
+          上传并解析{{ uploadQueue.length > 1 ? `（${uploadQueue.length}份）` : '' }}
         </el-button>
       </div>
       <p v-if="storageInfo" class="upload-weight-hint">资料容量 {{ (storageInfo.used_bytes/1048576).toFixed(2) }} / {{ (storageInfo.limit_bytes/1048576).toFixed(0) }} MB · 剩余 {{ (storageInfo.remaining_bytes/1048576).toFixed(2) }} MB</p>
@@ -44,7 +61,7 @@
         <span>
           系统建议来源：<b>{{ sourceSuggestion.source_type }}</b>
           <el-tag size="small" effect="plain" class="source-conf">
-            {{ confidenceText(sourceSuggestion.confidence) }}置信度
+            {{ confidenceText(sourceSuggestion.confidence) }}匹配度
           </el-tag>
           <span class="source-reason">{{ sourceSuggestion.reason }}</span>
         </span>
@@ -60,12 +77,12 @@
           采用建议
         </el-button>
       </div>
-      <div class="upload-weight-hint">
-        资料权重将按来源「{{ uploadForm.source_type }}」默认
-        {{ Math.round(sourceWeight(uploadForm.source_type) * 100) }}%（档位：{{
-          sourceLevelLabel(uploadForm.source_type)
-        }}），上传后可在编辑里手动调整
+      <div class="upload-batch-weight">
+        <span>本批资料统一权重：{{ effectiveUploadWeight }}%</span>
+        <el-switch v-model="customUploadWeight" :disabled="uploading" active-text="手动设置" inactive-text="按来源默认" />
+        <el-slider v-if="customUploadWeight" v-model="uploadWeightPercent" :disabled="uploading" :min="0" :max="100" show-input aria-label="本批资料统一权重" />
       </div>
+      <details class="source-rules"><summary>来源识别依据与资料权重</summary><p>建议由本地关键词规则生成，不调用大模型，也不验证资料真伪。文件名每命中一个关键词加6分；正文前20000字中，每个关键词按出现次数加分，最多3分。最高分类得分达到12为高匹配、达到6为中匹配，其余为低匹配。图片或无法读取正文时只看文件名，最终来源由你确认。</p><p>权重表示分析时的参考优先级：老师重点100%，历年题／练习题85%，作业／笔记70%，教材／实验报告55%，其他50%。它不是正确率或真伪概率；可在上传前或勾选资料后统一调整。</p></details>
     </el-card>
 
     <el-card shadow="never" class="list-card">
@@ -118,6 +135,8 @@
             <el-button @click="load"><el-icon><Search /></el-icon></el-button>
           </template>
         </el-input>
+        <el-button v-if="viewMode !== 'collection'" link :disabled="!materials.length" @click="toggleSelectAll">{{ materials.length && materials.every(row => selectedIds.includes(row.id)) ? '取消全选' : '全选当前资料' }}</el-button>
+        <el-button :disabled="!selectedIds.length" @click="openBatchEdit">统一设置权重{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}</el-button>
         <el-button type="primary" plain :disabled="!selectedIds.length" @click="openMerge">
           合并导出{{ selectedIds.length ? `（${selectedIds.length}）` : '' }}
         </el-button>
@@ -232,13 +251,15 @@
 
       <!-- 列表视图 -->
       <el-table
+        ref="materialTable"
         v-else
         :data="materials"
+        row-key="id"
         v-loading="loading"
         :empty-text="emptyText"
         @selection-change="onSelectionChange"
       >
-        <el-table-column type="selection" width="46" />
+        <el-table-column type="selection" width="46" :reserve-selection="true" />
         <el-table-column prop="title" label="标题" min-width="220">
           <template #default="{ row }">
             <b>{{ row.title }}</b>
@@ -366,6 +387,15 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="batchVisible" :title="`统一设置 ${batchForm.material_ids.length} 份资料`" width="min(480px, 94vw)" :before-close="batchDraft.beforeClose">
+      <el-form label-width="90px" :disabled="batchSaving">
+        <el-form-item label="统一来源"><el-select v-model="batchForm.source_type" clearable style="width:100%" placeholder="不改原来源" @change="onBatchSourceChange"><el-option v-for="source in sourceTypes" :key="source" :label="source" :value="source" /></el-select></el-form-item>
+        <el-form-item label="统一权重"><el-slider v-model="batchForm.weightPercent" :min="0" :max="100" show-input /></el-form-item>
+      </el-form>
+      <p class="upload-weight-hint">保存后全部选中资料使用同一权重，原文件及解析内容保留。</p>
+      <template #footer><el-button :disabled="batchSaving" @click="batchDraft.close">取消</el-button><el-button type="primary" :loading="batchSaving" @click="saveBatchEdit">统一保存</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="mergeVisible" title="合并导出复习笔记" width="680px">
       <el-form label-width="80px">
         <el-form-item label="笔记标题">
@@ -393,7 +423,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -401,6 +431,7 @@ import { collectionApi, examApi, materialApi } from '../api'
 import { USE_MOCK, mockStudySession } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
 import SourceExcerpt from '../components/SourceExcerpt.vue'
+import { addUploadFiles, runUploadBatch, uploadBytes, uploadTitle } from '../utils/materialUpload.js'
 const storageInfo=ref(null)
 const parseLabel=row=>row.parse_status==='done'?'解析成功':row.parse_status==='pending'?'正在解析':'解析失败'
 async function retryParse(row){if(USE_MOCK)return;await materialApi.retry(row.id);ElMessage.success('已重新受理解析');load()}
@@ -463,7 +494,13 @@ const suggestSourceLocal = (filename) => {
 const exams = ref([])
 const materials = ref([])
 const loading = ref(false)
-const file = ref(null)
+const uploadRef = ref(), folderInput = ref()
+const materialTable = ref()
+const uploadQueue = ref([]), selectionNotice = ref('')
+const uploadProgress = ref(0), uploadTotal = ref(0)
+const customUploadWeight = ref(false), uploadWeightPercent = ref(85)
+const queuedBytes = computed(() => uploadBytes(uploadQueue.value))
+const effectiveUploadWeight = computed(() => customUploadWeight.value ? uploadWeightPercent.value : Math.round(sourceWeight(uploadForm.source_type) * 100))
 const uploading = ref(false)
 const viewMode = ref(route.query.view === 'collection' ? 'collection' : 'library')
 // 系统辅助识别来源建议（用例 3.2）
@@ -482,6 +519,8 @@ const filter = reactive({
 })
 
 const editVisible = ref(false)
+const batchVisible = ref(false), batchSaving = ref(false)
+const batchForm = reactive({ material_ids: [], source_type: '', weightPercent: 85 })
 const editSaving = ref(false)
 const editForm = reactive({
   id: null,
@@ -612,8 +651,8 @@ const mockFiltered = () => {
   return list
 }
 
-let parsePoll=null, disposed=false
-onUnmounted(()=>{disposed=true;clearTimeout(parsePoll)})
+let parsePoll=null, disposed=false, sourceTimer=null, sourceRequest=0
+onUnmounted(()=>{disposed=true;clearTimeout(parsePoll);clearTimeout(sourceTimer);sourceRequest++})
 const load = async () => {
   clearTimeout(parsePoll)
   loading.value = true
@@ -649,6 +688,7 @@ const loadCollections = async () => {
 
 // 选文件后请求来源建议；失败不影响正常上传
 const requestSourceSuggestion = async (rawFile) => {
+  const version = ++sourceRequest
   sourceSuggestion.value = null
   if (!rawFile) return
   suggestingSource.value = true
@@ -661,27 +701,49 @@ const requestSourceSuggestion = async (rawFile) => {
       formData.append('file', rawFile)
       suggestion = await materialApi.suggestSource(formData)
     }
+    if (disposed || version !== sourceRequest) return
     sourceSuggestion.value = suggestion
     // 学生还没手动选过来源时，自动采用系统建议
     if (suggestion && !sourceTouched.value) {
       uploadForm.source_type = suggestion.source_type
     }
   } catch (e) {
-    sourceSuggestion.value = null
+    if (version === sourceRequest) sourceSuggestion.value = null
   } finally {
-    suggestingSource.value = false
+    if (version === sourceRequest) suggestingSource.value = false
   }
 }
 
-const onFileChange = (uploadFile) => {
-  file.value = uploadFile.raw
-  if (!uploadForm.title) uploadForm.title = uploadFile.name.replace(/\.[^.]+$/, '').slice(0,128)
-  requestSourceSuggestion(uploadFile.raw)
+const refreshUploadSelection = () => {
+  clearTimeout(sourceTimer); sourceRequest++
+  sourceSuggestion.value = null; suggestingSource.value = false
+  if (uploadQueue.value.length === 1) {
+    const raw = uploadQueue.value[0].raw
+    uploadForm.title = uploadTitle(raw)
+    sourceTimer = setTimeout(() => requestSourceSuggestion(raw), 250)
+  } else uploadForm.title = ''
 }
-
-const onFileRemove = () => {
-  file.value = null
-  sourceSuggestion.value = null
+const addFiles = files => {
+  const { accepted, rejected } = addUploadFiles(uploadQueue.value, files, storageInfo.value?.remaining_bytes ?? Infinity)
+  uploadQueue.value = accepted
+  selectionNotice.value = rejected.length ? `未加入 ${rejected.length} 份：${rejected.slice(0, 4).map(item => `${item.name}（${item.reason}）`).join('；')}${rejected.length > 4 ? '…' : ''}` : ''
+  refreshUploadSelection()
+}
+const onFileChange = (uploadFile) => {
+  if (!uploading.value && uploadFile.raw) addFiles([uploadFile.raw])
+  uploadRef.value?.clearFiles()
+}
+const onFolderChange = event => {
+  if (!uploading.value) addFiles(Array.from(event.target.files || []))
+  event.target.value = ''
+}
+const removeQueuedFile = id => {
+  uploadQueue.value = uploadQueue.value.filter(item => item.id !== id)
+  refreshUploadSelection()
+}
+const clearUploadQueue = () => {
+  uploadQueue.value = []; selectionNotice.value = ''; sourceTouched.value = false
+  refreshUploadSelection(); uploadRef.value?.clearFiles()
 }
 
 const applySuggestion = () => {
@@ -691,44 +753,76 @@ const applySuggestion = () => {
 }
 
 const onUpload = async () => {
-  if(uploading.value || !file.value) return
+  if(uploading.value || !uploadQueue.value.length) return
+  const snapshot = [...uploadQueue.value], form = { ...uploadForm }
+  const weight = effectiveUploadWeight.value / 100
+  clearTimeout(sourceTimer); sourceRequest++; suggestingSource.value = false; sourceSuggestion.value = null
   uploading.value = true
+  uploadTotal.value = snapshot.length; uploadProgress.value = 0
   try {
-    if (USE_MOCK) {
-      // mock 模式下模拟解析成功并加入本地列表
-      await new Promise((r) => setTimeout(r, 800))
-      mockMaterials.unshift({
-        id: Date.now(),
-        title: uploadForm.title || file.value.name,
-        exam_id: uploadForm.exam_id,
-        source_type: uploadForm.source_type,
-        file_type: (file.value.name.split('.').pop() || 'txt').toLowerCase(),
-        parse_status: 'done',
-        description: uploadForm.description,
-        weight: sourceWeight(uploadForm.source_type),
-        default_weight: sourceWeight(uploadForm.source_type),
-        text_preview: '（静态演示文本）上传文件在真实后端下会解析出文本，此处为预览占位。',
-      })
-    } else {
+    const result = await runUploadBatch(snapshot, async raw => {
+      const title = snapshot.length === 1 ? form.title || uploadTitle(raw) : uploadTitle(raw)
+      if (USE_MOCK) {
+        const item = { id: Math.max(0, ...mockMaterials.map(m => m.id)) + 1, title,
+          exam_id: form.exam_id, source_type: form.source_type, weight, default_weight: sourceWeight(form.source_type),
+          file_type: raw.name.split('.').pop().toLowerCase(), parse_status: 'done', description: form.description,
+          tags: '', text_preview: '（静态演示）真实上传后将解析文件正文。' }
+        mockMaterials.unshift(item)
+        return item
+      }
       const formData = new FormData()
-      formData.append('file', file.value)
-      formData.append('title', uploadForm.title || file.value.name)
-      if (uploadForm.exam_id) formData.append('exam_id', uploadForm.exam_id)
-      formData.append('source_type', uploadForm.source_type)
-      formData.append('description', uploadForm.description)
-      const accepted=await materialApi.upload(formData)
-      ElMessage.success(accepted.parse_status==='pending'?'资料已保存，正在后台解析':accepted.parse_status==='done'?'上传成功，解析完成':'资料已保存，未能提取文字，可检查文件后重试')
+      formData.append('file', raw)
+      formData.append('title', title)
+      if (form.exam_id) formData.append('exam_id', form.exam_id)
+      formData.append('source_type', form.source_type)
+      formData.append('description', form.description)
+      formData.append('weight', weight)
+      return await materialApi.upload(formData)
+    }, (item, error) => {
+      uploadProgress.value++
+      if (!error) uploadQueue.value = uploadQueue.value.filter(row => row.id !== item.id)
+      else {
+        const row = uploadQueue.value.find(row => row.id === item.id)
+        const detail = error?.response?.data?.detail
+        if (row) row.error = typeof detail === 'string' ? detail : error.message || '上传失败，请重试'
+      }
+    })
+    if (result.succeeded.length) {
+      ElMessage.success(`已保存 ${result.succeeded.length} 份资料，解析进度见资料列表；可对本批资料统一设置权重`)
     }
-    if(USE_MOCK) ElMessage.success('已添加演示资料')
-    file.value = null
-    uploadForm.title = ''
-    uploadForm.description = ''
-    sourceSuggestion.value = null
-    sourceTouched.value = false
-    load()
+    if (uploadQueue.value.length) ElMessage.warning(`还有 ${uploadQueue.value.length} 份未上传，已留在暂存区`)
+    else { uploadForm.title = ''; uploadForm.description = ''; sourceTouched.value = false }
+    await load()
+    if (result.succeeded.length) await selectMaterialIds(result.succeeded.map(item => item.id))
   } finally {
     uploading.value = false
   }
+}
+
+const openBatchEdit = () => {
+  batchForm.material_ids = [...selectedIds.value]
+  batchForm.source_type = ''
+  batchForm.weightPercent = Math.round((materials.value.find(row => row.id === selectedIds.value[0])?.weight ?? .85) * 100)
+  batchVisible.value = true
+}
+const onBatchSourceChange = source => { if (source) batchForm.weightPercent = Math.round(sourceWeight(source) * 100) }
+const saveBatchEdit = async () => {
+  if (batchSaving.value) return
+  batchSaving.value = true
+  try {
+    const payload = { material_ids: [...batchForm.material_ids], weight: batchForm.weightPercent / 100 }
+    if (batchForm.source_type) payload.source_type = batchForm.source_type
+    if (USE_MOCK) {
+      for (const row of mockMaterials.filter(row => payload.material_ids.includes(row.id))) {
+        row.weight = payload.weight
+        if (payload.source_type) { row.source_type = payload.source_type; row.default_weight = sourceWeight(payload.source_type) }
+        row.weight_level = weightLevel(row.weight)
+      }
+    } else await materialApi.batchUpdate(payload)
+    batchVisible.value = false
+    ElMessage.success(`已统一设置 ${payload.material_ids.length} 份资料`)
+    await load()
+  } finally { batchSaving.value = false }
 }
 
 const onPreview = async (row) => {
@@ -911,6 +1005,16 @@ const onSelectRow = (id, checked) => {
     selectedIds.value = selectedIds.value.filter((x) => x !== id)
   }
 }
+const selectMaterialIds = async ids => {
+  selectedIds.value = ids
+  if (viewMode.value !== 'list') return
+  await nextTick()
+  materialTable.value?.clearSelection()
+  for (const row of materials.value) {
+    if (ids.includes(row.id)) materialTable.value?.toggleRowSelection(row, true)
+  }
+}
+const toggleSelectAll = () => selectMaterialIds(materials.value.every(row => selectedIds.value.includes(row.id)) ? [] : materials.value.map(row => row.id))
 const onSelectionChange = (rows) => {
   selectedIds.value = rows.map((r) => r.id)
 }
@@ -1032,7 +1136,8 @@ const exportAs = async (format) => {
 
 const materialAction = useActionLock('资料或错题操作')
 const materialDraft = useDialogDraft(editForm,editVisible,editSaving,'资料信息')
-usePendingWork(() => ({busy:[uploading.value && '资料上传',merging.value && '笔记导出'].filter(Boolean),warning:file.value ? '有尚未上传的文件，离开会清除当前文件选择和上传表单。' : ''}))
+const batchDraft = useDialogDraft(batchForm,batchVisible,batchSaving,'批量资料权重')
+usePendingWork(() => ({busy:[uploading.value && '资料上传',batchSaving.value && '统一修改权重',merging.value && '笔记导出'].filter(Boolean),warning:uploadQueue.value.length ? '有尚未上传的文件，离开会清除当前文件选择和上传表单。' : ''}))
 
 onMounted(() => {
   const requested = Number(route.query.exam)
@@ -1060,6 +1165,15 @@ watch(() => route.query.exam, value => {
 .upload-card {
   margin-bottom: 16px;
 }
+.upload-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 13px; color: var(--text-low); }
+.upload-queue { max-height: 240px; overflow: auto; list-style: none; padding: 0; margin: 12px 0; }
+.upload-queue li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.upload-queue li > div { min-width: 0; overflow-wrap: anywhere; }
+.upload-file-error { display: block; color: var(--coral-deep); margin-top: 4px; }
+.upload-batch-weight { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
+.upload-batch-weight .el-slider { width: min(480px, 100%); margin: 0; }
+.source-rules { margin-top: 12px; font-size: 12px; line-height: 1.8; color: var(--text-low); }
+.source-rules summary { cursor: pointer; }
 .upload-form {
   display: grid;
   grid-template-columns: 1.2fr 1fr 1fr 1.2fr auto;

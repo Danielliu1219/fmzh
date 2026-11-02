@@ -35,6 +35,7 @@ ACTIONS = {
     ('PUT', '/api/auth/me'): ('auth.profile', '修改个人资料'),
     ('DELETE', '/api/auth/me'): ('auth.delete', '注销账号'),
     ('POST', '/api/materials'): ('material.upload', '上传资料'),
+    ('POST', '/api/materials/batch-update'): ('material.batch', '统一修改资料来源与权重'),
     ('PUT', '/api/materials/{material_id}'): ('material.update', '修改资料'),
     ('DELETE', '/api/materials/{material_id}'): ('material.delete', '删除资料'),
     ('POST', '/api/ai/profile'): ('ai.profile', '生成学习画像'),

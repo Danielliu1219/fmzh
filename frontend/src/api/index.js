@@ -47,6 +47,7 @@ export const materialApi = {
     }),
   detail: (id) => request.get(`/materials/${id}`),
   update: (id, data) => request.put(`/materials/${id}`, data),
+  batchUpdate: (data) => request.post('/materials/batch-update', data),
   merge: (data) => request.post('/materials/merge', data),
   remove: (id) => request.delete(`/materials/${id}`),
 }
@@ -64,6 +65,7 @@ export const aiApi = {
   mastery: (examId) => request.get(`/ai/analyses/${examId}/mastery`),
   limits: () => request.get('/ai/limits'),
   profile: (data) => modelJob('profile', data),
+  completeProfile: (data) => request.post('/ai/profile/complete', data),
   savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),
   analyze: (examId) => modelJob('analysis', { exam_id: examId }),
   // 思维导图与记忆卡片（用例 4.4）

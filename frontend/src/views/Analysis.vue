@@ -23,6 +23,7 @@
     </div>
 
     <p v-if="modelLimits" class="course-context">{{ modelLimits.mock ? '本机演示生成，不消耗真实调用额度。' : `今日真实大模型调用 ${modelLimits.used_calls} / ${modelLimits.daily_limit} 次，剩余 ${modelLimits.remaining_calls} 次（重试也计次）。` }}</p>
+    <p v-if="modelLimits && !modelLimits.mock && modelLimits.analysis_max_tokens" class="choice-hint">分析输出上限 {{ modelLimits.analysis_max_tokens.toLocaleString() }} Token（含思考），单次最长等待 {{ modelLimits.analysis_timeout_seconds }} 秒；按实际生成量计费，输出截断不会自动再试一次。</p>
     <div v-if="!examId" class="course-context">
       <el-icon><InfoFilled /></el-icon>
       <p><strong>先说说你的情况，再选择课程。</strong>你可以先填写自然语言描述、目标区间和每日总时间；选择课程后，再补充该课基础与薄弱章节。</p>
@@ -653,7 +654,7 @@
         <el-result
           icon="info"
           title="AI 正在分析你的资料…"
-          sub-title="通常需要几十秒，请稍候"
+          sub-title="模型正在思考并生成完整方案，可能需要数分钟；任务在后台执行，请勿重复提交"
         >
           <template #extra
             ><el-progress :percentage="100" :indeterminate="true" :duration="2"
@@ -850,19 +851,6 @@ const statusText = (s) =>
 const weightColor = (w) =>
   w >= 0.8 ? '#c2472f' : w >= 0.6 ? '#a06a22' : '#35554c'
 
-const buildSupplement = () => {
-  const parts = []
-  if (missing.value.includes('target'))
-    parts.push(`我的目标区间是${scoreBandText(completeForm.target_band)}`)
-  if (missing.value.includes('learning_status'))
-    parts.push(`我基础${statusText(completeForm.learning_status)}`)
-  if (missing.value.includes('available_days'))
-    parts.push(`还有${completeForm.available_days}天考试`)
-  if (missing.value.includes('daily_hours'))
-    parts.push(`每天能学${completeForm.daily_hours}小时`)
-  return parts.join('，')
-}
-
 const onExtractProfile = async () => {
   if (!examId.value || courseLoading.value) return
   profileLoading.value = true
@@ -917,12 +905,21 @@ const onExtractProfile = async () => {
 const onCompleteProfile = async () => {
   profileLoading.value = true
   try {
-    profile.value = await aiApi.profile({
-      exam_id: examId.value,
-      raw_text: '',
-      supplement: buildSupplement(),
-      target_band: missing.value.includes('target') ? completeForm.target_band : profile.value.target_band,
-    })
+    const payload = { exam_id: examId.value }
+    if (missing.value.includes('target')) payload.target_band = completeForm.target_band
+    for (const field of ['learning_status', 'available_days', 'daily_hours']) {
+      if (missing.value.includes(field)) payload[field] = completeForm[field]
+    }
+    if (USE_MOCK) {
+      profile.value = { ...profile.value, ...payload, target: payload.target_band ? scoreBand(payload.target_band).strategy : profile.value.target, missing_fields: [], is_complete: true }
+      if (payload.daily_hours) mockStudySession.daily_minutes = Math.round(payload.daily_hours * 60)
+    } else {
+      if (payload.daily_hours) await studyApi.saveSettings({ daily_minutes: Math.round(payload.daily_hours * 60) })
+      profile.value = await aiApi.completeProfile(payload)
+    }
+    for (const field of ['target_band', 'learning_status', 'available_days', 'daily_hours']) {
+      if (payload[field] != null) brief[field] = payload[field]
+    }
     captureAnalysis()
     if (profile.value.is_complete) ElMessage.success('画像已补全')
   } catch {

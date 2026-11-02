@@ -5,6 +5,7 @@ Mock 逻辑在 prompts.py 中，由调用方按 settings.LLM_MOCK 分支选择�
 import json
 import math
 import asyncio
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -16,9 +17,10 @@ REQUEST_TIMEOUT = 60
 
 class LLMError(Exception):
     """大模型调用或返回解析失败"""
-    def __init__(self,message,*,retryable=False):
+    def __init__(self,message,*,retryable=False,code=''):
         super().__init__(message)
         self.retryable=retryable
+        self.code=code
 
 
 def retry_once(function,*args,**kwargs):
@@ -29,13 +31,14 @@ def retry_once(function,*args,**kwargs):
     return function(*args,**kwargs)
 
 
-async def _post_with_deadline(url,body,headers):
+async def _post_with_deadline(url,body,headers,timeout=None):
     # wait_for约束总等待；仅read timeout会被上游心跳空行反复续期。
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        return await asyncio.wait_for(client.post(url,json=body,headers=headers),timeout=REQUEST_TIMEOUT)
+    deadline = REQUEST_TIMEOUT if timeout is None else timeout
+    async with httpx.AsyncClient(timeout=deadline) as client:
+        return await asyncio.wait_for(client.post(url,json=body,headers=headers),timeout=deadline)
 
 
-def _content(system_prompt, messages, max_tokens, *, json_mode=False):
+def _content(system_prompt, messages, max_tokens, *, json_mode=False, timeout=None):
     if not settings.DEEPSEEK_API_KEY.strip():
         raise LLMError("未配置 DEEPSEEK_API_KEY，请在 backend/.env 中填写，或保持 LLM_MOCK=true")
 
@@ -49,12 +52,19 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False):
         "temperature": 0.3,
         "max_tokens": max_tokens,
     }
+    try:
+        provider_host = urlsplit(settings.DEEPSEEK_BASE_URL).hostname
+    except ValueError:
+        provider_host = None
+    if (provider_host == 'api.deepseek.com'
+            and settings.DEEPSEEK_MODEL.startswith(('deepseek-flash', 'deepseek-v4-'))):
+        body['thinking'] = {'type': 'enabled'}
     if json_mode:
         body['response_format'] = {'type':'json_object'}
     from .model_usage import reserve_call
     reserve_call()
     try:
-        resp = asyncio.run(_post_with_deadline(f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",body,headers))
+        resp = asyncio.run(_post_with_deadline(f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",body,headers,timeout))
         resp.raise_for_status()
     except (httpx.TimeoutException,TimeoutError) as exc:
         raise LLMError('大模型请求超时，请稍后重试',retryable=True) from exc
@@ -69,7 +79,7 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False):
         data = resp.json()
         choice = data['choices'][0]
         if choice.get('finish_reason') == 'length':
-            raise LLMError('大模型输出被截断，请缩小内容范围后重试')
+            raise LLMError('大模型输出达到单次Token上限，未生成完整方案；本次未自动重试，原计划已保留',code='output_truncated')
         content = choice['message']['content']
         if not isinstance(content,str) or not content.strip():
             raise LLMError('大模型未返回有效文字，请重试')
@@ -78,9 +88,9 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False):
         raise LLMError('大模型响应格式不正确，请重试') from exc
 
 
-def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000) -> dict:
+def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000, *, timeout=None) -> dict:
     """真实HTTP调用；JSON必须是对象，数组/无效内容由调用方按原策略重试。"""
-    content = _content(system_prompt,[{'role':'user','content':user_prompt}],max_tokens,json_mode=True)
+    content = _content(system_prompt,[{'role':'user','content':user_prompt}],max_tokens,json_mode=True,timeout=timeout)
     def finite_number(value):
         number=float(value)
         if not math.isfinite(number):
