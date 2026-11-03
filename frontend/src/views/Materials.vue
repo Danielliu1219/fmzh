@@ -322,6 +322,7 @@
 
     <el-dialog v-model="mistakeVisible" :title="mistakeTitle" width="640px" style="max-width: calc(100vw - 32px)">
       <QuizFeedback v-if="mistakeDetail" :item="mistakeDetail" />
+      <StudySourceViewer v-if="mistakeDetail?.source_reference" :unit="mistakeDetail.source_reference" :knowledge-point="mistakeDetail.knowledge_point" />
     </el-dialog>
     <el-dialog v-model="previewVisible" :title="previewTitle" width="min(760px, 94vw)">
       <div class="preview-box" v-loading="previewLoading">
@@ -431,6 +432,7 @@ import { collectionApi, examApi, materialApi } from '../api'
 import { USE_MOCK, mockStudySession } from '../mock/dashboard'
 import { mockExams, mockMaterials } from '../mock/pages'
 import SourceExcerpt from '../components/SourceExcerpt.vue'
+import StudySourceViewer from '../components/StudySourceViewer.vue'
 import { addUploadFiles, runUploadBatch, uploadBytes, uploadTitle } from '../utils/materialUpload.js'
 const storageInfo=ref(null)
 const parseLabel=row=>row.parse_status==='done'?'解析成功':row.parse_status==='pending'?'正在解析':'解析失败'

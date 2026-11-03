@@ -128,7 +128,7 @@ def execute(factory, job_id):
             elif kind == "qa":
                 result = ai.ask_qa(
                     payload["conversation_id"],
-                    QaAskIn(content=payload["content"]),
+                    QaAskIn.model_validate(payload),
                     user=user,
                     db=db,
                 )

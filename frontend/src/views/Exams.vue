@@ -76,6 +76,7 @@
                       <p class="task-meta">{{ taskTimeLabel(t) }} · {{ t.location || '地点待定' }} · {{ difficultyLabels[t.difficulty || 'medium'] }}</p>
                       <p v-if="t.repeat_group_id" class="task-meta">{{ taskRepeatLabel(t) }}</p>
                       <details v-if="t.detail" class="task-description"><summary>复习内容</summary><p>{{ t.detail }}</p></details>
+                      <TaskSources :task-id="t.id" :exam-id="t.exam_id" :analysis-id="t.analysis_id" :knowledge-point="t.knowledge_point" :source-ids="t.source_ids || []" @updated="Object.assign(t,$event)" />
                     </template>
                   </el-table-column>
                   <el-table-column label="时长" width="80">
@@ -305,6 +306,7 @@ import { useDialogDraft, usePendingWork, useActionLock, confirmAction } from '..
 import { useRoute } from 'vue-router'
 import ReminderDialog from '../components/ReminderDialog.vue'
 import StudyCalendar from '../components/StudyCalendar.vue'
+import TaskSources from '../components/TaskSources.vue'
 import CourseReview from '../components/CourseReview.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { examApi, taskApi } from '../api'

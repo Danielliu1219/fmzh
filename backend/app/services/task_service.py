@@ -49,9 +49,20 @@ def normalize_fields(data):
     return data
 
 
+def validate_sources(db, user_id, exam_id, source_ids):
+    if not source_ids: return
+    from ..models.models import Material
+    from .study_sources import material_units
+    rows = db.query(Material).filter(Material.user_id == user_id, Material.exam_id == exam_id).all()
+    valid = {u['id'] for m in rows for u in material_units(m)}
+    if any(source_id not in valid for source_id in source_ids):
+        raise HTTPException(422, '来源不属于当前科目或定位已失效，请重新选择')
+
+
 def expand(db, user_id, payload, *, lock=False):
     exam = own_exam(db, user_id, payload.exam_id, lock=lock)
     fields = normalize_fields(payload.model_dump(exclude={'exclude_task_id'}))
+    validate_sources(db, user_id, payload.exam_id, fields.get('source_ids', []))
     custom_dates = fields.pop('repeat_dates', [])
     if fields['repeat_rule'] == 'custom' and custom_dates and not fields['repeat_until']:
         fields['repeat_until'] = max(custom_dates)
@@ -119,6 +130,10 @@ def update_task(db, user_id, task_id, payload):
         changes = payload.model_dump(exclude_unset=True)
         current = {key: getattr(task, key) for key in ('exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', *DETAIL_FIELDS)}
         data = normalize_fields({**current, **changes})
+        if data['exam_id'] != task.exam_id and 'source_ids' not in changes:
+            data['source_ids'] = []
+        if 'source_ids' in changes:
+            validate_sources(db, user_id, data['exam_id'], data['source_ids'])
         exam = own_exam(db, user_id, data['exam_id'], lock=True)
         if (data['plan_date'] != task.plan_date or data['exam_id'] != task.exam_id) and data['plan_date'] > exam.exam_date:
             raise HTTPException(422, '任务日期不能晚于考试日期')

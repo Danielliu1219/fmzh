@@ -62,6 +62,7 @@ from ..services.score_targets import band_strategy, band_text
 from ..services.recommendation_strategy import apply_strategy, strategy_context
 from ..services.study_cards import build_cards, build_mindmap
 from ..services.source_evidence import attach_references, references_for, excerpt_for, item_title
+from ..services.study_sources import build_context, attach_study_sources, material_units
 from ..utils.security import get_current_user
 from ..services.model_usage import metered
 
@@ -210,22 +211,7 @@ def _profile_to_text(profile: UserProfile) -> str:
 
 
 def _build_materials_text(materials: list[Material]) -> str:
-    """拼接资料文本：每份标注 [来源类型]，超长截断"""
-    parts = []
-    total = 0
-    for m in materials:
-        text = (m.text_content or "").strip()
-        if not text:
-            continue
-        text = text[:PER_MATERIAL_LIMIT]
-        if total + len(text) > TOTAL_MATERIALS_LIMIT:
-            text = text[: TOTAL_MATERIALS_LIMIT - total]
-        weight = m.weight if m.weight is not None else default_weight_for(m.source_type)
-        parts.append(f"【资料编号 {m.id}｜{m.title}】[{m.source_type}｜资料权重 {weight:.2f}]\n{text}")
-        total += len(text)
-        if total >= TOTAL_MATERIALS_LIMIT:
-            break
-    return "\n\n".join(parts)
+    return build_context(materials, PER_MATERIAL_LIMIT, TOTAL_MATERIALS_LIMIT)
 
 
 @router.post("/profile", response_model=ProfileOut, summary="第一次调用：自然语言 -> 用户画像（不完整时返回缺失字段）")
@@ -265,7 +251,6 @@ def create_profile(
             data = retry_once(chat_json,
                 prompts.PROFILE_SYSTEM_PROMPT,
                 prompts.build_profile_user_prompt(subject, raw_text),
-                max_tokens=1000,
             )
     except LLMError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
@@ -427,7 +412,6 @@ def analyze(
                 data = chat_json(
                     prompts.ANALYZE_SYSTEM_PROMPT,
                     prompts.build_analyze_user_prompt(context, materials_text),
-                    max_tokens=settings.LLM_ANALYSIS_MAX_TOKENS,
                     timeout=settings.LLM_ANALYSIS_TIMEOUT_SECONDS,
                 )
             candidate = GeneratedAnalysis.model_validate(data)
@@ -450,6 +434,7 @@ def analyze(
     ensure_recommendation_basis(result)
     ensure_question_type_analysis(result)
     attach_references(result, materials)
+    attach_study_sources(result, materials)
 
     try:
         lock_schedule(db, user_id, auth_key=auth_key)
@@ -703,6 +688,18 @@ def delete_qa_conversation(
     return {"ok": True}
 
 
+def _qa_context(materials, payload):
+    base = _build_materials_text(materials)[:QA_MATERIALS_LIMIT]
+    if payload.source_material_id is None:
+        return base
+    material = next((m for m in materials if m.id == payload.source_material_id), None)
+    if material is None: raise HTTPException(404, '来源不属于当前账号和科目')
+    unit = next((u for u in material_units(material) if u['id'] == payload.source_unit_id), None)
+    if unit is None: raise HTTPException(409, '来源定位已失效，请刷新后再提问')
+    selected = f"【本次指定来源：{material.title} · {unit['label']}】\n{unit['text'][:QA_MATERIALS_LIMIT//2]}\n\n"
+    return (selected + base)[:QA_MATERIALS_LIMIT]
+
+
 @router.post(
     "/qa/conversations/{conversation_id}/messages",
     response_model=QaConversationOut,
@@ -732,7 +729,7 @@ def ask_qa(
         .order_by(Material.id)
         .all()
     )
-    materials_text = _build_materials_text(materials)[:QA_MATERIALS_LIMIT]
+    materials_text = _qa_context(materials, payload)
     if not materials_text:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -761,7 +758,7 @@ def ask_qa(
             answer = prompts.mock_qa_answer(subject, question, materials_text)
         else:
             answer = retry_once(chat_text,
-                prompts.build_qa_system_prompt(materials_text), history, max_tokens=1200
+                prompts.build_qa_system_prompt(materials_text), history
             )
     except LLMError as exc:
         db.rollback()  # 回答失败时不保留这条提问
@@ -774,7 +771,7 @@ def ask_qa(
     latest = db.query(QaMessage.id).filter(QaMessage.conversation_id==conversation_id).order_by(QaMessage.id.desc()).first()
     current_materials = db.query(Material).filter(Material.user_id==uid,Material.exam_id==conversation.exam_id,Material.parse_status=='done').order_by(Material.id).all() if conversation else []
     if (conversation is None or conversation.created_at!=original_created or conversation.updated_at!=original_updated
-            or (latest[0] if latest else None)!=latest_id or _build_materials_text(current_materials)[:QA_MATERIALS_LIMIT]!=original_materials):
+            or (latest[0] if latest else None)!=latest_id or _qa_context(current_materials,payload)!=original_materials):
         raise HTTPException(409,'会话或资料已变化，请查看最新消息后重新提问')
     db.add(QaMessage(conversation_id=conversation.id, role="user", content=question))
     db.add(QaMessage(conversation_id=conversation.id, role="assistant", content=answer))

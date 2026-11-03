@@ -28,7 +28,7 @@ class Submit(BaseModel):
 def limits(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from ..config import settings
     return {**model_usage.limits(db, user.id),
-        'analysis_max_tokens': settings.LLM_ANALYSIS_MAX_TOKENS,
+        'analysis_max_tokens': None,
         'analysis_timeout_seconds': settings.LLM_ANALYSIS_TIMEOUT_SECONDS}
 
 
@@ -55,7 +55,7 @@ def submit(
                 .first()
             ):
                 raise HTTPException(404, "问答会话不存在")
-            data = {"conversation_id": conversation_id, "content": message.content}
+            data = {"conversation_id": conversation_id, **message.model_dump(mode='json', exclude_none=True)}
         else:
             model = {
                 "profile": ProfileRequest,

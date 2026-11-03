@@ -215,6 +215,7 @@
           </p>
           <p v-if="selected">{{ taskTimeLabel(selected) }} · {{ selected.location || '地点待定' }} · {{ difficultyLabels[selected.difficulty || 'medium'] }}</p>
           <details v-if="selected?.detail" class="selected-detail"><summary>查看复习内容</summary><p>{{ selected.detail }}</p></details>
+          <TaskSources v-if="selected" :task-id="selected.id" :exam-id="selected.exam_id" :analysis-id="selected.analysis_id" :knowledge-point="selected.knowledge_point" :source-ids="selected.source_ids || []" @updated="Object.assign(selected,$event)" />
         </div>
         <slot name="focus"></slot>
         <div class="task-resources">
@@ -243,6 +244,7 @@ import { computed, ref, watch } from 'vue'
 import { examColor } from '../utils/subjectColor'
 import { daysUntil } from '../utils/studyProgress'
 import { difficultyLabels, taskTimeLabel } from '../utils/taskDetails'
+import TaskSources from './TaskSources.vue'
 const props = defineProps({
   tasks: Array,
   exams: Array,

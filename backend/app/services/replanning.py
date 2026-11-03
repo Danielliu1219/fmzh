@@ -123,8 +123,9 @@ def snapshot(db, user, exam_id):
     scheduling['fingerprint'] = fingerprint
     priority_map = {t['id']: t['priority'] for t in tasks}
     task_map = {t['id']:t for t in tasks}
-    plan = [PlanItem(day=(date.fromisoformat(a['date'])-beijing_day()).days+1, date=a['date'], title=a['title'], knowledge_point=task_map[a['task_id']].get('knowledge_point',''), estimated_minutes=a['minutes'], priority=priority_map[a['task_id']], detail='依据当前学习反馈在全科共享预算内调整') for a in scheduling['assignments'] if a['exam_id'] == exam_id]
+    plan = [PlanItem(day=(date.fromisoformat(a['date'])-beijing_day()).days+1, date=a['date'], title=a['title'], knowledge_point=task_map[a['task_id']].get('knowledge_point',''), source_ids=task_map[a['task_id']].get('source_ids',[]), estimated_minutes=a['minutes'], priority=priority_map[a['task_id']], detail='依据当前学习反馈在全科共享预算内调整') for a in scheduling['assignments'] if a['exam_id'] == exam_id]
     plan.extend(PlanItem(day=(t.plan_date-beijing_day()).days+1, date=t.plan_date.isoformat(), title=t.title, knowledge_point=t.knowledge_point,
+                        source_ids=t.source_ids,
                         estimated_minutes=t.estimated_minutes, priority=priorities.get(t.id, t.priority),
                         detail=f'保留固定时段 {t.start_time:%H:%M}–{t.end_time:%H:%M}；{t.detail or ""}')
                 for t in own if not t.is_done and t.start_time is not None)

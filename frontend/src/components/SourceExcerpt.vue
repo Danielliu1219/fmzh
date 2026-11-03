@@ -7,6 +7,7 @@
     <el-alert v-if="reference.status !== 'available'" :title="reference.note" type="warning" :closable="false" show-icon />
     <template v-else>
       <p class="source-method">{{ reference.note }}</p>
+      <OriginalSource :material-id="reference.material_id" :file-type="reference.file_type" :title="reference.material_title" :pages="reference.pages?.length ? reference.pages : reference.page ? [reference.page] : []" :revision="reference.content_hash" />
       <blockquote class="source-text"><span>{{ parts[0] }}</span><mark>{{ parts[1] }}</mark><span>{{ parts[2] }}</span></blockquote>
       <slot />
     </template>
@@ -16,6 +17,7 @@
 <script setup>
 import { computed } from 'vue'
 import { excerptParts } from '../utils/sourceEvidence.js'
+import OriginalSource from './OriginalSource.vue'
 const props = defineProps({ reference: { type: Object, required: true } })
 const parts = computed(() => excerptParts(props.reference))
 </script>

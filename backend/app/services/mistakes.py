@@ -15,9 +15,9 @@ def question_key(title):
     return sha256(normalized_title(title).encode("utf-8")).hexdigest()
 
 
-def save_question(db, user_id, title, content, source="quiz"):
+def save_question(db, user_id, title, content, source="quiz", *, identity=None):
     title = normalized_title(title)
-    key = question_key(title)
+    key = question_key(identity if identity is not None else title)
     existing = db.query(Collection).filter(Collection.user_id == user_id, Collection.question_key == key).first()
     if existing is not None:
         return existing, False

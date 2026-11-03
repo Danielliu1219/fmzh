@@ -13,7 +13,7 @@ import httpx
 from ..config import settings
 
 
-REQUEST_TIMEOUT = 60
+REQUEST_TIMEOUT = settings.LLM_ANALYSIS_TIMEOUT_SECONDS
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +58,7 @@ async def _post_with_deadline(url,body,headers,timeout=None):
         return await asyncio.wait_for(client.post(url,json=body,headers=headers),timeout=deadline)
 
 
-def _content(system_prompt, messages, max_tokens, *, json_mode=False, timeout=None):
+def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeout=None):
     if not settings.DEEPSEEK_API_KEY.strip():
         raise LLMError("未配置 DEEPSEEK_API_KEY，请在 backend/.env 中填写，或保持 LLM_MOCK=true")
 
@@ -70,8 +70,9 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False, timeout=No
         "model": settings.DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": system_prompt}, *messages],
         "temperature": 0.3,
-        "max_tokens": max_tokens,
     }
+    if max_tokens is not None:
+        body['max_tokens'] = max_tokens
     try:
         provider_host = urlsplit(settings.DEEPSEEK_BASE_URL).hostname
     except ValueError:
@@ -102,7 +103,8 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False, timeout=No
             stats = response_stats(data, max_tokens)
             logger.warning('model_response_truncated stats=%s', stats)
             counts = f"；思考 {stats['reasoning_tokens']}、正文 {stats['answer_tokens']} Token" if stats['answer_tokens'] is not None else ''
-            raise LLMError(f'大模型输出达到单次Token上限（{max_tokens}{counts}），未生成完整方案；本次未自动重试，原计划已保留',code='output_truncated')
+            limit = str(max_tokens) if max_tokens is not None else '模型平台限制'
+            raise LLMError(f'大模型输出被平台截断（{limit}{counts}），未返回完整内容；本次未自动重试，已保存的数据未受影响',code='output_truncated')
         content = choice['message']['content']
         if not isinstance(content,str) or not content.strip():
             raise LLMError('大模型未返回有效文字，请重试')
@@ -111,7 +113,7 @@ def _content(system_prompt, messages, max_tokens, *, json_mode=False, timeout=No
         raise LLMError('大模型响应格式不正确，请重试') from exc
 
 
-def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000, *, timeout=None) -> dict:
+def chat_json(system_prompt: str, user_prompt: str, max_tokens: int | None = None, *, timeout=None) -> dict:
     """真实HTTP调用；JSON必须是对象，数组/无效内容由调用方按原策略重试。"""
     content = _content(system_prompt,[{'role':'user','content':user_prompt}],max_tokens,json_mode=True,timeout=timeout)
     def finite_number(value):
@@ -130,6 +132,6 @@ def chat_json(system_prompt: str, user_prompt: str, max_tokens: int = 4000, *, t
     return result
 
 
-def chat_text(system_prompt: str, messages: list[dict], max_tokens: int = 1200) -> str:
+def chat_text(system_prompt: str, messages: list[dict], max_tokens: int | None = None) -> str:
     """真实HTTP多轮问答，空内容和非文字内容统一为可恢复错误。"""
     return _content(system_prompt,messages,max_tokens)

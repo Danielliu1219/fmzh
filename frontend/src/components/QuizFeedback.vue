@@ -4,7 +4,9 @@
     <ul v-if="item.options?.length" class="feedback-options">
       <li v-for="(option, index) in item.options" :key="index">{{ typeof option === 'string' ? option : `${option.value}. ${option.label}` }}</li>
     </ul>
-    <div v-if="item.answer != null" class="feedback-answers">
+    <pre v-if="item.source_reference && item.question" class="feedback-explanation">{{ item.question }}</pre>
+    <details v-if="item.source_reference && item.answer"><summary>收藏时的原文答案</summary><pre class="feedback-explanation">{{ item.answer }}</pre></details>
+    <div v-if="!item.source_reference && item.answer != null" class="feedback-answers">
       <span>你的答案 <b>{{ answerLabel(item.submitted_answer, item) }}</b></span>
       <span>参考答案 <b>{{ answerLabel(item.answer, item) }}</b></span>
     </div>

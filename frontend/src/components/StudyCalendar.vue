@@ -56,6 +56,7 @@
     <el-dialog v-model="adjustVisible" title="移动任务时间" width="min(460px, 94vw)" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :before-close="adjustDraft.beforeClose">
       <template v-if="adjustTask">
         <p class="adjust-title">{{ subject(adjustTask) }} · {{ adjustTask.title }}</p><p class="calendar-footnote">保留 {{ adjustTask.estimated_minutes }} 分钟，只调整本次任务。</p>
+        <TaskSources :task-id="adjustTask.id" :exam-id="adjustTask.exam_id" :analysis-id="adjustTask.analysis_id" :knowledge-point="adjustTask.knowledge_point" :source-ids="adjustTask.source_ids || []" @updated="Object.assign(adjustTask,$event)" />
         <el-form label-width="88px" @submit.prevent="submitAdjustment">
           <el-form-item label="移动到日期"><el-input v-model="adjust.date" type="date" aria-label="移动到日期" /></el-form-item>
           <el-form-item label="固定时段"><el-switch v-model="adjust.timed" aria-label="移动后固定时段" /></el-form-item>
@@ -73,6 +74,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useDialogDraft } from '../composables/usePendingWork'
 import { addDays, calendarDays, dayHeading, weekday, minuteLabel, dropMinute, moveProposal, layoutTimedTasks } from '../utils/calendar.js'
 import { examColor } from '../utils/subjectColor.js'
+import TaskSources from './TaskSources.vue'
 
 const props = defineProps({ tasks: { type: Array, required: true }, exams: { type: Array, required: true }, today: { type: String, required: true }, busy: Boolean, loading: Boolean, feedback: { type: Object, default: () => ({}) } })
 const emit = defineEmits(['move', 'edit', 'edit-exam', 'create', 'clear-feedback'])

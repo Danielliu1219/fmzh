@@ -34,7 +34,10 @@ request.interceptors.response.use(
       }
     }
     // No saved analysis is an expected empty state when first selecting a subject.
-    if (!(error.config?.quietNotFound && error.response?.status === 404)) ElMessage.error(msg)
+    if (!(error.config?.quietNotFound && error.response?.status === 404)) {
+      ElMessage.error(msg)
+      error.notified=true
+    }
     return Promise.reject(error)
   },
 )
