@@ -41,6 +41,7 @@ def upgrade_schema(engine):
                 'difficulty': "VARCHAR(16) NOT NULL DEFAULT 'medium'",
                 'detail': "TEXT NOT NULL DEFAULT ('')",
                 'knowledge_point': "VARCHAR(128) NOT NULL DEFAULT ''",
+                'source_ids_json': "TEXT NOT NULL DEFAULT ('[]')",
                 'repeat_rule': "VARCHAR(16) NOT NULL DEFAULT 'none'",
                 'repeat_until': 'DATE', 'repeat_group_id': 'VARCHAR(32)',
             }

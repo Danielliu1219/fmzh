@@ -313,6 +313,14 @@ class QaConversationCreate(BaseModel):
 
 class QaAskIn(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
+    source_material_id: Optional[int] = Field(None, ge=1)
+    source_unit_id: Optional[str] = Field(None, max_length=160)
+
+    @model_validator(mode='after')
+    def source_pair(self):
+        if (self.source_material_id is None) != (self.source_unit_id is None):
+            raise ValueError('资料与定位ID需要同时提供')
+        return self
 
 
 # ==================== AI 分析（第二次调用） ====================
@@ -337,6 +345,7 @@ class SourceExcerpt(BaseModel):
     note: str = ""
     location: str = ""
     page: Optional[int] = None
+    pages: list[int] = []
     start: Optional[int] = None
     end: Optional[int] = None
     content_hash: str = ""
@@ -362,6 +371,7 @@ class EvidenceOut(BaseModel):
 
 
 class KnowledgePoint(BaseModel):
+    source_ids: list[str] = Field(default_factory=list, max_length=8)
     name: str
     weight: float = Field(ge=0, le=1)
     importance: str = "medium"  # high / medium / low
@@ -446,6 +456,7 @@ class StudyStrategy(BaseModel):
 
 
 class PlanItem(BaseModel):
+    source_ids: list[str] = Field(default_factory=list, max_length=8)
     knowledge_point: str = Field('', max_length=128)
     day: int
     date: str  # YYYY-MM-DD
@@ -620,6 +631,7 @@ class QuizSubmit(BaseModel):
 
 
 class TaskDetails(BaseModel):
+    source_ids: list[str] = Field(default_factory=list, max_length=8)
     knowledge_point: str = Field('', max_length=128)
     start_time: Optional[time] = None
     end_time: Optional[time] = None
@@ -677,6 +689,7 @@ class TaskOut(TaskDetails):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    analysis_id: Optional[int] = None
     exam_id: int
     title: str
     plan_date: date

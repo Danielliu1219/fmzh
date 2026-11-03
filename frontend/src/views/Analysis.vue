@@ -23,7 +23,7 @@
     </div>
 
     <p v-if="modelLimits" class="course-context">{{ modelLimits.mock ? '本机演示生成，不消耗真实调用额度。' : `今日真实大模型调用 ${modelLimits.used_calls} / ${modelLimits.daily_limit} 次，剩余 ${modelLimits.remaining_calls} 次（重试也计次）。` }}</p>
-    <p v-if="modelLimits && !modelLimits.mock && modelLimits.analysis_max_tokens" class="choice-hint">分析输出上限 {{ modelLimits.analysis_max_tokens.toLocaleString() }} Token（含思考），单次最长等待 {{ modelLimits.analysis_timeout_seconds }} 秒；按实际生成量计费，输出截断不会自动再试一次。</p>
+    <p v-if="modelLimits && !modelLimits.mock" class="choice-hint">保留思考模式，项目不设置输出 Token 上限；实际输出量与限制由模型平台决定，按实际用量计费。单次最长等待 {{ modelLimits.analysis_timeout_seconds }} 秒，截断不会自动重试。</p>
     <div v-if="!examId" class="course-context">
       <el-icon><InfoFilled /></el-icon>
       <p><strong>先说说你的情况，再选择课程。</strong>你可以先填写自然语言描述、目标区间和每日总时间；选择课程后，再补充该课基础与薄弱章节。</p>
@@ -324,6 +324,7 @@
                   >
                   <el-button link type="primary" @click="openEvidence('knowledge', kp)">查看原文依据</el-button>
                 </div>
+                <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="kp.name" :source-ids="kp.source_ids || []" />
               </div>
               <strong class="knowledge-weight"
                 >{{ Math.round(kp.weight * 100) }}<small>%</small></strong
@@ -564,6 +565,7 @@
             <el-table-column label="具体内容" min-width="260">
               <template #default="{ row }">
                 <p>{{ row.detail }}</p>
+                <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="row.knowledge_point" :source-ids="row.source_ids || []" />
                 <p v-for="activity in row.activities || []" :key="activity.phase" class="plan-activity">{{ activity.label }} {{ activity.minutes }} 分钟 · {{ activity.detail }}</p>
               </template>
             </el-table-column>
@@ -699,6 +701,7 @@ import { mockProfile, mockAnalysis, mockMaterials } from '../mock/pages'
 import { applyRecommendationStrategy, refreshStrategy, suggestedTime } from '../utils/recommendationStrategy'
 import SourceExcerpt from '../components/SourceExcerpt.vue'
 import { mockEvidence, sourceRoute } from '../utils/sourceEvidence.js'
+import TaskSources from '../components/TaskSources.vue'
 import QuizPanel from '../components/QuizPanel.vue'
 import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail, mockMastery } from '../mock/quizzes'
 import { masteryLabels, masteryTypes } from '../utils/mastery'
@@ -1218,7 +1221,8 @@ const onAsk = async () => {
   } catch (e) {
     // 失败时撤回乐观展示的提问
     qaMessages.value = qaMessages.value.filter((item) => item.id !== optimistic.id)
-    ElMessage.error(e?.response?.data?.detail || '提问失败，请稍后重试')
+    if (!qaInput.value) qaInput.value = content
+    if (!e.notified) ElMessage.error(e?.response?.data?.detail || e.message || '提问失败，请稍后重试')
   } finally {
     qaLoading.value = false
     await scrollQaToBottom()

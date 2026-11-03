@@ -248,17 +248,29 @@ class LlmTransportTests(unittest.TestCase):
         self.assertEqual(len(self.upstream.requests), 1)
         self.assertEqual(before, self.state())
 
-    def test_analysis_uses_larger_budget_and_its_own_wait_limit(self):
+    def test_analysis_omits_output_cap_and_uses_its_own_wait_limit(self):
         content = json.loads(self.result())
         content['summary'] = '完整的复习建议。' * 600
         self.upstream.add(json.dumps(content, ensure_ascii=False), delay=.08)
         with patch.object(llm_client, 'REQUEST_TIMEOUT', .02):
             result = self.call('POST', '/ai/analyze', {'exam_id': 1})
         body = self.upstream.requests[-1]['body']
-        self.assertEqual(body['max_tokens'], settings.LLM_ANALYSIS_MAX_TOKENS)
-        self.assertEqual(body['max_tokens'], 65536)
+        self.assertNotIn('max_tokens', body)
         self.assertIn('完整的复习建议', result['result']['summary'])
         self.assertEqual(len(self.upstream.requests), 1)
+
+    def test_profile_qa_and_weekly_all_omit_output_cap(self):
+        self.upstream.add('{"target":"pass","learning_status":"weak","available_days":4,"daily_hours":2}')
+        self.call('POST','/ai/profile',{'exam_id':1,'raw_text':'正常提取'})
+        conversation=self.call('POST','/ai/qa/conversations',{'exam_id':1},status=201)
+        self.upstream.add('完整的问答正文')
+        self.call('POST',f"/ai/qa/conversations/{conversation['id']}/messages",{'content':'解释积分'})
+        self.upstream.add('{"summary":"周报","subjects":[]}')
+        self.call('POST','/reports/weekly',{})
+        self.assertEqual(len(self.upstream.requests),3)
+        for request in self.upstream.requests:
+            self.assertNotIn('max_tokens',request['body'])
+            self.assertNotIn('max_completion_tokens',request['body'])
 
     def test_deepseek_flash_keeps_thinking_enabled_without_external_request(self):
         response = httpx.Response(200, json=envelope('{"ok":true}'), request=httpx.Request('POST', 'https://api.deepseek.com/chat/completions'))

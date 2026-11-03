@@ -5,7 +5,7 @@ import json
 from datetime import date, time, timedelta
 
 REPEAT_RULES = {'none', 'daily', 'weekdays', 'weekly', 'custom'}
-DETAIL_FIELDS = ('start_time', 'end_time', 'location', 'difficulty', 'detail', 'knowledge_point')
+DETAIL_FIELDS = ('start_time', 'end_time', 'location', 'difficulty', 'detail', 'knowledge_point', 'source_ids')
 SNAPSHOT_FIELDS = ('id', 'exam_id', 'title', 'plan_date', 'estimated_minutes', 'priority', 'source', 'is_done',
                    *DETAIL_FIELDS, 'repeat_rule', 'repeat_until', 'repeat_group_id')
 

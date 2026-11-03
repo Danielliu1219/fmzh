@@ -220,7 +220,6 @@ def weekly_report(
                 ai = retry_once(chat_json,
                     prompts.WEEKLY_REPORT_SYSTEM_PROMPT,
                     prompts.build_weekly_report_user_prompt(start.isoformat(), end.isoformat(), metrics),
-                    max_tokens=2000,
                 )
         except LLMError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))

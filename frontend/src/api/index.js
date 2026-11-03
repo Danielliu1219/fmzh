@@ -79,7 +79,7 @@ export const aiApi = {
   createQaConversation: (examId) =>
     request.post('/ai/qa/conversations', { exam_id: examId }),
   qaConversation: (id) => request.get(`/ai/qa/conversations/${id}`),
-  askQa: (id, content) => modelJob('qa', { conversation_id:id,content }),
+  askQa: (id, content, source={}) => modelJob('qa', { conversation_id:id,content,...source }),
   latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
 }
 

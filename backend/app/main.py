@@ -10,6 +10,7 @@ from .config import UPLOAD_DIR, settings
 from .database import Base, engine, SessionLocal
 from .services.daily_pressure import make_lifespan
 from .routers import admin, ai, auth, collections, dashboard, exams, features, focus, materials, notifications, study, tasks, quizzes, jobs
+from .routers import study_sources
 from .services.schema_upgrade import upgrade_schema
 from .services.audit import AuditMiddleware
 from .services.backups import runner as backup_runner
@@ -43,6 +44,7 @@ app.add_middleware(AuditMiddleware)
 app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(exams.router, prefix="/api/exams", tags=["考试"])
 app.include_router(materials.router, prefix="/api/materials", tags=["资料"])
+app.include_router(study_sources.router, prefix="/api/study-sources", tags=["复习来源"])
 app.include_router(collections.router, prefix="/api/collections", tags=["收藏与错题本"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI 分析"])
 app.include_router(jobs.router,prefix='/api/ai',tags=['大模型任务'])

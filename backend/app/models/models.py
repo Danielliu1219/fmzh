@@ -11,6 +11,7 @@ users ──< exams ──< materials ──< collections
 另含 mood_records（情绪记录，模块 7.6）与 courses（课程/科目基础数据，模块 8.1）。
 """
 from datetime import datetime
+import json
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -172,6 +173,7 @@ class Task(Base):
     difficulty = Column(String(16), nullable=False, default='medium')
     detail = Column(LargeText, nullable=False, default='')
     knowledge_point = Column(String(128), nullable=False, default='')
+    source_ids_json = Column(LargeText, nullable=False, default='[]')
     repeat_rule = Column(String(16), nullable=False, default='none')
     repeat_until = Column(Date, nullable=True)
     repeat_group_id = Column(String(32), nullable=True, index=True)
@@ -181,6 +183,18 @@ class Task(Base):
     done_at = Column(PreciseDateTime, nullable=True)
     source = Column(String(16), default="ai")  # ai / manual
     created_at = Column(PreciseDateTime, default=datetime.now)
+
+    @property
+    def source_ids(self):
+        try:
+            value = json.loads(self.source_ids_json or '[]')
+            return [s for s in value if isinstance(s, str)][:8] if isinstance(value, list) else []
+        except (ValueError, TypeError):
+            return []
+
+    @source_ids.setter
+    def source_ids(self, value):
+        self.source_ids_json = json.dumps(value or [], ensure_ascii=False)
 
     @property
     def move_fingerprint(self):

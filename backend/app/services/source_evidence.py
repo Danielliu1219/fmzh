@@ -107,7 +107,15 @@ def excerpt_for(material, reference):
         return dict(**base, status='changed', note='原文定位已失效，请重新生成分析。')
     left, right = max(0, start - 160), min(len(text), end + 240)
     location, page = location_for(material, start, end)
+    try:
+        parts = json.loads(material.text_locations or '[]')
+        pages = list(dict.fromkeys(p['number'] for p in parts if isinstance(p,dict) and p.get('kind')=='page'
+            and type(p.get('number')) is int and type(p.get('start')) is int and type(p.get('end')) is int
+            and 0 <= p['start'] < p['end'] <= len(text) and p['start'] < end and p['end'] > start)) if isinstance(parts,list) else []
+    except (ValueError,TypeError):
+        pages = []
     return dict(**base, status='available', location=location, page=page, start=start, end=end, material_created_at=material.created_at,
+                pages=pages,
                 content_hash=reference.content_hash, context=text[left:right], highlight_start=start-left,
                 highlight_end=end-left, note='已核对引用文字与当前资料一致。' if reference.match == 'quote'
                 else '按关键词匹配的原文片段，供核对推荐；不代表已核实出现次数或必考结论。')

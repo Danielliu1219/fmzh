@@ -96,6 +96,7 @@ def _replace_tasks(db, user_id, exam_id, analysis_id, plan_items, *, commit):
                 analysis_id=analysis_id,
                 title=item.title,
                 knowledge_point=getattr(item, "knowledge_point", ""),
+                source_ids=getattr(item, 'source_ids', []),
                 plan_date=plan_date,
                 estimated_minutes=remaining_minutes,
                 detail=(
