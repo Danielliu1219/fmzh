@@ -1,0 +1,1 @@
+function e(e,t,n){let r=typeof t==`string`?Array.from(t).length:0;n(r>=6&&r<=32?void 0:Error(`密码长度 6-32 个字符`))}export{e as t};
