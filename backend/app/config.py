@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     LLM_MOCK: bool = True
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_MODEL: str = "deepseek-flash"
     # 不发送项目级输出Token上限，保留思考模式；实际限制由模型平台决定。
     LLM_ANALYSIS_TIMEOUT_SECONDS: int = Field(420, ge=60, le=900)
 

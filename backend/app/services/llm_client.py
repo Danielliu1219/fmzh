@@ -6,6 +6,7 @@ import json
 import math
 import asyncio
 import logging
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -14,7 +15,7 @@ from ..config import settings
 
 
 REQUEST_TIMEOUT = settings.LLM_ANALYSIS_TIMEOUT_SECONDS
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('uvicorn.error.model')
 
 
 def response_stats(data, limit):
@@ -84,6 +85,7 @@ def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeo
         body['response_format'] = {'type':'json_object'}
     from .model_usage import reserve_call
     reserve_call()
+    started_at = time.perf_counter()
     try:
         resp = asyncio.run(_post_with_deadline(f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",body,headers,timeout))
         resp.raise_for_status()
@@ -96,8 +98,11 @@ def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeo
         raise LLMError('大模型服务地址不合法，请检查后端配置') from exc
     except httpx.HTTPError as exc:
         raise LLMError('无法连接大模型服务，请检查后端服务地址或稍后重试',retryable=True) from exc
+    finally:
+        logger.info('model_request_finished elapsed_seconds=%.3f', time.perf_counter() - started_at)
     try:
         data = resp.json()
+        logger.info('model_response stats=%s', response_stats(data, max_tokens))
         choice = data['choices'][0]
         if choice.get('finish_reason') == 'length':
             stats = response_stats(data, max_tokens)

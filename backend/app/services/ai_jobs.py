@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import Lock
@@ -12,7 +13,7 @@ from .task_conflicts import lock_schedule
 
 _pool = None
 _lock = Lock()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('uvicorn.error.jobs')
 
 
 def now():
@@ -64,6 +65,7 @@ def recover(factory):
 
 
 def execute(factory, job_id):
+    started_at = time.perf_counter()
     from ..routers import ai, dashboard
     from ..schemas.schemas import (
         ProfileRequest,
@@ -202,6 +204,7 @@ def execute(factory, job_id):
                     )
                 )
                 db.commit()
+            logger.info('model_job_finished job_id=%s kind=%s status=%s elapsed_seconds=%.3f', job_id, kind, status_code, time.perf_counter() - started_at)
             return
         except Exception as exc:
             logger.error(
