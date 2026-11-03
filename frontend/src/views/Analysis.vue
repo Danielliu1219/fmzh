@@ -659,9 +659,9 @@
           title="AI 正在分析你的资料…"
           sub-title="模型正在思考并生成完整方案，可能需要数分钟；任务在后台执行，请勿重复提交"
         >
-          <template #extra
-            ><el-progress :percentage="100" :indeterminate="true" :duration="2"
-          /></template>
+          <template #extra>
+            <AnalysisWait :job="analysisJob" />
+          </template>
         </el-result>
       </el-card>
 
@@ -708,6 +708,7 @@ import { masteryLabels, masteryTypes } from '../utils/mastery'
 import { feedbackReplan } from '../utils/replan'
 import ScoreGoalSlider from '../components/ScoreGoalSlider.vue'
 import MindmapTree from '../components/MindmapTree.vue'
+import AnalysisWait from '../components/AnalysisWait.vue'
 import { scoreBand, scoreBandText } from '../utils/scoreTargets'
 import * as echarts from 'echarts'
 
@@ -749,6 +750,8 @@ const result = ref(null)
 const analysisId = ref(null)
 const profileLoading = ref(false)
 const analyzing = ref(false)
+const analysisJob = ref(null)
+let analysisPageActive = true
 const analyzeError = ref('')
 const schedulingNote = ref('')
 const evidenceVisible = ref(false)
@@ -1300,6 +1303,7 @@ const onAnalyze = async () => {
   if (!examId.value || analyzing.value) return
   if(!await confirmAction('生成分析会保存新的分析结果，并替换本科未完成且未定时的AI任务，按全科预算重排；手动任务、固定时段和已完成历史保留。确认生成？','生成复习分析',{confirmButtonText:'确认生成',cancelButtonText:'继续检查'})) return
   analyzing.value = true
+  analysisJob.value = { status: 'submitting', startedAt: Date.now(), updatedAt: null }
   analyzeError.value = ''
   schedulingNote.value = ''
   result.value = null
@@ -1362,7 +1366,9 @@ const onAnalyze = async () => {
           '示例分析已完成，但全科容量不足，新任务未覆盖原计划。请先调整时间或任务。'
       else mockStudySession.tasks = applyStudyPlan(candidate, plan)
     } else {
-      const resp = await aiApi.analyze(examId.value)
+      const resp = await aiApi.analyze(examId.value, progress => {
+        if (analysisPageActive) analysisJob.value = progress
+      })
       result.value = resp.result
       analysisId.value = resp.id
       if (resp.scheduling && !resp.scheduling.applied)
@@ -1500,6 +1506,7 @@ watch([step, analysisId], async () => {
 })
 
 onBeforeUnmount(() => {
+  analysisPageActive = false
   window.removeEventListener('resize', resizeCharts)
   typeChart?.dispose()
   typeChart = null

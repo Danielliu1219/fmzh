@@ -67,7 +67,7 @@ export const aiApi = {
   profile: (data) => modelJob('profile', data),
   completeProfile: (data) => request.post('/ai/profile/complete', data),
   savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),
-  analyze: (examId) => modelJob('analysis', { exam_id: examId }),
+  analyze: (examId, onProgress) => modelJob('analysis', { exam_id: examId }, onProgress),
   // 思维导图与记忆卡片（用例 4.4）
   mindmap: (examId) => request.get(`/ai/analyses/${examId}/mindmap`),
   // 动态调整计划与权重（用例 4.12）

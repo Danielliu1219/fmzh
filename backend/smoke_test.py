@@ -48,6 +48,10 @@ check("注册/登录", r.status_code == 200, r.text)
 token = r.json()["access_token"]
 headers = {"Authorization": f"Bearer {token}"}
 
+# 即使误指向个人服务，也在第一次模型调用前停止，避免消耗真实额度。
+r = client.get(f"{BASE}/api/ai/limits", headers=headers)
+check("冒烟服务必须使用 Mock 模型", r.status_code == 200 and r.json().get("mock") is True, "请启动独立 LLM_MOCK=true 测试服务")
+
 # 2. 个人信息
 print("== 个人信息 ==")
 r = client.get(f"{BASE}/api/auth/me", headers=headers)
@@ -196,16 +200,21 @@ r = client.post(
 )
 check("冲突检测正常放行", r.status_code == 200 and r.json()["conflict"] is False, r.text)
 
+before_schedule = client.get(f"{BASE}/api/tasks", headers=headers).json()
 r = client.post(
     f"{BASE}/api/exams/{exam_id}/generate-schedule",
     headers=headers,
     json={"daily_minutes": 120},
 )
-check("倒推生成备考时间表", r.status_code == 200 and r.json()["created"] >= 1, r.text)
+check("倒推预算不足时拒绝覆盖", r.status_code == 200 and r.json()["created"] == 0 and bool(r.json()["conflicts"]), r.text)
+after_schedule = client.get(f"{BASE}/api/tasks", headers=headers).json()
+check("倒推冲突保留原任务", before_schedule == after_schedule)
 
-# 独立 QA 账号为日历导入留出全科容量；不得对真实演示库运行本脚本。
+# 独立 QA 账号为倒推与日历导入留出全科容量；不得对真实演示库运行本脚本。
 r = client.put(f"{BASE}/api/study/settings", headers=headers, json={"daily_minutes": 960})
-check("ICS 验收预算", r.status_code == 200, r.text)
+check("倒推与 ICS 验收预算", r.status_code == 200, r.text)
+r = client.post(f"{BASE}/api/exams/{exam_id}/generate-schedule", headers=headers, json={"daily_minutes": 240})
+check("倒推生成备考时间表", r.status_code == 200 and r.json()["created"] >= 1 and not r.json()["conflicts"], r.text)
 ics_day1 = (date.today() + timedelta(days=2)).strftime('%Y%m%d')
 ics_day2 = (date.today() + timedelta(days=3)).strftime('%Y%m%d')
 ics_body = "\r\n".join(

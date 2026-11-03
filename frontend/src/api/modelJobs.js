@@ -1,10 +1,12 @@
 import request from './request'
 const pending=new Map()
-export async function modelJob(kind,payload){
+export async function modelJob(kind,payload,onProgress){
   const key=`${localStorage.getItem('fmzh_token')}:${kind}:${JSON.stringify(payload)}`
-  if(!pending.has(key)) pending.set(key,crypto.randomUUID())
+  if(!pending.has(key)) pending.set(key,{requestKey:crypto.randomUUID(),startedAt:Date.now()})
+  const tracking=pending.get(key)
+  const report=()=>onProgress?.({status:job.status,startedAt:tracking.startedAt,updatedAt:Date.now()})
   let job
-  try { job=await request.post('/ai/jobs',{kind,payload,request_key:pending.get(key)},{timeout:10000}) }
+  try { job=await request.post('/ai/jobs',{kind,payload,request_key:tracking.requestKey},{timeout:10000}); report() }
   catch(error){ if(error.response) pending.delete(key); throw error }
   const until=Date.now()+1860000
   while(job.status==='queued'||job.status==='running'){
@@ -18,6 +20,7 @@ export async function modelJob(kind,payload){
     }
     await new Promise(resolve=>setTimeout(resolve,500))
     job=await request.get(`/ai/jobs/${job.id}`,{timeout:10000})
+    report()
   }
   pending.delete(key)
   if(job.status==='failed'){
