@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { readFileSync } from 'node:fs'
 
-const showcaseFile = new URL('../项目介绍/期末周别慌_开放平台.html', import.meta.url)
+const showcaseFile = new URL('../项目介绍/期末周别慌_展示平台.html', import.meta.url)
 const showcase = () => ({
   name: 'fmzh-showcase',
   generateBundle() {
