@@ -370,6 +370,7 @@
 │   └── .env.example           # 复制为 .env 使用
 ├── 项目介绍/                   # 独立展示平台 HTML 与结题路演 PPTX
 ├── start.ps1                  # Windows 一键安装、构建与启动
+├── start-backend.ps1          # 一键从零启动后端（仅 API，不构建前端）
 └── frontend/                  # Vue 3 前端
     ├── src/
     │   ├── api/               # axios 封装 + 接口函数（与接口文档一一对应）
@@ -429,6 +430,7 @@ if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env
 - Ctrl+C停止后数据保留。未自定义SECRET_KEY时，首次自动生成数据库同级`.runtime/session.key`并在重启时复用；已有自定义密钥保持原样。备份时保留数据库、uploads、`.runtime`及私有配置。
 - 已准备好后可直接执行`backend/.venv/Scripts/python.exe -X utf8 backend/run.py`。后端每次启动会在自身进程内预热一次本机OCR（约10–30秒），之后同一次运行中的识别不再等待模型加载；`--no-warm`可显式跳过，`--dev`热重载模式默认跳过。
 - 需要独立Vite开发时，后端改用`run.py --api-only --dev`。
+- 从零只启动后端可运行 `\start-backend.ps1`（等价于 `\start.ps1 -ApiOnly`）；首次自动建立虚拟环境、安装依赖、补齐模型，随后打开 <http://127.0.0.1:8000/docs>。
 
 `npm run build`保留Pages的`/fmzh/`静态演示；`npm run build:app`输出`frontend/dist-app`，固定使用根路径和同源真实`/api`，不受旧前端预览配置影响。完整应用启动检查会拒绝误用Pages产物。
 
@@ -456,7 +458,13 @@ npm test
 npm run build:app
 ```
 
-只启动后端供 Vite 联调时，在根目录执行：
+从零只启动后端（自动准备环境、依赖和模型，不构建前端）时，在根目录执行：
+
+```powershell
+.\start-backend.ps1
+```
+
+默认端口 8000；可用 `-Port 8010` 改端口，`-NoWarm` 跳过启动预热。已有环境只启动后端供 Vite 联调时，在根目录执行：
 
 ```powershell
 backend/.venv/Scripts/python.exe -X utf8 backend/run.py --api-only --dev
