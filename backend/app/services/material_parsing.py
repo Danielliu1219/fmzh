@@ -96,6 +96,7 @@ def _parse(factory, material_id, root, request_id=""):
                 if not error:
                     item.text_content = text
                     item.text_locations = json.dumps(locations, ensure_ascii=False)
+                    item.pdf_ocr_json = '{}'
                 item.parse_status = "failed" if error else "done"
                 item.parse_error = error + (
                     "；上次成功解析的文字已保留" if error and item.text_content else ""

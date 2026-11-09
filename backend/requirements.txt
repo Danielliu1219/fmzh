@@ -20,8 +20,13 @@ python-docx>=1.1
 python-pptx>=1.0,<2
 Pillow>=11,<13
 olefile>=0.47,<1
-rapidocr>=3.10,<4
+rapidocr==3.9.1
 onnxruntime>=1.23,<2
+pix2text==1.1.7
+torch>=2.8,<2.9
+torchvision>=0.23,<0.24
+transformers>=4.45,<5
+optimum[onnxruntime]>=1.24,<2
 # 标准日历解析（转义、折行、时区）
 icalendar>=6.0,<8
 # 调用大模型 API

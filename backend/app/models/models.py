@@ -93,6 +93,7 @@ class Material(Base):
     file_type = Column(String(16), nullable=False)  # txt / pdf / docx
     text_content = Column(LargeText, default="")  # 解析出的纯文本，AI 分析的数据源
     text_locations = Column(LargeText, nullable=False, default="[]")  # 页/段落/行 → 解析文本偏移
+    pdf_ocr_json = Column(LargeText, nullable=False, default='{}')
     parse_status = Column(String(16), default="done")  # done / failed
     parse_error = Column(String(256), nullable=False, default='')
     parse_request_id = Column(String(32), nullable=False, default='')
@@ -309,6 +310,7 @@ class QaMessage(Base):
     content = Column(LargeText, nullable=False)
     source_unit_id = Column(String(160), index=True, nullable=True)
     source_help_kind = Column(String(16), nullable=True)
+    source_input_hash = Column(String(64), nullable=True)
     created_at = Column(PreciseDateTime, default=datetime.now)
 
 

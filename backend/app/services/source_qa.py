@@ -13,7 +13,7 @@ def legacy_help_kind(content):
     return None
 
 
-def help_history(db, user_id, unit):
+def help_history(db, user_id, unit, input_hash=None):
     owned = db.query(QaMessage).join(QaConversation).filter(
         QaConversation.user_id == user_id, QaConversation.exam_id == unit['exam_id'])
     messages = owned.filter(QaMessage.role == 'assistant', QaMessage.source_unit_id == unit['id'],
@@ -46,6 +46,7 @@ def help_history(db, user_id, unit):
                 messages.append(message)
                 kinds[message.id] = kind
     return [dict(id=m.id, conversation_id=m.conversation_id, kind=kinds[m.id], content=m.content,
+                 current_input=input_hash is None or m.source_input_hash == input_hash,
                  created_at=m.created_at) for m in sorted(messages, key=lambda m: m.id)]
 
 

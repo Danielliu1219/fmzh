@@ -11,7 +11,7 @@ export const sourceApi = {
     promise.catch(()=>{if(cache.get(key)?.promise===promise) cache.delete(key)})
     return promise
   },
-  unit: (unit) => request.get(`/study-sources/${unit.material_id}/unit`,{params:{unit_id:unit.id}}),
+  unit: (unit) => request.get(`/study-sources/${unit.material_id}/unit`,{params:{unit_id:unit.id,recognize:true},timeout:600000}),
   aiHelp: (unit) => request.get(`/study-sources/${unit.material_id}/ai-help`,{params:{unit_id:unit.id}}),
   difficult: (unit, knowledgePoint) => request.post(`/study-sources/${unit.material_id}/difficult`,{unit_id:unit.id,knowledge_point:knowledgePoint || ''}),
   original: (id, params) => request.get(`/study-sources/${id}/original`,{params,responseType:'blob'}),

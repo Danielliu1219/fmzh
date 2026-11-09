@@ -9,11 +9,13 @@ $repoRoot=$PSScriptRoot
 $pythonPath=Join-Path $repoRoot 'backend/.venv/Scripts/python.exe'
 $frontendPath=Join-Path $repoRoot 'frontend'
 function Assert-PythonVersion($Executable){
-    & $Executable -c 'import sys; sys.exit(0 if sys.version_info >= (3,12) else 1)'
-    if($LASTEXITCODE -ne 0){throw '需要Python 3.12或更高版本；请用新版本建立backend/.venv，已有数据库与uploads无需删除'}
+    & $Executable -c 'import sys; sys.exit(0 if (3,12) <= sys.version_info < (3,14) else 1)'
+    if($LASTEXITCODE -ne 0){throw '公式OCR依赖需要Python 3.12或3.13，请使用兼容版本建立backend/.venv'}
 }
 if($Check){
     if(-not(Test-Path -LiteralPath $pythonPath)){throw '先运行 .\start.ps1 -PrepareOnly 安装依赖和构建'}
+    & $pythonPath (Join-Path $repoRoot 'backend/tools/prepare_ocr.py') --check
+    if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
     & $pythonPath (Join-Path $repoRoot 'backend/run.py') --check
     exit $LASTEXITCODE
 }
@@ -28,6 +30,8 @@ Assert-PythonVersion $pythonPath
 if($LASTEXITCODE -ne 0){throw '后端依赖安装失败，请修复后重试'}
 & $pythonPath -m pip check
 if($LASTEXITCODE -ne 0){throw '后端依赖冲突，请运行 .\start.ps1 -Setup'}
+& $pythonPath (Join-Path $repoRoot 'backend/tools/prepare_ocr.py')
+if($LASTEXITCODE -ne 0){throw '本机公式OCR模型尚未准备完成，请按上方提示检查下载连接后重试'}
 $npmCommand=Get-Command npm.cmd -ErrorAction Stop
 $nodeVersion=(& node --version).TrimStart('v')
 if([version]$nodeVersion -lt [version]'22.12.0'){throw '前端需要Node.js 22.12或更高版本'}

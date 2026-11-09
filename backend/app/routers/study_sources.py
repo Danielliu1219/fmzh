@@ -2,7 +2,6 @@
 import io
 import json
 from pathlib import Path
-from threading import Lock
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
@@ -18,10 +17,10 @@ from ..services.source_evidence import content_hash
 from ..services.mistakes import save_question
 from ..services.task_conflicts import lock_schedule
 from ..services.source_qa import help_history, pending_help
+from ..services.pdf_recognition import prepare_source, recognized_unit, cached_pages, PDF_RENDER_LOCK
 from ..utils.security import get_current_user
 
 router = APIRouter()
-_pdf_lock = Lock()  # PDFium不是线程安全的；仅渲染当前用户选中的一页。
 PRIVATE = {'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'}
 
 
@@ -55,15 +54,24 @@ def sources(exam_id: int, analysis_id: int | None = None, user: User = Depends(g
 
 
 @router.get('/{material_id}/unit')
-def detail(material_id: int, unit_id: str = Query(max_length=160), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return unit_detail(checked_unit(own_material(db, user, material_id), unit_id))
+def detail(material_id: int, unit_id: str = Query(max_length=160), recognize: bool = False,
+           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    material = own_material(db, user, material_id)
+    unit = checked_unit(material, unit_id)
+    if recognize:
+        unit = prepare_source(db, user, material, unit)
+    return unit_detail(unit)
 
 
 @router.get('/{material_id}/ai-help')
 def ai_help(material_id: int, unit_id: str = Query(max_length=160),
             user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    unit = checked_unit(own_material(db, user, material_id), unit_id)
-    return dict(messages=help_history(db, user.id, unit), pending_jobs=pending_help(db, user.id, unit_id))
+    material = own_material(db, user, material_id)
+    unit = checked_unit(material, unit_id)
+    input_hash = None
+    if material.file_type == 'pdf' and unit['pages'] and all(str(page) in cached_pages(material) for page in unit['pages']):
+        input_hash = recognized_unit(material, unit)['input_hash']
+    return dict(messages=help_history(db, user.id, unit, input_hash), pending_jobs=pending_help(db, user.id, unit_id))
 
 
 class DifficultIn(BaseModel):
@@ -74,7 +82,11 @@ class DifficultIn(BaseModel):
 @router.post('/{material_id}/difficult')
 def mark_difficult(material_id: int, payload: DifficultIn, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lock_schedule(db, user.id, auth_key=user.auth_key)
-    unit = unit_detail(checked_unit(own_material(db, user, material_id), payload.unit_id))
+    material = own_material(db, user, material_id)
+    source = checked_unit(material, payload.unit_id)
+    if material.file_type == 'pdf' and source['pages'] and all(str(page) in cached_pages(material) for page in source['pages']):
+        source = recognized_unit(material, source)
+    unit = unit_detail(source)
     body = dict(question=unit['question_text'], answer=unit['original_answer'], analysis='用户标记不会，待复习。',
                 knowledge_point=payload.knowledge_point, source_reference=dict(material_id=material_id,id=unit['id'],exam_id=unit['exam_id']),
                 source_label=unit['label'], exam_id=unit['exam_id'])
@@ -102,7 +114,7 @@ def original(material_id: int, page: int | None = Query(None, ge=1), unit_id: st
     if material.file_type == 'pdf' and page is not None and not download:
         try:
             import pypdfium2 as pdfium
-            with _pdf_lock, pdfium.PdfDocument(str(path)) as pdf:
+            with PDF_RENDER_LOCK, pdfium.PdfDocument(str(path)) as pdf:
                 if page > len(pdf): raise HTTPException(404, '原文件没有该页')
                 pdf_page = pdf[page-1]
                 try:

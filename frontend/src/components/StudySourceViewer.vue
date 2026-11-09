@@ -4,9 +4,10 @@
     <p>{{ data.label }}</p>
     <p class="note">{{ data.recognition }}<span v-if="data.subquestions.length"> 包含小问 {{ data.subquestions.join('、') }}。</span></p>
     <OriginalSource :key="data.id" :material-id="data.material_id" :file-type="data.file_type" :title="data.material_title" :pages="data.pages" :unit-id="data.id" :revision="data.revision" auto-preview />
-    <details>
-      <summary>{{ data.kind === 'question' ? '查看识别文字（可能缺失公式，请以原页为准）' : '查看该页/段落的识别文字' }}</summary>
-      <pre>{{ data.question_text }}</pre>
+    <details :open="!!data.input_hash">
+      <summary>{{ data.input_hash ? '已重新识别的原题与公式' : data.kind === 'question' ? '查看识别文字（可能缺失公式，请以原页为准）' : '查看该页/段落的识别文字' }}</summary>
+      <MarkdownContent v-if="data.input_hash" :content="data.question_text" />
+      <pre v-else>{{ data.question_text }}</pre>
     </details>
     <div class="study-actions">
       <el-button @click="showSteps = !showSteps">{{ showSteps ? '收起复习步骤' : '分步复习' }}</el-button>
@@ -42,6 +43,7 @@
           </el-select>
         </header>
         <p class="reference-notice" role="note">大模型生成，仅供参考，可能存在错误，不保证答案正确。请结合原题、教材和教师提供的答案核对。</p>
+        <p v-if="selectedAnswer.current_input === false" class="note">此回答使用旧版识别文字生成，可使用当前已重新识别的公式生成新版回答。</p>
         <MarkdownContent :content="selectedAnswer.content" />
         <footer class="answer-footer">
           <span class="note">已保存 · {{ savedTime(selectedAnswer.created_at) }} · 再次查看不消耗 Token</span>
@@ -50,7 +52,7 @@
       </article>
     </section>
   </section>
-  <p v-else-if="busy" role="status">正在读取来源…</p>
+  <p v-else-if="busy" role="status">正在读取并识别原题与公式，首次加载需要下载本机模型，完成后会自动缓存…</p>
   <el-alert v-else-if="error" :title="error" type="warning" :closable="false" />
 </template>
 
@@ -75,7 +77,7 @@ const helpDisabled = computed(() => !!asking.value || historyLoading.value || !!
 let sequence = 0
 
 const kindLabel = kind => kind === 'hint' ? '解题提示' : '参考解答'
-const latest = kind => answers.value.findLast(answer => answer.kind === kind)
+const latest = kind => answers.value.findLast(answer => answer.kind === kind && answer.current_input !== false)
 const savedTime = value => new Date(value).toLocaleString('zh-CN', { hour12: false })
 const errorMessage = e => e?.response?.data?.detail || e.message
 
@@ -156,10 +158,11 @@ async function ask(kind, regenerate = false) {
     const conversationId = latest(kind)?.conversation_id || (await aiApi.createQaConversation(unit.exam_id)).id
     if (seq !== sequence) return
     const instruction = kind === 'hint' ? '只给分步提示，先不要公布最终答案' : '给出参考解答并说明关键步骤'
-    const content = ('请针对本次指定来源' + instruction + '。只标注题号和位置，不复述识别题干。公式或条件缺失时请明确指出并请用户补充，不得猜测或另设题目。使用 Markdown 和 LaTeX 排版。\n来源：' + unit.material_title + ' · ' + unit.label + '\n知识点：' + (props.knowledgePoint || '请依据原文判断')).slice(0, 1900)
+    const content = ('请针对本次指定来源' + instruction + '。只标注题号和位置，不复述识别题干。公式或条件缺失时请明确指出并请用户补充，不得猜测或另设题目。使用 Markdown 和 LaTeX 排版。\n来源：' + unit.material_title + ' · ' + unit.label + '\n知识点：' + (data.value.input_hash ? '请依据重新识别的原题判断' : props.knowledgePoint || '请依据原文判断')).slice(0, 1900)
     await aiApi.askQa(conversationId, content, {
       source_material_id: unit.material_id, source_unit_id: unit.id,
       source_help_kind: kind, source_regenerate: regenerate,
+      source_input_hash: data.value.input_hash || undefined,
     }, progress => { if (seq === sequence) modelProgress.value = progress })
     if (seq === sequence) await readHistory(seq, kind)
   } catch (e) {
