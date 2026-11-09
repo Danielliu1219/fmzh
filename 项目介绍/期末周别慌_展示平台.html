@@ -287,7 +287,7 @@ dialog::backdrop { background: #080f0bbd; backdrop-filter: blur(8px); }
   .distinction.in .weight-step:nth-child(2)::before { animation-delay: .55s; }
   dialog[open] { animation: dialog-enter .4s var(--ease); }
   dialog[open]::backdrop { animation: fade-in .35s ease; }
-  
+
   @supports (animation-timeline: view()) {
     .gallery-image { animation: gallery-perspective linear both; animation-timeline: view(); animation-range: entry 0% exit 100%; }
   }
