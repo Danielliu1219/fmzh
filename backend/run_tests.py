@@ -10,6 +10,7 @@ os.environ['LLM_MOCK'] = 'true'
 os.environ['DEEPSEEK_API_KEY'] = 'tests-only-no-billing'
 os.environ['DEEPSEEK_BASE_URL'] = 'http://127.0.0.1:9'
 os.environ['SECRET_KEY'] = 'unit-tests-only-session-secret-at-least-32-characters'
+os.environ['FMZH_OCR_WARMUP'] = '0'
 
 
 def local_network_only(event, args):

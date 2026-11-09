@@ -427,7 +427,8 @@ if (-not (Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env
 - `start.ps1 -PrepareOnly`只准备依赖、构建和检查，不创建数据库或会话密钥；`start.ps1 -Check`只读检查已有环境。
 - 不覆盖已有`.env`、`.env.local`、数据库或上传文件，不自动运行`seed_demo.py`；没有本地环境文件也可使用默认配置启动。
 - Ctrl+C停止后数据保留。未自定义SECRET_KEY时，首次自动生成数据库同级`.runtime/session.key`并在重启时复用；已有自定义密钥保持原样。备份时保留数据库、uploads、`.runtime`及私有配置。
-- 已准备好后可直接执行`backend/.venv/Scripts/python.exe -X utf8 backend/run.py`。需要独立Vite开发时，后端改用`run.py --api-only --dev`。
+- 已准备好后可直接执行`backend/.venv/Scripts/python.exe -X utf8 backend/run.py`。后端每次启动会在自身进程内预热一次本机OCR（约10–30秒），之后同一次运行中的识别不再等待模型加载；`--no-warm`可显式跳过，`--dev`热重载模式默认跳过。
+- 需要独立Vite开发时，后端改用`run.py --api-only --dev`。
 
 `npm run build`保留Pages的`/fmzh/`静态演示；`npm run build:app`输出`frontend/dist-app`，固定使用根路径和同源真实`/api`，不受旧前端预览配置影响。完整应用启动检查会拒绝误用Pages产物。
 
@@ -473,7 +474,7 @@ backend/.venv/Scripts/python.exe -X utf8 backend/run.py --api-only --dev
 
 本机公式 OCR 的兼容环境为 Python 3.12 或 3.13，CPU 版 PyTorch 2.8 与 torchvision 0.23。依赖文件已固定这组版本，启动器也会检查 Python 版本。
 
-Windows 用户运行 `start.ps1` 或 `start.ps1 -PrepareOnly` 即可完成依赖检查和模型准备。启动器先安装锁定依赖，然后检查中文识别、公式检测与公式识别模型，缺失的模型会自动下载。后续启动复用缓存。
+Windows 用户运行 `start.ps1` 或 `start.ps1 -PrepareOnly` 即可完成依赖检查和模型准备。启动器先安装锁定依赖，然后校验中文识别、公式检测与公式识别模型，缺失的模型会自动下载。真正的引擎加载由后端在自己的进程内启动时预热一次（约10–30秒），之后同一次运行中的识别不再等待模型加载；后续启动复用磁盘缓存。
 
 ```powershell
 # 在项目根目录准备环境和模型
@@ -482,7 +483,10 @@ Windows 用户运行 `start.ps1` 或 `start.ps1 -PrepareOnly` 即可完成依赖
 # 单独补齐公式OCR模型，首次需要联网
 .\backend\.venv\Scripts\python.exe backend/tools/prepare_ocr.py
 
-# 离线检查依赖及已下载模型，缺失时返回非零退出码
+# 完整加载一次OCR引擎做自检（约10–30秒）
+.\backend\.venv\Scripts\python.exe backend/tools/prepare_ocr.py --warm
+
+# 离线检查模型文件，缺失时返回非零退出码；加 --warm 同时检查依赖和引擎加载
 .\backend\.venv\Scripts\python.exe backend/tools/prepare_ocr.py --check
 ```
 
@@ -492,13 +496,15 @@ Windows 用户运行 `start.ps1` 或 `start.ps1 -PrepareOnly` 即可完成依赖
 python -m pip install -r backend/requirements.txt
 python backend/tools/prepare_ocr.py
 python backend/tools/prepare_ocr.py --check
+# 可选：完整加载引擎自检
+python backend/tools/prepare_ocr.py --check --warm
 ```
 
 Windows 锁定依赖使用官方 CPU PyTorch 包源。首次准备会下载开源模型权重，终端会输出模型缓存目录。模型权重和缓存各自保存在运行机器上，GitHub 仓库发布识别代码、依赖与准备脚本。
 
 公式模型按清单中的固定版本与文件大小检查，缺失或下载中断时自动补齐。下载先使用 Hugging Face，连接失败时尝试 `hf-mirror.com` 公开镜像。公式模型默认缓存于 Windows 的 `%APPDATA%\pix2text`，Linux/macOS 的 `~/.pix2text`，也可通过 `PIX2TEXT_HOME` 指定目录。
 
-下载失败时，检查终端错误和网络连接后重新执行 `prepare_ocr.py`，已有模型会复用。部署时用实际运行后端的系统账号准备模型，便于服务直接读取该账号的缓存。准备完成后，原页与公式的识别在本机运行，识别图片不会发送到模型下载服务。AI 解题仍调用用户配置的大模型 API，发送识别后的题目文字与公式。
+下载失败时，检查终端错误和网络连接后重新执行 `prepare_ocr.py`，已有模型会复用。部署时用实际运行后端的系统账号准备模型，便于服务直接读取该账号的缓存。准备完成后，原页与公式的识别在本机运行，识别图片不会发送到模型下载服务。AI 解题仍调用用户配置的大模型 API，发送识别后的题目文字与公式。预热后的模型常驻后端进程（本机实测约0.7GB内存），直到后端退出；这是本地OCR的预期开销。
 
 知识点考频图沿用当前分析已有的知识点百分比，出现次数按可定位原题或资料片段去重统计，未定位到可靠来源时隐藏次数。
 

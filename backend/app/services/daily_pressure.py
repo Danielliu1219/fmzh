@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import time
 from threading import Event
@@ -59,6 +60,14 @@ def run_due(session_factory, now=None, source='scheduled', stop=None):
 def make_lifespan(session_factory, interval=60, clock=None, backup=None):
     @asynccontextmanager
     async def lifespan(app):
+        if os.environ.get('FMZH_OCR_WARMUP') == '1':
+            try:
+                from .pdf_recognition import warm_ocr_engines
+                logger.info('正在预热本机OCR模型，约10–30秒')
+                await asyncio.to_thread(warm_ocr_engines)
+                logger.info('本机OCR模型预热完成')
+            except Exception:
+                logger.exception('本机OCR模型预热失败，首次识别时会重试')
         from . import ai_jobs
         await asyncio.to_thread(ai_jobs.recover,session_factory)
         from . import material_parsing

@@ -12,7 +12,8 @@ def main():
     parser = argparse.ArgumentParser(description='期末周别慌：同源页面与真实后端')
     parser.add_argument('--check',action='store_true',help='只检查，不创建目录、数据库或密钥')
     parser.add_argument('--api-only',action='store_true',help='仅启动后端，供独立Vite开发')
-    parser.add_argument('--dev',action='store_true',help='启用开发热重载')
+    parser.add_argument('--dev',action='store_true',help='启用开发热重载；默认跳过OCR预热')
+    parser.add_argument('--no-warm',action='store_true',help='跳过启动时的本机OCR模型预热')
     parser.add_argument('--host',default='127.0.0.1')
     parser.add_argument('--port',type=int,default=8000)
     parser.add_argument('--frontend-dir',type=Path,default=Path(__file__).resolve().parent.parent/'frontend'/'dist-app')
@@ -31,6 +32,12 @@ def main():
         if args.check:
             return 0
         prepare(settings)
+        if args.no_warm:
+            os.environ['FMZH_OCR_WARMUP'] = '0'
+        elif args.dev:
+            os.environ.setdefault('FMZH_OCR_WARMUP', '0')
+        else:
+            os.environ.setdefault('FMZH_OCR_WARMUP', '1')
     except ImportError:
         print('后端依赖未安装，请先运行项目根目录的start.ps1，或安装backend/requirements.lock.txt')
         return 1
@@ -41,6 +48,8 @@ def main():
         os.environ['FMZH_FRONTEND_DIR'] = str(frontend)
     else:
         os.environ.pop('FMZH_FRONTEND_DIR',None)
+    if os.environ.get('FMZH_OCR_WARMUP') == '1':
+        print('启动时预热本机OCR模型，约需10–30秒，视机器而定；完成后识别不再等待模型加载。',flush=True)
     uvicorn.run('app.main:app',host=args.host,port=args.port,reload=args.dev,
                 app_dir=str(Path(__file__).resolve().parent))
     return 0

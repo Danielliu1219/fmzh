@@ -14,7 +14,7 @@ function Assert-PythonVersion($Executable){
 }
 if($Check){
     if(-not(Test-Path -LiteralPath $pythonPath)){throw '先运行 .\start.ps1 -PrepareOnly 安装依赖和构建'}
-    & $pythonPath (Join-Path $repoRoot 'backend/tools/prepare_ocr.py') --check
+    & $pythonPath (Join-Path $repoRoot 'backend/tools/prepare_ocr.py') --check --warm
     if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
     & $pythonPath (Join-Path $repoRoot 'backend/run.py') --check
     exit $LASTEXITCODE
@@ -30,6 +30,7 @@ Assert-PythonVersion $pythonPath
 if($LASTEXITCODE -ne 0){throw '后端依赖安装失败，请修复后重试'}
 & $pythonPath -m pip check
 if($LASTEXITCODE -ne 0){throw '后端依赖冲突，请运行 .\start.ps1 -Setup'}
+# 只校验/补齐模型文件；后端启动时在自身进程内预热，避免重复加载。
 & $pythonPath (Join-Path $repoRoot 'backend/tools/prepare_ocr.py')
 if($LASTEXITCODE -ne 0){throw '本机公式OCR模型尚未准备完成，请按上方提示检查下载连接后重试'}
 $npmCommand=Get-Command npm.cmd -ErrorAction Stop

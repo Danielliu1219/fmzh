@@ -121,6 +121,11 @@ def _ocr_engine():
     return RapidOCR(params={'EngineConfig.onnxruntime.intra_op_num_threads':2})
 
 
+def warm_image_ocr():
+    """启动时预热图片OCR；模型随包提供，通常不到1秒。"""
+    _ocr_engine()
+
+
 def _join_parts(chunks):
     texts, locations, offset = [], [], 0
     for text, kind, number, label in chunks:

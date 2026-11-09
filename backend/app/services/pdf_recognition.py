@@ -16,6 +16,7 @@ from .study_sources import material_units
 
 ENGINE_VERSION = 'pix2text-1.1.7-layout-v3'
 _recognition_lock = RLock()
+_engine_lock = Lock()
 PDF_RENDER_LOCK = Lock()
 
 
@@ -51,7 +52,7 @@ def prepare_model_files(download=True):
 
 
 @lru_cache(maxsize=1)
-def ocr_engine():
+def _create_ocr_engine():
     os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY', '1')
     os.environ.setdefault('DO_NOT_TRACK', '1')
     import torch
@@ -65,6 +66,19 @@ def ocr_engine():
     return TextFormulaOCR.from_config(device='cpu', enable_spell_checker=False,
         total_configs={'languages': ('ch_sim', 'en'), 'formula': {'model_backend': 'onnx',
             'more_model_configs': {'session_options': options}}})
+
+
+def ocr_engine():
+    """同一进程只构建一次；锁保证预热与首个请求不会同时加载两份模型。"""
+    with _engine_lock:
+        return _create_ocr_engine()
+
+
+def warm_ocr_engines():
+    """启动时预热公式与图片OCR，之后所有识别请求复用已加载的实例。"""
+    ocr_engine()
+    from .file_parser import warm_image_ocr
+    warm_image_ocr()
 
 
 def recognize_pdf_pages(path, pages):
