@@ -12,6 +12,7 @@ export const sourceApi = {
     return promise
   },
   unit: (unit) => request.get(`/study-sources/${unit.material_id}/unit`,{params:{unit_id:unit.id}}),
+  aiHelp: (unit) => request.get(`/study-sources/${unit.material_id}/ai-help`,{params:{unit_id:unit.id}}),
   difficult: (unit, knowledgePoint) => request.post(`/study-sources/${unit.material_id}/difficult`,{unit_id:unit.id,knowledge_point:knowledgePoint || ''}),
   original: (id, params) => request.get(`/study-sources/${id}/original`,{params,responseType:'blob'}),
 }

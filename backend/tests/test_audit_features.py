@@ -448,7 +448,7 @@ class AuditFeatureTests(unittest.TestCase):
             material_parsing.stop()
             self.assertEqual(worker.call_count, 1)
 
-    def test_daily_model_quota_reservation_is_persistent_and_user_scoped(self):
+    def test_model_usage_is_persistent_user_scoped_and_unlimited(self):
         other = self.register("other")
         with Session(self.engine) as db:
             owner = db.get(User, 1)
@@ -457,15 +457,14 @@ class AuditFeatureTests(unittest.TestCase):
             def invoke(*, user, db):
                 model_usage.reserve_call()
 
-            with patch.object(model_usage.settings, "LLM_DAILY_LIMIT", 1):
-                invoke(user=owner, db=db)
-                with self.assertRaises(HTTPException) as failure:
-                    invoke(user=owner, db=db)
-                self.assertEqual(failure.exception.status_code, 429)
-                invoke(user=db.get(User, other["user"]["id"]), db=db)
-                self.assertEqual(model_usage.limits(db, 1)["remaining_calls"], 0)
+            invoke(user=owner, db=db)
+            invoke(user=owner, db=db)
+            invoke(user=db.get(User, other["user"]["id"]), db=db)
+            self.assertEqual(model_usage.limits(db, 1)["used_calls"], 2)
+            self.assertIsNone(model_usage.limits(db, 1)["daily_limit"])
+            self.assertIsNone(model_usage.limits(db, 1)["remaining_calls"])
 
-    def test_concurrent_model_calls_cannot_exceed_daily_limit(self):
+    def test_concurrent_model_calls_are_counted_without_a_daily_limit(self):
         @model_usage.metered
         def reserve(*, user, db):
             model_usage.reserve_call()
@@ -478,13 +477,38 @@ class AuditFeatureTests(unittest.TestCase):
                 except HTTPException as error:
                     return error.status_code
 
-        with patch.object(model_usage.settings, "LLM_DAILY_LIMIT", 3):
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                statuses = list(pool.map(invoke, range(8)))
-            self.assertEqual(statuses.count(200), 3)
-            self.assertEqual(statuses.count(429), 5)
-            with Session(self.engine) as db:
-                self.assertEqual(model_usage.limits(db, 1)["used_calls"], 3)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            statuses = list(pool.map(invoke, range(8)))
+        self.assertEqual(statuses, [200] * 8)
+        with Session(self.engine) as db:
+            self.assertEqual(model_usage.limits(db, 1)["used_calls"], 8)
+
+    def test_weekly_report_reads_saved_snapshot_without_generating_or_changing_it(self):
+        self.assertIsNone(self.call('GET', '/reports/weekly'))
+        report = self.call('POST', '/reports/weekly', {})
+        with Session(self.engine) as db:
+            db.add(AIJob(user_id=1, auth_key='', request_key='weekly-snapshot', kind='weekly',
+                payload_json='{}', payload_hash='snapshot', status='succeeded',
+                result_json=json.dumps(report), finished_at=datetime.now()))
+            db.commit()
+        with patch('app.routers.dashboard.chat_json') as generate:
+            for _ in range(3):
+                self.assertEqual(self.call('GET', '/reports/weekly'), report)
+            self.assertEqual(self.call('GET', '/reports/weekly?week_start=' + report['week_start']), report)
+            self.assertIsNone(self.call('GET', '/reports/weekly?week_start=2020-01-01'))
+            generate.assert_not_called()
+        other = self.register('weekly_other')
+        self.assertIsNone(self.call('GET', '/reports/weekly', headers={'Authorization': 'Bearer ' + other['access_token']}))
+
+    def test_failed_or_invalid_weekly_refresh_preserves_last_successful_snapshot(self):
+        report = self.call('POST', '/reports/weekly', {})
+        with Session(self.engine) as db:
+            for key, status, result in [('saved', 'succeeded', json.dumps(report)),
+                                        ('failed', 'failed', None), ('invalid', 'succeeded', '{}')]:
+                db.add(AIJob(user_id=1, auth_key='', request_key=key, kind='weekly', payload_json='{}',
+                    payload_hash=key, status=status, result_json=result, finished_at=datetime.now()))
+            db.commit()
+        self.assertEqual(self.call('GET', '/reports/weekly'), report)
 
     def test_async_job_fast_acceptance_idempotency_scope_and_completed_result(self):
         self.client.app.include_router(jobs.router, prefix="/api/ai")

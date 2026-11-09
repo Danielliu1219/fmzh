@@ -16,10 +16,10 @@ export function usePendingWork(read, prepare) {
 }
 
 export async function confirmPageLeave() {
-  const state = pendingWork.state()
+  const state = pendingWork.state({ navigation: true })
   if(state.busy.length) {ElMessage.warning(`请等待${state.busy.join('、')}完成后再离开`);return false}
   if(state.warnings.length && !await confirmAction(state.warnings.join('\n\n'),'离开当前页面',{confirmButtonText:'确认离开',cancelButtonText:'继续编辑'})) return false
-  if(pendingWork.state().busy.length) return false
+  if(pendingWork.state({ navigation: true }).busy.length) return false
   try {return await pendingWork.prepare()} catch {ElMessage.warning('当前内容尚未保存，请重试后再离开');return false}
 }
 

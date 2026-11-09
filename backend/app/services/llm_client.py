@@ -7,6 +7,8 @@ import math
 import asyncio
 import logging
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -16,6 +18,22 @@ from ..config import settings
 
 REQUEST_TIMEOUT = settings.LLM_ANALYSIS_TIMEOUT_SECONDS
 logger = logging.getLogger('uvicorn.error.model')
+_progress_callback = ContextVar('model_progress_callback', default=None)
+
+
+@contextmanager
+def progress_listener(callback):
+    token = _progress_callback.set(callback)
+    try:
+        yield
+    finally:
+        _progress_callback.reset(token)
+
+
+def _report_progress(**progress):
+    callback = _progress_callback.get()
+    if callback is not None:
+        callback(progress)
 
 
 def response_stats(data, limit):
@@ -31,7 +49,7 @@ def response_stats(data, limit):
     return {'max_tokens': limit, 'prompt_tokens': number(usage.get('prompt_tokens')),
         'completion_tokens': completion, 'reasoning_tokens': reasoning,
         'answer_tokens': completion - reasoning if completion is not None and reasoning is not None and completion >= reasoning else None,
-        'reasoning_chars': len(message.get('reasoning_content')) if isinstance(message.get('reasoning_content'), str) else 0,
+        'reasoning_chars': len(message.get('reasoning_content')) if isinstance(message.get('reasoning_content'), str) else number(data.get('_reasoning_chars')) or 0,
         'answer_chars': len(message.get('content')) if isinstance(message.get('content'), str) else 0,
         'finish_reason': choice.get('finish_reason') if choice.get('finish_reason') in ('stop','length','content_filter','tool_calls') else 'unknown'}
 
@@ -52,11 +70,84 @@ def retry_once(function,*args,**kwargs):
     return function(*args,**kwargs)
 
 
-async def _post_with_deadline(url,body,headers,timeout=None):
-    # wait_for约束总等待；仅read timeout会被上游心跳空行反复续期。
+async def _stream_events(response):
+    lines = []
+    async for line in response.aiter_lines():
+        if line.startswith('data:'):
+            lines.append(line[5:].lstrip(' '))
+        elif not line and lines:
+            yield '\n'.join(lines)
+            lines = []
+    if lines:
+        yield '\n'.join(lines)
+
+
+async def _post_with_deadline(url, body, headers, timeout=None):
+    # 总截止时间覆盖连接与整个流，心跳不能无限延长等待。
     deadline = REQUEST_TIMEOUT if timeout is None else timeout
+    started = time.perf_counter()
+    parts = []
+    timings = {}
+
+    async def receive(client):
+        async with client.stream('POST', url, json=body, headers=headers) as response:
+            timings['first_response_seconds'] = round(time.perf_counter() - started, 3)
+            response.raise_for_status()
+            _report_progress(stage='waiting', **timings)
+            if 'text/event-stream' not in response.headers.get('content-type', ''):
+                await response.aread()  # 兼容返回普通 JSON 的兼容服务。
+                response.extensions['model_timings'] = timings
+                return response
+
+            usage, finish_reason, reasoning_chars = {}, None, 0
+            last_report = 0
+            async for event in _stream_events(response):
+                if event == '[DONE]':
+                    break
+                try:
+                    data = json.loads(event)
+                    if not isinstance(data, dict) or 'error' in data:
+                        raise ValueError('invalid stream event')
+                    if isinstance(data.get('usage'), dict):
+                        usage = data['usage']
+                    choices = data.get('choices') or []
+                    choice = choices[0] if choices else {}
+                    delta = choice.get('delta') or {}
+                    reasoning, content = delta.get('reasoning_content'), delta.get('content')
+                    elapsed = time.perf_counter() - started
+                    if isinstance(reasoning, str) and reasoning:
+                        reasoning_chars += len(reasoning)
+                        timings.setdefault('first_reasoning_seconds', round(elapsed, 3))
+                    first_content = isinstance(content, str) and bool(content) and not parts
+                    if isinstance(content, str) and content:
+                        parts.append(content)
+                        timings.setdefault('first_content_seconds', round(elapsed, 3))
+                    if choice.get('finish_reason') is not None:
+                        finish_reason = choice['finish_reason']
+                except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+                    raise LLMError('大模型流式响应格式不正确，请重试', code='stream_interrupted') from exc
+                if first_content or elapsed - last_report >= .1:
+                    stage = 'answering' if parts else ('thinking' if reasoning_chars else 'waiting')
+                    _report_progress(stage=stage, content=''.join(parts),
+                                     reasoning_chars=reasoning_chars, request_seconds=round(elapsed, 3), **timings)
+                    last_report = elapsed
+            if finish_reason is None:
+                raise LLMError('大模型回答传输未完整结束，请重试', code='stream_interrupted')
+            answer = ''.join(parts)
+            _report_progress(stage='finalizing', content=answer, reasoning_chars=reasoning_chars,
+                             request_seconds=round(time.perf_counter() - started, 3), **timings)
+            return httpx.Response(response.status_code, request=response.request,
+                json={'choices': [{'message': {'content': answer}, 'finish_reason': finish_reason}],
+                      'usage': usage, '_reasoning_chars': reasoning_chars},
+                extensions={'model_timings': timings})
+
     async with httpx.AsyncClient(timeout=deadline) as client:
-        return await asyncio.wait_for(client.post(url,json=body,headers=headers),timeout=deadline)
+        try:
+            return await asyncio.wait_for(receive(client), timeout=deadline)
+        except (httpx.HTTPError, TimeoutError) as exc:
+            if parts:
+                raise LLMError('回答传输中断，本次内容尚未完整保存，请重试', code='stream_interrupted') from exc
+            raise
 
 
 def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeout=None):
@@ -71,6 +162,8 @@ def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeo
         "model": settings.DEEPSEEK_MODEL,
         "messages": [{"role": "system", "content": system_prompt}, *messages],
         "temperature": 0.3,
+        "stream": True,
+        "stream_options": {"include_usage": True},
     }
     if max_tokens is not None:
         body['max_tokens'] = max_tokens
@@ -86,6 +179,9 @@ def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeo
     from .model_usage import reserve_call
     reserve_call()
     started_at = time.perf_counter()
+    input_chars = sum(len(message['content']) for message in body['messages'])
+    _report_progress(stage='connecting', content='', input_chars=input_chars)
+    resp = None
     try:
         resp = asyncio.run(_post_with_deadline(f"{settings.DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions",body,headers,timeout))
         resp.raise_for_status()
@@ -99,7 +195,9 @@ def _content(system_prompt, messages, max_tokens=None, *, json_mode=False, timeo
     except httpx.HTTPError as exc:
         raise LLMError('无法连接大模型服务，请检查后端服务地址或稍后重试',retryable=True) from exc
     finally:
-        logger.info('model_request_finished elapsed_seconds=%.3f', time.perf_counter() - started_at)
+        logger.info('model_request_finished elapsed_seconds=%.3f input_chars=%s timings=%s',
+                    time.perf_counter() - started_at, input_chars,
+                    resp.extensions.get('model_timings', {}) if resp is not None else {})
     try:
         data = resp.json()
         logger.info('model_response stats=%s', response_stats(data, max_tokens))

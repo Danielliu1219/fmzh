@@ -62,7 +62,7 @@ from ..services.score_targets import band_strategy, band_text
 from ..services.recommendation_strategy import apply_strategy, strategy_context
 from ..services.study_cards import build_cards, build_mindmap
 from ..services.source_evidence import attach_references, references_for, excerpt_for, item_title
-from ..services.study_sources import build_context, attach_study_sources, material_units
+from ..services.study_sources import build_context, attach_study_sources, material_units, display_analysis
 from ..utils.security import get_current_user
 from ..services.model_usage import metered
 
@@ -420,8 +420,8 @@ def analyze(
             break
         except (LLMError, ValidationError, ValueError) as e:
             last_err = e
-            if isinstance(e, LLMError) and e.code == 'output_truncated':
-                break  # 相同额度重放仍可能截断，不再次花费用户Token。
+            if isinstance(e, LLMError) and e.code in ('output_truncated', 'stream_interrupted'):
+                break  # 截断或半截输出不自动重放，避免重复付费。
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail='大模型结果缺少必需内容或格式不合法，请重新生成；原计划已保留' if isinstance(last_err,ValidationError) else f"AI 生成失败：{last_err}"
@@ -457,7 +457,7 @@ def analyze(
         id=analysis.id,
         exam_id=analysis.exam_id,
         status=analysis.status,
-        result=public_analysis(result),
+        result=public_analysis(display_analysis(result, materials)),
         created_at=analysis.created_at,
         scheduling=scheduling,
     )
@@ -482,11 +482,12 @@ def latest_analysis(
         result = AnalysisResult.model_validate(json.loads(analysis.result_json))
     except (json.JSONDecodeError, ValidationError):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="历史分析数据损坏")
+    materials = db.query(Material).filter(Material.user_id == user.id, Material.exam_id == exam_id).all()
     return AnalysisOut(
         id=analysis.id,
         exam_id=analysis.exam_id,
         status=analysis.status,
-        result=public_analysis(result),
+        result=public_analysis(display_analysis(result, materials)),
         created_at=analysis.created_at,
     )
 
@@ -567,6 +568,7 @@ def analysis_mindmap(
         .all()
     )
     texts = [material.text_content or "" for material in materials]
+    result = display_analysis(result, materials)
     return MindmapOut(
         exam_id=exam_id,
         course=exam.subject,
@@ -689,15 +691,14 @@ def delete_qa_conversation(
 
 
 def _qa_context(materials, payload):
-    base = _build_materials_text(materials)[:QA_MATERIALS_LIMIT]
     if payload.source_material_id is None:
-        return base
+        return _build_materials_text(materials)[:QA_MATERIALS_LIMIT]
     material = next((m for m in materials if m.id == payload.source_material_id), None)
     if material is None: raise HTTPException(404, '来源不属于当前账号和科目')
     unit = next((u for u in material_units(material) if u['id'] == payload.source_unit_id), None)
     if unit is None: raise HTTPException(409, '来源定位已失效，请刷新后再提问')
-    selected = f"【本次指定来源：{material.title} · {unit['label']}】\n{unit['text'][:QA_MATERIALS_LIMIT//2]}\n\n"
-    return (selected + base)[:QA_MATERIALS_LIMIT]
+    # 单题只发送核对后的完整片段，避免重复题干和整科其他试卷干扰本次解答。
+    return f"【本次指定来源：{material.title} · {unit['label']}】\n{unit['text'][:QA_MATERIALS_LIMIT]}\n"
 
 
 @router.post(
@@ -730,6 +731,13 @@ def ask_qa(
         .all()
     )
     materials_text = _qa_context(materials, payload)
+    if payload.source_help_kind and not payload.source_regenerate:
+        from ..services.source_qa import help_history
+        material = next(m for m in materials if m.id == payload.source_material_id)
+        unit = next(u for u in material_units(material) if u['id'] == payload.source_unit_id)
+        saved = [m for m in help_history(db, user.id, unit) if m['kind'] == payload.source_help_kind]
+        if saved:
+            return _qa_conversation_out(db, _get_own_conversation(db, user, saved[-1]['conversation_id']))
     if not materials_text:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -747,9 +755,11 @@ def ask_qa(
         .limit(QA_HISTORY_LIMIT-1)
         .all()
     )
-    history = [
+    # 提示/参考解答是独立生成，重新生成不把先前整篇答案再交给模型复述。
+    history = [] if payload.source_help_kind else [
         {"role": row.role, "content": row.content} for row in reversed(history_rows)
-    ] + [{'role':'user','content':question}]
+    ]
+    history.append({'role': 'user', 'content': question})
     latest_id = history_rows[0].id if history_rows else None
     db.rollback()
 
@@ -773,8 +783,11 @@ def ask_qa(
     if (conversation is None or conversation.created_at!=original_created or conversation.updated_at!=original_updated
             or (latest[0] if latest else None)!=latest_id or _qa_context(current_materials,payload)!=original_materials):
         raise HTTPException(409,'会话或资料已变化，请查看最新消息后重新提问')
-    db.add(QaMessage(conversation_id=conversation.id, role="user", content=question))
-    db.add(QaMessage(conversation_id=conversation.id, role="assistant", content=answer))
+    from ..services.source_qa import legacy_help_kind
+    source = dict(source_unit_id=payload.source_unit_id,
+                  source_help_kind=payload.source_help_kind or (legacy_help_kind(question) if payload.source_unit_id else None))
+    db.add(QaMessage(conversation_id=conversation.id, role="user", content=question, **source))
+    db.add(QaMessage(conversation_id=conversation.id, role="assistant", content=answer, **source))
     conversation.updated_at = datetime.now()
     db.commit()
     db.refresh(conversation)

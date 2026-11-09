@@ -55,7 +55,7 @@ def submit(
                 .first()
             ):
                 raise HTTPException(404, "问答会话不存在")
-            data = {"conversation_id": conversation_id, **message.model_dump(mode='json', exclude_none=True)}
+            data = {"conversation_id": conversation_id, **message.model_dump(mode='json', exclude_none=True, exclude_defaults=True)}
         else:
             model = {
                 "profile": ProfileRequest,
@@ -84,6 +84,14 @@ def submit(
             raise HTTPException(409, "同一请求标识不能用于不同任务")
         request.state.audit_target = existing.id
         return ai_jobs.output(existing)
+    if payload.kind == 'qa' and data.get('source_help_kind'):
+        from ..services.source_qa import pending_help
+        pending = pending_help(db, user.id, data['source_unit_id'])
+        matching = next((job for job in pending if job['kind'] == data['source_help_kind']), None)
+        if matching:
+            job = db.get(AIJob, matching['id'])
+            request.state.audit_target = job.id
+            return ai_jobs.output(job)
     if (
         db.query(AIJob)
         .filter(AIJob.user_id == user.id, AIJob.status.in_(["queued", "running"]))

@@ -307,6 +307,8 @@ class QaMessage(Base):
     )
     role = Column(String(16), nullable=False)  # user / assistant
     content = Column(LargeText, nullable=False)
+    source_unit_id = Column(String(160), index=True, nullable=True)
+    source_help_kind = Column(String(16), nullable=True)
     created_at = Column(PreciseDateTime, default=datetime.now)
 
 

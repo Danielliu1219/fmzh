@@ -4,8 +4,8 @@ import re
 
 from .source_evidence import content_hash, location_for, references_for
 
-QUESTION = re.compile(r'(?m)^[ \t]*(?P<label>第[一二三四五六七八九十百\d]{1,6}题|\d{1,3}[、．.]|[一二三四五六七八九十]{1,3}、)(?!\d)[ \t]*')
-SECTION = re.compile(r'^[一二三四五六七八九十]{1,3}、\s*(?:选择|填空|计算|证明|解答|综合|判断|简答|应用)')
+QUESTION = re.compile(r'(?m)^[ \t]*(?P<label>第[一二三四五六七八九十百\d]{1,6}题|\d{1,3}[、．.]|[一二三四五六七八九十]{1,3}[、．.])(?!\d)[ \t]*')
+SECTION = re.compile(r'^(?P<number>[一二三四五六七八九十]{1,3})[、．.]\s*(?P<kind>选择|填空|计算|证明|解答|综合|判断|简答|应用)题?')
 ANSWER = re.compile(r'(?m)^[ \t]*(?:【(?:参考)?答案】|(?:参考)?答案\s*[:：]|解析\s*[:：]|解\s*[:：])')
 
 
@@ -41,12 +41,16 @@ def material_units(material):
         matched = [p for p in parts if p['start'] < end and p['end'] > start]
         pages = list(dict.fromkeys(p['number'] for p in matched if p.get('kind') == 'page' and type(p.get('number')) is int))
         question_label = question if not question or question.endswith('题') else f'第 {question} 题'
-        label = ' · '.join(filter(None, (section, question_label, location)))
+        subquestions = list(dict.fromkeys(re.findall(r'(?m)(?:^|\s)[（(](\d{1,2})[）)]', text[start:end])))
+        subquestion_label = '含小问 ' + '、'.join(f'（{number}）' for number in subquestions) if subquestions else ''
+        label = ' · '.join(filter(None, (section, question_label, subquestion_label, location)))
+        if is_exam and kind == 'reading':
+            label += ' · 题号待核对'
         units.append(dict(id=f'm{material.id}-{identity}-{start}-{end}', material_id=material.id,
             material_title=material.title, source_type=material.source_type, file_type=material.file_type,
             exam_id=material.exam_id, revision=revision, start=start, end=end,
             kind=kind, question_number=question, location=location, label=label, pages=pages,
-            text=clean_display(text[start:end]), subquestions=list(dict.fromkeys(re.findall(r'(?m)(?:^|\s)[（(](\d{1,2})[）)]', text[start:end]))),
+            text=clean_display(text[start:end]), subquestions=subquestions,
             recognition='按题号识别，可能包含同页相邻内容，请核对原页。' if kind == 'question' else '按原文页、幻灯片或段落定位。'))
 
     if is_exam:
@@ -55,8 +59,12 @@ def material_units(material):
         # 每个编号范围保留到下一个大题/题型标题；(1)(2)不拆走共同题干。
         for index, match in enumerate(marks):
             end = marks[index+1].start() if index+1 < len(marks) else len(text)
-            if SECTION.match(text[match.start():end].lstrip()):
-                section = text[match.start():end].splitlines()[0].strip()[:80]
+            section_match = SECTION.match(text[match.start():end].lstrip())
+            if section_match:
+                section = f"第{section_match['number']}大题 · {section_match['kind']}题"
+                # 大题下面直接列小问时，保留共同题干和整个大题。
+                if text[match.end():end].partition('\n')[2].strip():
+                    add(match.start(), end, 'question', section=section)
                 continue
             add(match.start(), end, 'question', match['label'].rstrip('、．.'), section)
     if not units:
@@ -68,6 +76,30 @@ def material_units(material):
             for start in range(0, len(text), 2400):
                 add(start, min(start+2400, len(text)), 'reading')
     return units
+
+
+def display_analysis(result, materials):
+    """为旧分析补回可读资料名，仅修改返回副本，保留原始引文和答案。"""
+    titles = {str(material.id): material.title for material in materials}
+
+    def replace(match):
+        numbers = re.findall(r'\d+', match[0])
+        return '、'.join(f'《{titles[number]}》' if number in titles else '已移除的资料' for number in numbers)
+
+    def readable(value):
+        return re.sub(r'资料(?:编号)?\s*\d+(?:\s*[、,，]\s*\d+)*(?![\d年\-—–])', replace, value)
+
+    output = result.model_copy(deep=True)
+    output.summary = readable(output.summary)
+    groups = [(output.knowledge_points, ('recommend_reason', 'source', 'practice_hint')),
+              (output.exam_focus, ('content', 'basis', 'source')),
+              (output.question_types, ('basis', 'source')),
+              (output.review_plan, ('title', 'detail'))]
+    for items, fields in groups:
+        for item in items:
+            for field in fields:
+                setattr(item, field, readable(getattr(item, field)))
+    return output
 
 
 def build_context(materials, per_material=6000, total_limit=30000, *, with_ids=False):

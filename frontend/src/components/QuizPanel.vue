@@ -53,7 +53,7 @@ const props = defineProps({ analysisId: { type: [Number,String], required:true }
 const emit = defineEmits(['submitted'])
 const attempt=ref(null), answers=ref([]), current=ref(0), busy=ref(false), error=ref(''), history=ref([])
 const confirming=ref(false)
-usePendingWork(() => ({busy:busy.value || confirming.value ? '自测操作' : '', warning:attempt.value?.status==='active' && answered.value>0 ? '自测尚未提交，离开后可在当前浏览器继续作答；退出登录会清除本地草稿。' : ''}))
+usePendingWork(() => ({retainOnNavigation:true,busy:busy.value || confirming.value ? '自测操作' : '', warning:attempt.value?.status==='active' && answered.value>0 ? '自测尚未提交，离开后可在当前浏览器继续作答；退出登录会清除本地草稿。' : ''}))
 const active=computed(()=>attempt.value?.questions[current.value])
 const hasAnswer=a=>Array.isArray(a) ? a.length>0 : typeof a==='string' && a.trim().length>0
 const answered=computed(()=>answers.value.filter(hasAnswer).length)

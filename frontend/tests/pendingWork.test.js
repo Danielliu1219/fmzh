@@ -1,6 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createPendingWork,createLogoutFlow} from '../src/utils/pendingWork.js'
+test('缓存页面切换保留草稿，刷新或退出仍提示未保存，提交操作仍阻止离开', () => {
+  const work = createPendingWork()
+  let busy = ''
+  work.register(() => ({ retainOnNavigation: true, warning: '未保存草稿', busy }))
+  assert.deepEqual(work.state({ navigation: true }), { busy: [], warnings: [] })
+  assert.deepEqual(work.state().warnings, ['未保存草稿'])
+  busy = '提交自测'
+  assert.deepEqual(work.state({ navigation: true }).busy, ['提交自测'])
+})
 function setup(overrides={}){
   const work=createPendingWork(),calls=[],messages=[];let current='session-a'
   const flow=createLogoutFlow({work,token:()=>current,confirm:async message=>{calls.push(['confirm',message]);return true},revoke:async token=>calls.push(['revoke',token]),clear:async()=>{calls.push(['clear']);current=''},notify:m=>messages.push(m),...overrides})

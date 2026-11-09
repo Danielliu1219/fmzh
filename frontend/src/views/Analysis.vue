@@ -22,8 +22,6 @@
       </el-select>
     </div>
 
-    <p v-if="modelLimits" class="course-context">{{ modelLimits.mock ? '本机演示生成，不消耗真实调用额度。' : `今日真实大模型调用 ${modelLimits.used_calls} / ${modelLimits.daily_limit} 次，剩余 ${modelLimits.remaining_calls} 次（重试也计次）。` }}</p>
-    <p v-if="modelLimits && !modelLimits.mock" class="choice-hint">保留思考模式，项目不设置输出 Token 上限；实际输出量与限制由模型平台决定，按实际用量计费。单次最长等待 {{ modelLimits.analysis_timeout_seconds }} 秒，截断不会自动重试。</p>
     <div v-if="!examId" class="course-context">
       <el-icon><InfoFilled /></el-icon>
       <p><strong>先说说你的情况，再选择课程。</strong>你可以先填写自然语言描述、目标区间和每日总时间；选择课程后，再补充该课基础与薄弱章节。</p>
@@ -121,6 +119,7 @@
             {{ examId ? '生成学习画像 →' : '选择课程后生成学习画像' }}
           </el-button>
         </div>
+        <AnalysisWait v-if="profileLoading" :job="profileJob" kind="profile" />
       </el-card>
 
       <!-- 第二步：画像确认 / 补全 -->
@@ -248,347 +247,364 @@
           </p>
         </el-card>
 
-        <el-card v-if="result.strategy" shadow="never" class="result-card">
-          <template #header><b>这轮怎样复习</b><span class="hint">{{ result.strategy.target_label }}</span></template>
-          <p class="mastery-note">计划共 {{ result.strategy.planned_minutes }} 分钟，下面是同一份时间的拆分；知识点建议时长也计在其中。</p>
-          <div class="strategy-phases">
-            <article v-for="phase in result.strategy.phases" :key="phase.phase">
-              <b>{{ phase.label }} <span>{{ phase.percent }}%</span></b>
-              <strong>{{ phase.minutes }} <small>分钟</small></strong>
-              <p>{{ phase.detail }}</p>
-            </article>
-          </div>
-          <p v-if="result.strategy.weak_chapters.length" class="mastery-note">优先补缺：{{ result.strategy.weak_chapters.join('、') }}</p>
-          <p v-for="note in result.strategy.notes" :key="note" class="mastery-note">{{ note }}</p>
-        </el-card>
-
-        <el-card shadow="never" class="result-card">
-          <template #header
-            ><div class="knowledge-head">
-              <div>
-                <b>知识点优先级</b><span class="hint">先抓重点，再补薄弱</span>
+        <div class="analysis-layout">
+          <aside class="analysis-index" aria-label="复习分析目录">
+            <span class="index-caption">本页目录</span>
+            <nav>
+              <a v-for="(section, index) in reviewSections" :key="section.id" :href="`#review-${section.id}`"
+                :class="{ active: activeSection === section.id }" :aria-current="activeSection === section.id ? 'location' : undefined"
+                @click.prevent="goToSection(section.id)">
+                <span>{{ String(index + 1).padStart(2, '0') }}</span>{{ section.label }}
+              </a>
+            </nav>
+          </aside>
+          <div ref="resultContentRef" class="analysis-content">
+            <el-card id="review-frequency" data-review-section="frequency" tabindex="-1" shadow="never" class="result-card">
+              <template #header>
+                <b>知识点考频</b>
+                <span class="hint">基于历年题与多来源资料统计</span>
+              </template>
+              <div v-if="result.question_types?.length" class="type-block">
+                <div ref="typeChartRef" class="type-chart"></div>
+                <el-table :data="result.question_types" size="small" class="type-table">
+                  <el-table-column prop="type" label="题型" width="100" />
+                  <el-table-column prop="count" label="出现次数" width="90" />
+                  <el-table-column label="占比" width="90">
+                    <template #default="{ row }">{{ Math.round(row.frequency * 100) }}%</template>
+                  </el-table-column>
+                  <el-table-column prop="basis" label="统计依据" min-width="180" />
+                  <el-table-column prop="source" label="来源" min-width="150">
+                    <template #default="{ row }">{{ row.source }}<TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="row.type" :citations="row.citations || []" /></template>
+                  </el-table-column>
+                </el-table>
               </div>
-              <el-radio-group
-                v-model="knowledgeView"
-                size="small"
-                aria-label="知识点展示方式"
-                ><el-radio-button value="visual">重点视图</el-radio-button
-                ><el-radio-button value="table"
-                  >详细表格</el-radio-button
-                ></el-radio-group
-              >
-            </div></template
-          >
-          <p class="mastery-note">按最近一次覆盖该知识点的自测计算，正确率 ≥80% 标记已掌握，无记录显示未测。
-            <el-button link :loading="masteryLoading" @click="loadMastery">更新掌握状态</el-button>
-          </p>
-          <el-alert v-if="masteryError" :title="masteryError" type="warning" :closable="false" />
-          <div v-if="knowledgeView === 'visual'" class="knowledge-list">
-            <article v-for="(kp, i) in sortedKnowledge" :key="kp.name">
-              <span class="knowledge-order">{{
-                String(i + 1).padStart(2, '0')
-              }}</span>
-              <div class="knowledge-body">
-                <div class="knowledge-title">
-                  <b>{{ kp.name }}</b
-                  ><span>{{
-                    { high: '优先攻克', medium: '重点巩固', low: '有余力再看' }[
-                      kp.importance
-                    ] || '按计划复习'
-                  }}</span>
-                </div>
-                <div class="weight-track">
-                  <i
-                    :style="{
-                      width:
-                        Math.round(Math.min(1, Math.max(0, kp.weight)) * 100) +
-                        '%',
-                    }"
-                  ></i>
-                </div>
-                <p>{{ kp.recommend_reason }}</p>
-                <p v-if="kp.practice_hint">{{ kp.practice_hint }}</p>
-                <div v-if="masteryFor(kp.name)" class="mastery-line">
-                  <el-tag size="small" :type="masteryTypes[masteryFor(kp.name).status]">{{ masteryLabels[masteryFor(kp.name).status] }}</el-tag>
-                  <span v-if="masteryFor(kp.name).total">最近自测 {{ masteryFor(kp.name).correct }}/{{ masteryFor(kp.name).total }} 题正确 · {{ masteryFor(kp.name).score }}%</span>
-                  <span v-else>完成该知识点的自测后更新</span>
-                </div>
-                <details v-if="masteryFor(kp.name)?.total" class="mastery-evidence">
-                  <summary>查看作答依据 · {{ masteryFor(kp.name).last_submitted_at?.replace('T', ' ').slice(0, 16) }}</summary>
-                  <p v-for="(item, index) in masteryFor(kp.name).evidence" :key="index">{{ item.correct ? '答对' : item.unanswered ? '未答' : '答错' }} · {{ item.question }}</p>
-                </details>
-                <div class="knowledge-source">
-                  <span v-if="kp.source">依据 · {{ kp.source }}</span
-                  ><span
-                    >建议投入 · {{ suggestedTime(kp) }}</span
+              <el-divider v-if="result.question_types?.length" />
+              <el-timeline>
+                <el-timeline-item
+                  v-for="(f, i) in sortedFocus"
+                  :key="i"
+                  :type="f.level === 'must' ? 'danger' : 'primary'"
+                  :hollow="f.level !== 'must'"
+                >
+                  <el-tag
+                    size="small"
+                    :type="f.level === 'must' ? 'danger' : 'primary'"
+                    class="focus-tag"
                   >
-                  <el-button link type="primary" @click="openEvidence('knowledge', kp)">查看原文依据</el-button>
-                </div>
-                <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="kp.name" :source-ids="kp.source_ids || []" />
-              </div>
-              <strong class="knowledge-weight"
-                >{{ Math.round(kp.weight * 100) }}<small>%</small></strong
-              >
-            </article>
-          </div>
-          <el-table v-else :data="result.knowledge_points" size="large">
-            <el-table-column prop="name" label="知识点" min-width="140">
-              <template #default="{ row }"
-                ><b>{{ row.name }}</b></template
-              >
-            </el-table-column>
-            <el-table-column label="权重" min-width="180">
-              <template #default="{ row }">
-                <el-progress
-                  :percentage="Math.round(row.weight * 100)"
-                  :stroke-width="12"
-                  :color="weightColor(row.weight)"
+                    {{ f.level === 'must' ? '必考' : '常考' }}
+                  </el-tag>
+                  <el-tag v-if="f.frequency" size="small" type="info" effect="plain" class="focus-tag">
+                    出现 {{ f.frequency }} 次
+                  </el-tag>
+                  {{ f.content }}
+                  <div class="focus-basis">
+                    依据 · {{ f.basis }}（{{ f.source }}）
+                  </div>
+                  <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="f.content" :citations="f.citations || []" />
+                </el-timeline-item>
+              </el-timeline>
+            </el-card>
+
+            <el-card id="review-qa" data-review-section="qa" tabindex="-1" shadow="never" class="result-card">
+              <template #header>
+                <b>资料问答</b>
+                <span class="hint">就当前科目的复习资料提问，支持多轮追问与历史保存</span>
+              </template>
+              <div ref="qaListRef" class="qa-list">
+                <el-empty
+                  v-if="!qaMessages.length"
+                  description="试着问：这份资料的重点是什么？"
+                  :image-size="60"
                 />
-              </template>
-            </el-table-column>
-            <el-table-column label="重要程度" width="100">
-              <template #default="{ row }">
-                <el-tag
-                  :type="
-                    { high: 'danger', medium: 'warning', low: 'info' }[
-                      row.importance
-                    ]
-                  "
+                <div v-for="m in qaMessages" :key="m.id" class="qa-row" :class="m.role">
+                  <div class="qa-bubble">
+                    <div class="qa-role">{{ m.role === 'user' ? '我' : 'AI 助手' }}</div>
+                    <MarkdownContent v-if="m.role === 'assistant'" :content="m.content" />
+                    <div v-else class="qa-content">{{ m.content }}</div>
+                    <p v-if="m.role === 'assistant'" class="hint">大模型生成，仅供参考，可能存在错误，不保证答案正确，请核对原题与教材。</p>
+                  </div>
+                </div>
+                <div v-if="qaLoading" class="qa-row assistant">
+                  <div class="qa-bubble">
+                    <AnalysisWait :job="qaJob" kind="qa" />
+                    <MarkdownContent v-if="qaJob?.progress?.content" :content="qaJob.progress.content" />
+                  </div>
+                </div>
+              </div>
+              <div class="qa-input-row">
+                <div class="qa-input-box">
+                  <el-input
+                    v-model="qaInput"
+                    type="textarea"
+                    :rows="2"
+                    maxlength="2000"
+                    show-word-limit
+                    placeholder="针对资料提问，例如：极限这一章有哪些必考内容？"
+                    @keydown.enter.exact.prevent="onAsk"
+                  />
+                </div>
+                <el-button
+                  type="primary"
+                  :loading="qaLoading"
+                  :disabled="!qaInput.trim()"
+                  @click="onAsk"
                 >
-                  {{ { high: '高', medium: '中', low: '低' }[row.importance] }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="掌握状态" min-width="140">
-              <template #default="{ row }">
-                <template v-if="masteryFor(row.name)">
-                  <el-tag :type="masteryTypes[masteryFor(row.name).status]">{{ masteryLabels[masteryFor(row.name).status] }}</el-tag>
-                  <small v-if="masteryFor(row.name).total"> {{ masteryFor(row.name).correct }}/{{ masteryFor(row.name).total }} 题</small>
-                </template>
-                <span v-else>{{ masteryLoading ? '更新中' : '暂未加载' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="suggest_hours" label="建议投入" width="90">
-              <template #default="{ row }"
-                >{{ suggestedTime(row) }}</template
+                  发送
+                </el-button>
+              </div>
+            </el-card>
+
+            <el-card v-if="result.strategy" id="review-strategy" data-review-section="strategy" tabindex="-1" shadow="never" class="result-card">
+              <template #header><b>这轮怎样复习</b></template>
+              <div class="strategy-phases">
+                <article v-for="phase in result.strategy.phases" :key="phase.phase">
+                  <span>{{ phase.label }}</span>
+                  <strong>{{ phase.percent }}<small>%</small></strong>
+                  <div class="phase-track" aria-hidden="true"><i :style="{ width: `${phase.percent}%` }"></i></div>
+                </article>
+              </div>
+            </el-card>
+
+            <el-card id="review-knowledge" data-review-section="knowledge" tabindex="-1" shadow="never" class="result-card">
+              <template #header
+                ><div class="knowledge-head">
+                  <div>
+                    <b>知识点优先级</b><span class="hint">先抓重点，再补薄弱</span>
+                  </div>
+                  <el-radio-group
+                    v-model="knowledgeView"
+                    size="small"
+                    aria-label="知识点展示方式"
+                    ><el-radio-button value="visual">重点视图</el-radio-button
+                    ><el-radio-button value="table"
+                      >详细表格</el-radio-button
+                    ></el-radio-group
+                  >
+                </div></template
               >
-            </el-table-column>
-            <el-table-column
-              prop="recommend_reason"
-              label="推荐理由"
-              min-width="160"
-            />
-            <el-table-column prop="source" label="依据来源" min-width="150">
-              <template #default="{ row }">
-                <el-tag
-                  v-if="row.source"
-                  size="small"
-                  type="success"
-                  effect="plain"
-                  >{{ row.source }}</el-tag
-                >
-                <el-button link type="primary" @click="openEvidence('knowledge', row)">查看原文</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
-        <!-- 思维导图与记忆卡片（用例 4.4） -->
-        <el-card v-if="study" shadow="never" class="result-card">
-          <template #header>
-            <b>思维导图与记忆卡片</b>
-            <span class="hint">提纲可视化 · 点击卡片翻面背诵</span>
-          </template>
-          <MindmapTree :data="study.mindmap" />
-          <el-divider />
-          <div v-if="cards.length" class="flash-area">
-            <p class="flash-instructions">先看正面回忆要点，再翻面核对资料；可切换或打乱卡片反复自查。</p>
-            <div
-              class="flash-card"
-              :class="{ flipped: cardFlipped }"
-              @click="cardFlipped = !cardFlipped"
-            >
-              <div class="flash-inner">
-                <div class="flash-face flash-front">
-                  <span class="flash-label">正面 · 背诵要点</span>
-                  <p class="flash-text">{{ currentCard?.front }}</p>
-                  <span class="flash-hint">{{ currentCard?.hint }}</span>
-                </div>
-                <div class="flash-face flash-back">
-                  <span class="flash-label">背面 · 资料依据</span>
-                  <p class="flash-text">{{ currentCard?.back }}</p>
-                </div>
+              <p class="mastery-note">按最近一次覆盖该知识点的自测计算，正确率 ≥80% 标记已掌握，无记录显示未测。
+                <el-button link :loading="masteryLoading" @click="loadMastery">更新掌握状态</el-button>
+              </p>
+              <el-alert v-if="masteryError" :title="masteryError" type="warning" :closable="false" />
+              <div v-if="knowledgeView === 'visual'" class="knowledge-list">
+                <article v-for="(kp, i) in sortedKnowledge" :key="kp.name">
+                  <span class="knowledge-order">{{
+                    String(i + 1).padStart(2, '0')
+                  }}</span>
+                  <div class="knowledge-body">
+                    <div class="knowledge-title">
+                      <b>{{ kp.name }}</b
+                      ><span>{{
+                        { high: '优先攻克', medium: '重点巩固', low: '有余力再看' }[
+                          kp.importance
+                        ] || '按计划复习'
+                      }}</span>
+                    </div>
+                    <div class="weight-track">
+                      <i
+                        :style="{
+                          width:
+                            Math.round(Math.min(1, Math.max(0, kp.weight)) * 100) +
+                            '%',
+                        }"
+                      ></i>
+                    </div>
+                    <p>{{ kp.recommend_reason }}</p>
+                    <p v-if="kp.practice_hint">{{ kp.practice_hint }}</p>
+                    <div v-if="masteryFor(kp.name)" class="mastery-line">
+                      <el-tag size="small" :type="masteryTypes[masteryFor(kp.name).status]">{{ masteryLabels[masteryFor(kp.name).status] }}</el-tag>
+                      <span v-if="masteryFor(kp.name).total">最近自测 {{ masteryFor(kp.name).correct }}/{{ masteryFor(kp.name).total }} 题正确 · {{ masteryFor(kp.name).score }}%</span>
+                      <span v-else>完成该知识点的自测后更新</span>
+                    </div>
+                    <details v-if="masteryFor(kp.name)?.total" class="mastery-evidence">
+                      <summary>查看作答依据 · {{ masteryFor(kp.name).last_submitted_at?.replace('T', ' ').slice(0, 16) }}</summary>
+                      <p v-for="(item, index) in masteryFor(kp.name).evidence" :key="index">{{ item.correct ? '答对' : item.unanswered ? '未答' : '答错' }} · {{ item.question }}</p>
+                    </details>
+                    <div class="knowledge-source">
+                      <span v-if="kp.source">依据 · {{ kp.source }}</span
+                      ><span
+                        >建议投入 · {{ suggestedTime(kp) }}</span
+                      >
+                    </div>
+                    <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="kp.name" :source-ids="kp.source_ids || []" />
+                  </div>
+                  <strong class="knowledge-weight"
+                    >{{ Math.round(kp.weight * 100) }}<small>%</small></strong
+                  >
+                </article>
               </div>
-            </div>
-            <div class="flash-controls">
-              <el-button size="small" @click="prevCard">上一张</el-button>
-              <span class="flash-count">{{ cardIndex + 1 }} / {{ cards.length }}</span>
-              <el-button size="small" @click="nextCard">下一张</el-button>
-              <el-button size="small" @click="shuffleCards">打乱顺序</el-button>
-              <el-button link type="primary" @click="cardFlipped = !cardFlipped">
-                翻面
-              </el-button>
-            </div>
-          </div>
-          <el-empty v-else description="暂无可背诵的卡片" :image-size="60" />
-        </el-card>
+              <el-table v-else :data="result.knowledge_points" size="large">
+                <el-table-column prop="name" label="知识点" min-width="140">
+                  <template #default="{ row }"
+                    ><b>{{ row.name }}</b></template
+                  >
+                </el-table-column>
+                <el-table-column label="权重" min-width="180">
+                  <template #default="{ row }">
+                    <el-progress
+                      :percentage="Math.round(row.weight * 100)"
+                      :stroke-width="12"
+                      :color="weightColor(row.weight)"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column label="重要程度" width="100">
+                  <template #default="{ row }">
+                    <el-tag
+                      :type="
+                        { high: 'danger', medium: 'warning', low: 'info' }[
+                          row.importance
+                        ]
+                      "
+                    >
+                      {{ { high: '高', medium: '中', low: '低' }[row.importance] }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="掌握状态" min-width="140">
+                  <template #default="{ row }">
+                    <template v-if="masteryFor(row.name)">
+                      <el-tag :type="masteryTypes[masteryFor(row.name).status]">{{ masteryLabels[masteryFor(row.name).status] }}</el-tag>
+                      <small v-if="masteryFor(row.name).total"> {{ masteryFor(row.name).correct }}/{{ masteryFor(row.name).total }} 题</small>
+                    </template>
+                    <span v-else>{{ masteryLoading ? '更新中' : '暂未加载' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="suggest_hours" label="建议投入" width="90">
+                  <template #default="{ row }"
+                    >{{ suggestedTime(row) }}</template
+                  >
+                </el-table-column>
+                <el-table-column
+                  prop="recommend_reason"
+                  label="推荐理由"
+                  min-width="160"
+                />
+                <el-table-column prop="source" label="依据来源" min-width="150">
+                  <template #default="{ row }">
+                    <el-tag
+                      v-if="row.source"
+                      size="small"
+                      type="success"
+                      effect="plain"
+                      >{{ row.source }}</el-tag
+                    >
+                    <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="row.name" :source-ids="row.source_ids || []" />
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
 
-        <!-- 资料问答（用例 4.5） -->
-        <el-card shadow="never" class="result-card">
-          <template #header>
-            <b>资料问答</b>
-            <span class="hint">就当前科目的复习资料提问，支持多轮追问与历史保存</span>
-          </template>
-          <div ref="qaListRef" class="qa-list">
-            <el-empty
-              v-if="!qaMessages.length"
-              description="试着问：这份资料的重点是什么？"
-              :image-size="60"
-            />
-            <div v-for="m in qaMessages" :key="m.id" class="qa-row" :class="m.role">
-              <div class="qa-bubble">
-                <div class="qa-role">{{ m.role === 'user' ? '我' : 'AI 助手' }}</div>
-                <div class="qa-content">{{ m.content }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="qa-input-row">
-            <div class="qa-input-box">
-              <el-input
-                v-model="qaInput"
-                type="textarea"
-                :rows="2"
-                maxlength="2000"
-                show-word-limit
-                placeholder="针对资料提问，例如：极限这一章有哪些必考内容？"
-                @keydown.enter.exact.prevent="onAsk"
+            <section v-if="analysisId && result.quiz?.length" id="review-quiz" data-review-section="quiz" tabindex="-1">
+              <QuizPanel v-if="analysisId && result.quiz?.length" :key="analysisId" :analysis-id="analysisId" :questions="result.quiz" :subject="result.course" @submitted="loadMastery" />
+            </section>
+
+            <el-card id="review-plan" data-review-section="plan" tabindex="-1" shadow="never" class="result-card">
+              <template #header
+                ><b>复习计划</b
+                ><span class="hint">{{
+                  USE_MOCK
+                    ? '以下为示例计划，演示操作不保存'
+                    : '本科内容建议；全科统筹后的实际日期见首页与课程管理'
+                }}</span></template
+              >
+              <el-alert
+                v-if="schedulingNote"
+                :title="schedulingNote"
+                type="warning"
+                :closable="false"
+                show-icon
               />
-            </div>
-            <el-button
-              type="primary"
-              :loading="qaLoading"
-              :disabled="!qaInput.trim()"
-              @click="onAsk"
-            >
-              发送
-            </el-button>
-          </div>
-        </el-card>
-
-        <el-card shadow="never" class="result-card">
-          <template #header>
-            <b>常考题型与高频考点</b>
-            <span class="hint">基于历年题与多来源资料统计</span>
-          </template>
-          <div v-if="result.question_types?.length" class="type-block">
-            <div ref="typeChartRef" class="type-chart"></div>
-            <el-table :data="result.question_types" size="small" class="type-table">
-              <el-table-column prop="type" label="题型" width="100" />
-              <el-table-column prop="count" label="出现次数" width="90" />
-              <el-table-column label="占比" width="90">
-                <template #default="{ row }">{{ Math.round(row.frequency * 100) }}%</template>
-              </el-table-column>
-              <el-table-column prop="basis" label="统计依据" min-width="180" />
-              <el-table-column prop="source" label="来源" min-width="150">
-                <template #default="{ row }">{{ row.source }} <el-button link type="primary" @click="openEvidence('question_type', row)">查看原文</el-button></template>
-              </el-table-column>
-            </el-table>
-          </div>
-          <el-divider v-if="result.question_types?.length" />
-          <el-timeline>
-            <el-timeline-item
-              v-for="(f, i) in sortedFocus"
-              :key="i"
-              :type="f.level === 'must' ? 'danger' : 'primary'"
-              :hollow="f.level !== 'must'"
-            >
-              <el-tag
-                size="small"
-                :type="f.level === 'must' ? 'danger' : 'primary'"
-                class="focus-tag"
-              >
-                {{ f.level === 'must' ? '必考' : '常考' }}
-              </el-tag>
-              <el-tag v-if="f.frequency" size="small" type="info" effect="plain" class="focus-tag">
-                出现 {{ f.frequency }} 次
-              </el-tag>
-              {{ f.content }}
-              <div class="focus-basis">
-                依据：{{ f.basis }}（{{ f.source }}）
-                <el-button link type="primary" @click="openEvidence('focus', f)">查看原文依据</el-button>
-              </div>
-            </el-timeline-item>
-          </el-timeline>
-        </el-card>
-
-        <el-card shadow="never" class="result-card">
-          <template #header
-            ><b>复习计划</b
-            ><span class="hint">{{
-              USE_MOCK
-                ? '以下为示例计划，演示操作不保存'
-                : '本科内容建议；全科统筹后的实际日期见首页与课程管理'
-            }}</span></template
-          >
-          <el-alert
-            v-if="schedulingNote"
-            :title="schedulingNote"
-            type="warning"
-            :closable="false"
-            show-icon
-          />
-          <el-table :data="result.review_plan">
-            <el-table-column prop="day" label="第几天" width="80">
-              <template #default="{ row }">第 {{ row.day }} 天</template>
-            </el-table-column>
-            <el-table-column prop="date" label="日期" width="120" />
-            <el-table-column prop="title" label="复习主题" min-width="180" />
-            <el-table-column
-              prop="estimated_minutes"
-              label="预计时长"
-              width="100"
-            >
-              <template #default="{ row }"
-                >{{ row.estimated_minutes }} 分钟</template
-              >
-            </el-table-column>
-            <el-table-column label="优先级" width="90">
-              <template #default="{ row }">
-                <el-tag
-                  size="small"
-                  :type="['', 'danger', 'warning', 'info'][row.priority]"
+              <el-table :data="result.review_plan">
+                <el-table-column prop="day" label="第几天" width="80">
+                  <template #default="{ row }">第 {{ row.day }} 天</template>
+                </el-table-column>
+                <el-table-column prop="date" label="日期" width="120" />
+                <el-table-column prop="title" label="复习主题" min-width="180" />
+                <el-table-column
+                  prop="estimated_minutes"
+                  label="预计时长"
+                  width="100"
                 >
-                  {{ ['', '高', '中', '低'][row.priority] }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="具体内容" min-width="260">
-              <template #default="{ row }">
-                <p>{{ row.detail }}</p>
-                <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="row.knowledge_point" :source-ids="row.source_ids || []" />
-                <p v-for="activity in row.activities || []" :key="activity.phase" class="plan-activity">{{ activity.label }} {{ activity.minutes }} 分钟 · {{ activity.detail }}</p>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
+                  <template #default="{ row }"
+                    >{{ row.estimated_minutes }} 分钟</template
+                  >
+                </el-table-column>
+                <el-table-column label="优先级" width="90">
+                  <template #default="{ row }">
+                    <el-tag
+                      size="small"
+                      :type="['', 'danger', 'warning', 'info'][row.priority]"
+                    >
+                      {{ ['', '高', '中', '低'][row.priority] }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="具体内容" min-width="260">
+                  <template #default="{ row }">
+                    <p>{{ row.detail }}</p>
+                    <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="row.knowledge_point" :source-ids="row.source_ids || []" />
+                    <p v-for="activity in row.activities || []" :key="activity.phase" class="plan-activity">{{ activity.label }} {{ activity.minutes }} 分钟 · {{ activity.detail }}</p>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
 
-        <QuizPanel v-if="analysisId && result.quiz?.length" :key="analysisId" :analysis-id="analysisId" :questions="result.quiz" :subject="result.course" @submitted="loadMastery" />
+            <el-card id="review-replan" data-review-section="replan" tabindex="-1" shadow="never" class="result-card">
+              <template #header>
+                <b>动态调整计划与权重</b>
+                <span class="hint">根据打卡、自测错题与剩余天数重新排序</span>
+              </template>
+              <div class="replan-actions">
+                <el-button type="primary" plain :loading="replanLoading" @click="onReplanPreview">
+                  预览调整
+                </el-button>
+                <span class="replan-tip">
+                  已完成的打卡记录会保留；按反馈追加针对性练习，并在全科预算内重排未完成的 AI 任务。
+                </span>
+              </div>
+            </el-card>
 
-        <!-- 动态调整计划与权重（用例 4.12） -->
-        <el-card shadow="never" class="result-card">
-          <template #header>
-            <b>动态调整计划与权重</b>
-            <span class="hint">根据打卡、自测错题与剩余天数重新排序</span>
-          </template>
-          <div class="replan-actions">
-            <el-button type="primary" plain :loading="replanLoading" @click="onReplanPreview">
-              预览调整
-            </el-button>
-            <span class="replan-tip">
-              已完成的打卡记录会保留；按反馈追加针对性练习，并在全科预算内重排未完成的 AI 任务。
-            </span>
+            <el-card v-if="study" id="review-mindmap" data-review-section="mindmap" tabindex="-1" shadow="never" class="result-card">
+              <template #header>
+                <b>思维导图与记忆卡片</b>
+                <span class="hint">提纲可视化 · 点击卡片翻面背诵</span>
+              </template>
+              <MindmapTree :data="study.mindmap" />
+              <el-divider />
+              <div v-if="cards.length" class="flash-area">
+                <p class="flash-instructions">先看正面回忆要点，再翻面核对资料；可切换或打乱卡片反复自查。</p>
+                <div
+                  class="flash-card"
+                  :class="{ flipped: cardFlipped }"
+                  @click="cardFlipped = !cardFlipped"
+                >
+                  <div class="flash-inner">
+                    <div class="flash-face flash-front">
+                      <span class="flash-label">正面 · 背诵要点</span>
+                      <p class="flash-text">{{ currentCard?.front }}</p>
+                      <span class="flash-hint">{{ currentCard?.hint }}</span>
+                    </div>
+                    <div class="flash-face flash-back">
+                      <span class="flash-label">背面 · 资料依据</span>
+                      <p class="flash-text">{{ currentCard?.back }}</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="flash-controls">
+                  <el-button size="small" @click="prevCard">上一张</el-button>
+                  <span class="flash-count">{{ cardIndex + 1 }} / {{ cards.length }}</span>
+                  <el-button size="small" @click="nextCard">下一张</el-button>
+                  <el-button size="small" @click="shuffleCards">打乱顺序</el-button>
+                  <el-button link type="primary" @click="cardFlipped = !cardFlipped">
+                    翻面
+                  </el-button>
+                </div>
+              </div>
+              <el-empty v-else description="暂无可背诵的卡片" :image-size="60" />
+            </el-card>
           </div>
-        </el-card>
+        </div>
 
       </template>
 
@@ -639,19 +655,6 @@
         </template>
       </el-dialog>
 
-      <el-dialog v-model="evidenceVisible" :title="evidenceData?.item_title ? `${evidenceData.item_title} · 原文依据` : '原文依据'" width="min(760px, 94vw)">
-        <div v-loading="evidenceLoading" class="evidence-content">
-          <el-alert v-if="evidenceError" :title="evidenceError" type="warning" :closable="false" />
-          <template v-if="evidenceData">
-            <p class="mastery-note">{{ evidenceData.note }}</p>
-            <SourceExcerpt v-for="(reference, index) in evidenceData.items" :key="index" :reference="reference">
-              <router-link v-if="sourceRoute(reference, evidenceData.exam_id)" :to="sourceRoute(reference, evidenceData.exam_id)">在资料库中查看 →</router-link>
-            </SourceExcerpt>
-          </template>
-        </div>
-        <template #footer><el-button @click="evidenceVisible = false">关闭</el-button></template>
-      </el-dialog>
-
       <!-- 分析中提示 -->
       <el-card v-if="step === 2 && analyzing" shadow="never" class="step-card">
         <el-result
@@ -689,18 +692,17 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { usePendingWork, useActionLock, confirmAction } from '../composables/usePendingWork'
-import { useRoute } from 'vue-router'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { aiApi, examApi, studyApi } from '../api'
 import { USE_MOCK, getToday, mockStudySession } from '../mock/dashboard'
 import { buildStudyPlan, applyStudyPlan } from '../utils/studyPlan'
 import { daysUntil } from '../utils/studyProgress'
 import { mockProfile, mockAnalysis, mockMaterials } from '../mock/pages'
 import { applyRecommendationStrategy, refreshStrategy, suggestedTime } from '../utils/recommendationStrategy'
-import SourceExcerpt from '../components/SourceExcerpt.vue'
-import { mockEvidence, sourceRoute } from '../utils/sourceEvidence.js'
+import MarkdownContent from '../components/MarkdownContent.vue'
 import TaskSources from '../components/TaskSources.vue'
 import QuizPanel from '../components/QuizPanel.vue'
 import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail, mockMastery } from '../mock/quizzes'
@@ -722,6 +724,56 @@ const FIELD_LABELS = {
 const exams = ref([])
 const route = useRoute()
 const knowledgeView = ref('visual')
+
+const resultContentRef = ref(null)
+const activeSection = ref('frequency')
+const reviewSections = computed(() => [
+  { id: 'frequency', label: '知识点考频' },
+  { id: 'qa', label: '资料问答' },
+  ...(result.value?.strategy ? [{ id: 'strategy', label: '复习比例' }] : []),
+  { id: 'knowledge', label: '知识点优先级' },
+  ...(analysisId.value && result.value?.quiz?.length ? [{ id: 'quiz', label: '自测练习' }] : []),
+  { id: 'plan', label: '复习计划' },
+  { id: 'replan', label: '动态调整' },
+  ...(study.value ? [{ id: 'mindmap', label: '思维导图' }] : []),
+])
+let savedScrollTop = 0
+const sectionOffset = () => {
+  const header = document.querySelector('.header')?.getBoundingClientRect().bottom || 0
+  const index = window.matchMedia('(max-width: 900px)').matches ? document.querySelector('.analysis-index')?.offsetHeight || 0 : 0
+  return header + index + 24
+}
+const updateActiveSection = () => {
+  const sections = [...(resultContentRef.value?.querySelectorAll('[data-review-section]') || [])]
+  const current = sections.filter(section => section.getBoundingClientRect().top <= sectionOffset() + 1).at(-1) || sections[0]
+  if (current) activeSection.value = current.dataset.reviewSection
+}
+const goToSection = (id) => {
+  const section = document.getElementById(`review-${id}`)
+  if (!section) return
+  activeSection.value = id
+  section.focus({ preventScroll: true })
+  window.scrollTo({ top: window.scrollY + section.getBoundingClientRect().top - sectionOffset(),
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+}
+onBeforeRouteLeave(() => { savedScrollTop = window.scrollY })
+onActivated(async () => {
+  window.addEventListener('scroll', updateActiveSection, { passive: true })
+  window.addEventListener('resize', resizeCharts)
+  await nextTick()
+  resizeCharts()
+  window.scrollTo({ top: savedScrollTop, behavior: 'instant' })
+  const requested = Number(route.query.exam)
+  if (exams.value.some(exam => exam.id === requested) && requested !== examId.value) {
+    examId.value = requested
+    await onExamChange()
+  }
+})
+onDeactivated(() => {
+  window.removeEventListener('scroll', updateActiveSection)
+  window.removeEventListener('resize', resizeCharts)
+})
+
 const brief = reactive({
   target_band: 'D',
   learning_status: 'weak',
@@ -749,33 +801,13 @@ const profile = ref(null)
 const result = ref(null)
 const analysisId = ref(null)
 const profileLoading = ref(false)
+const profileJob = ref(null)
+const qaJob = ref(null)
 const analyzing = ref(false)
 const analysisJob = ref(null)
 let analysisPageActive = true
 const analyzeError = ref('')
 const schedulingNote = ref('')
-const evidenceVisible = ref(false)
-const evidenceData = ref(null)
-const evidenceLoading = ref(false)
-const evidenceError = ref('')
-let evidenceRequest = 0
-const openEvidence = async (kind, item) => {
-  const requestId = ++evidenceRequest
-  const collection = { knowledge: result.value.knowledge_points, focus: result.value.exam_focus, question_type: result.value.question_types }[kind]
-  const itemIndex = collection.indexOf(item)
-  evidenceVisible.value = true
-  evidenceData.value = null
-  evidenceError.value = ''
-  evidenceLoading.value = true
-  try {
-    const data = USE_MOCK ? mockEvidence(item, examId.value, mockMaterials)
-      : await aiApi.evidence(examId.value, { analysis_id: analysisId.value, kind, item_index: itemIndex })
-    if (requestId === evidenceRequest) evidenceData.value = data
-  } catch {
-    if (requestId === evidenceRequest) evidenceError.value = '原文依据暂时无法获取，请关闭后重试；资料可能已变化。'
-  } finally { if (requestId === evidenceRequest) evidenceLoading.value = false }
-}
-watch(evidenceVisible, value => { if (!value) { evidenceRequest++; evidenceLoading.value = false } })
 const mastery = ref([])
 const masteryLoading = ref(false)
 const masteryError = ref('')
@@ -860,6 +892,7 @@ const weightColor = (w) =>
 const onExtractProfile = async () => {
   if (!examId.value || courseLoading.value) return
   profileLoading.value = true
+  profileJob.value = { status: 'submitting', startedAt: Date.now() }
   try {
     if (USE_MOCK) {
       mockStudySession.daily_minutes = Math.round(brief.daily_hours * 60)
@@ -894,7 +927,7 @@ const onExtractProfile = async () => {
         exam_id: examId.value,
         raw_text: description,
         target_band: brief.target_band,
-      })
+      }, progress => { profileJob.value = progress })
     }
     completeForm.target_band = brief.target_band
     captureAnalysis()
@@ -1191,6 +1224,7 @@ const onAsk = async () => {
   const content = qaInput.value.trim()
   if (!content || qaLoading.value) return
   qaLoading.value = true
+  qaJob.value = { status: 'submitting', startedAt: Date.now() }
   qaInput.value = ''
   const optimistic = {
     id: `tmp-${Date.now()}`,
@@ -1217,7 +1251,10 @@ const onAsk = async () => {
         const conversation = await aiApi.createQaConversation(examId.value)
         qaConversationId.value = conversation.id
       }
-      const conversation = await aiApi.askQa(qaConversationId.value, content)
+      const conversation = await aiApi.askQa(qaConversationId.value, content, {}, progress => {
+        qaJob.value = progress
+        scrollQaToBottom()
+      })
       qaConversationId.value = conversation.id
       qaMessages.value = conversation.messages || []
     }
@@ -1473,16 +1510,15 @@ const onExamChange = async () => {
       }
     }
     await loadQa()
+    step.value = result.value && !draft?.dirty && !hasPublicDraft ? 2 : profile.value ? 1 : 0
   } finally { courseLoading.value = false; analysisBaseline.value = draft?.baseline || analysisSnapshot() }
 }
 
 watch([examId, analysisId], loadMastery)
-watch([examId, analysisId], () => { evidenceVisible.value = false; evidenceData.value = null })
 
-usePendingWork(() => ({busy:[analyzing.value && '分析生成',profileLoading.value && '画像保存',replanApplying.value && '反馈重排',qaLoading.value && '资料问答'].filter(Boolean),warning:[analysisBaseline.value && analysisBaseline.value!==analysisSnapshot() && '备考描述或目标表单有未保存修改，离开会丢弃当前页面的草稿。',[...courseDrafts.values()].some(d => d.dirty) && '其他科目还有只保存在当前页面的备考草稿，离开会丢弃。',qaInput.value.trim() && '资料问答有尚未发送的文字，离开会丢弃。'].filter(Boolean)}))
+usePendingWork(() => ({retainOnNavigation:true,busy:[analyzing.value && '分析生成',profileLoading.value && '画像保存',replanApplying.value && '反馈重排',qaLoading.value && '资料问答'].filter(Boolean),warning:[analysisBaseline.value && analysisBaseline.value!==analysisSnapshot() && '备考描述或目标表单有未保存修改，刷新页面或退出登录会清除草稿。',[...courseDrafts.values()].some(d => d.dirty) && '其他科目还有只保存在当前页面的备考草稿，刷新页面或退出登录会清除。',qaInput.value.trim() && '资料问答有尚未发送的文字，刷新页面或退出登录会清除。'].filter(Boolean)}))
 
 onMounted(async () => {
-  window.addEventListener('resize', resizeCharts)
   if (USE_MOCK) {
     exams.value = structuredClone(mockStudySession.exams)
     brief.daily_hours = mockStudySession.daily_minutes / 60
@@ -1508,16 +1544,44 @@ watch([step, analysisId], async () => {
 onBeforeUnmount(() => {
   analysisPageActive = false
   window.removeEventListener('resize', resizeCharts)
+  window.removeEventListener('scroll', updateActiveSection)
   typeChart?.dispose()
   typeChart = null
 })
-const modelLimits=ref(null)
-const loadModelLimits=async()=>{if(!USE_MOCK){try{modelLimits.value=await aiApi.limits()}catch{}}}
-onMounted(loadModelLimits)
-watch([profileLoading,analyzing,qaLoading],values=>{if(values.every(v=>!v))loadModelLimits()})
 </script>
 
 <style scoped>
+
+.analysis-layout { display: grid; grid-template-columns: 164px minmax(0, 1fr); gap: 28px; align-items: start; }
+.analysis-content { min-width: 0; }
+.analysis-index { position: sticky; top: calc(var(--app-header-height, 76px) + 20px); max-height: calc(100dvh - var(--app-header-height, 76px) - 40px); overflow-y: auto; padding: 16px 0; }
+.index-caption { display: block; margin: 0 0 14px 12px; font-size: 12px; color: var(--ink-3); }
+.analysis-index nav { display: grid; gap: 4px; }
+.analysis-index a { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-left: 2px solid var(--line); color: var(--ink-2); text-decoration: none; font-size: 13px; transition: color .2s, background .2s, border-color .2s; }
+.analysis-index a > span { font: 12px var(--font-num); color: var(--ink-3); }
+.analysis-index a:hover, .analysis-index a.active { border-color: var(--coral); color: var(--coral-deep); background: var(--coral-soft); }
+.analysis-index a:focus-visible { outline: 2px solid var(--coral-deep); outline-offset: 2px; }
+[data-review-section] { scroll-margin-top: calc(var(--app-header-height, 76px) + 100px); }
+.strategy-phases { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.strategy-phases article > span { color: var(--ink-2); font-size: 13px; }
+.strategy-phases strong { display: block; margin: 12px 0; font: 36px var(--font-num); font-variant-numeric: tabular-nums; color: var(--ink-1); }
+.strategy-phases small { margin-left: 3px; font-size: 15px; }
+.phase-track { height: 5px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.phase-track i { display: block; height: 100%; background: var(--coral); }
+@media (max-width: 900px) {
+  .analysis-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .analysis-index { top: var(--app-header-height, 76px); z-index: 10; max-height: none; overflow: visible; background: var(--bg-page); padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .index-caption { display: none; }
+  .analysis-index nav { display: flex; overflow-x: auto; gap: 4px; }
+  .analysis-index a { flex-shrink: 0; padding: 9px 10px; font-size: 12px; border-left: 0; border-bottom: 2px solid transparent; }
+  .analysis-index a > span { display: none; }
+}
+@media (max-width: 560px) {
+  .strategy-phases { gap: 12px; }
+  .strategy-phases strong { font-size: 30px; }
+  .strategy-phases article > span { font-size: 12px; }
+}
+
 .page-head {
   display: flex;
   justify-content: space-between;
@@ -2035,12 +2099,7 @@ watch([profileLoading,analyzing,qaLoading],values=>{if(values.every(v=>!v))loadM
   font-weight: 600;
 }
 .mastery-note { font-size: 12px; line-height: 1.8; color: var(--ink-3); }
-.strategy-phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 20px; }
-.strategy-phases article { border-top: 2px solid var(--red); padding-top: 14px; }
-.strategy-phases b { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
-.strategy-phases strong { display: block; margin-top: 14px; font-size: 28px; color: var(--text-hi); }
-.strategy-phases small { font-size: 12px; font-weight: normal; }
-.strategy-phases p, .plan-activity { font-size: 12px; line-height: 1.8; color: var(--ink-2); }
+.plan-activity { font-size: 12px; line-height: 1.8; color: var(--ink-2); }
 .mastery-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--ink-2); }
 .mastery-evidence { margin-top: 10px; font-size: 12px; line-height: 1.8; color: var(--ink-2); }
 .mastery-evidence summary { cursor: pointer; }

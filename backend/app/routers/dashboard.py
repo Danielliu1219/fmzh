@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..models.models import Analysis, Exam, FocusSession, Task, User
+from ..models.models import AIJob, Analysis, Exam, FocusSession, Task, User
 from ..schemas.schemas import (
     DailyStat,
     DashboardOut,
@@ -108,6 +108,20 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
         "rate": (done_all / total_all) if total_all else 0.0,
     }
     return DashboardOut(exams=exam_list, today_tasks=today_tasks, overall=overall)
+
+
+@router.get('/reports/weekly', response_model=WeeklyReportOut | None, summary='读取上次成功生成的周报')
+def saved_weekly_report(week_start: date | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    reports = db.query(AIJob).filter(AIJob.user_id == user.id, AIJob.kind == 'weekly',
+        AIJob.status == 'succeeded', AIJob.result_json.isnot(None)).order_by(AIJob.finished_at.desc(), AIJob.id.desc())
+    for job in reports.yield_per(50):
+        try:
+            report = WeeklyReportOut.model_validate_json(job.result_json)
+        except ValueError:
+            continue
+        if week_start is None or report.week_start == week_start.isoformat():
+            return report
+    return None
 
 
 @router.post(

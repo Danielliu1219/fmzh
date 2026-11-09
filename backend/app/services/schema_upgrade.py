@@ -6,7 +6,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
 from .mistakes import question_key
-from ..models.models import Collection, Task, User, FocusSession, OperationLog
+from ..models.models import Collection, Task, User, FocusSession, OperationLog, QaMessage
 
 
 LEGACY_ACCOUNT_COLUMNS = {
@@ -33,6 +33,12 @@ def upgrade_schema(engine):
             for name, sql_type in additions.items():
                 if name not in columns:
                     conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {sql_type}'))
+        if inspect(conn).has_table('qa_messages'):
+            columns = {c['name'] for c in inspect(conn).get_columns('qa_messages')}
+            for name, sql_type in {'source_unit_id': 'VARCHAR(160)', 'source_help_kind': 'VARCHAR(16)'}.items():
+                if name not in columns:
+                    conn.execute(text(f'ALTER TABLE qa_messages ADD COLUMN {name} {sql_type}'))
+            next(i for i in QaMessage.__table__.indexes if i.name == 'ix_qa_messages_source_unit_id').create(conn, checkfirst=True)
         if inspect(conn).has_table('tasks'):
             columns = {c['name'] for c in inspect(conn).get_columns('tasks')}
             additions = {
