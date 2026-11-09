@@ -262,47 +262,11 @@
             <el-card id="review-frequency" data-review-section="frequency" tabindex="-1" shadow="never" class="result-card">
               <template #header>
                 <b>知识点考频</b>
-                <span class="hint">基于历年题与多来源资料统计</span>
+                <span class="hint">现有知识点权重与资料出现次数</span>
               </template>
-              <div v-if="result.question_types?.length" class="type-block">
-                <div ref="typeChartRef" class="type-chart"></div>
-                <el-table :data="result.question_types" size="small" class="type-table">
-                  <el-table-column prop="type" label="题型" width="100" />
-                  <el-table-column prop="count" label="出现次数" width="90" />
-                  <el-table-column label="占比" width="90">
-                    <template #default="{ row }">{{ Math.round(row.frequency * 100) }}%</template>
-                  </el-table-column>
-                  <el-table-column prop="basis" label="统计依据" min-width="180" />
-                  <el-table-column prop="source" label="来源" min-width="150">
-                    <template #default="{ row }">{{ row.source }}<TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="row.type" :citations="row.citations || []" /></template>
-                  </el-table-column>
-                </el-table>
-              </div>
-              <el-divider v-if="result.question_types?.length" />
-              <el-timeline>
-                <el-timeline-item
-                  v-for="(f, i) in sortedFocus"
-                  :key="i"
-                  :type="f.level === 'must' ? 'danger' : 'primary'"
-                  :hollow="f.level !== 'must'"
-                >
-                  <el-tag
-                    size="small"
-                    :type="f.level === 'must' ? 'danger' : 'primary'"
-                    class="focus-tag"
-                  >
-                    {{ f.level === 'must' ? '必考' : '常考' }}
-                  </el-tag>
-                  <el-tag v-if="f.frequency" size="small" type="info" effect="plain" class="focus-tag">
-                    出现 {{ f.frequency }} 次
-                  </el-tag>
-                  {{ f.content }}
-                  <div class="focus-basis">
-                    依据 · {{ f.basis }}（{{ f.source }}）
-                  </div>
-                  <TaskSources :exam-id="examId" :analysis-id="analysisId" :knowledge-point="f.content" :citations="f.citations || []" />
-                </el-timeline-item>
-              </el-timeline>
+              <p class="frequency-note">沿用当前分析中的知识点百分比。</p>
+              <div ref="frequencyChartRef" class="frequency-chart" :style="{ height: `${Math.max(280, sortedKnowledge.length * 48)}px` }"
+                role="img" aria-label="各知识点权重百分比及资料出现次数"></div>
             </el-card>
 
             <el-card id="review-qa" data-review-section="qa" tabindex="-1" shadow="never" class="result-card">
@@ -707,6 +671,7 @@ import TaskSources from '../components/TaskSources.vue'
 import QuizPanel from '../components/QuizPanel.vue'
 import { mockAnalysisSessions, mockQuizHistory, mockQuizDetail, mockMastery } from '../mock/quizzes'
 import { masteryLabels, masteryTypes } from '../utils/mastery'
+import { knowledgeFrequencyLabel } from '../utils/knowledgeFrequency'
 import { feedbackReplan } from '../utils/replan'
 import ScoreGoalSlider from '../components/ScoreGoalSlider.vue'
 import MindmapTree from '../components/MindmapTree.vue'
@@ -843,14 +808,9 @@ const cardFlipped = ref(false)
 const cards = computed(() => study.value?.cards || [])
 const currentCard = computed(() => cards.value[cardIndex.value] || null)
 
-// 常考题型与高频考点（用例 4.7）
-const typeChartRef = ref(null)
-let typeChart = null
-const sortedFocus = computed(() =>
-  [...(result.value?.exam_focus || [])].sort(
-    (a, b) => (b.frequency || 0) - (a.frequency || 0),
-  ),
-)
+// 知识点百分比与资料出现次数（用例 4.7）
+const frequencyChartRef = ref(null)
+let frequencyChart = null
 
 // 资料问答（用例 4.5）
 const qaConversationId = ref(null)
@@ -1139,47 +1099,39 @@ const shuffleCards = () => {
   cardFlipped.value = false
 }
 
-const renderTypeChart = async () => {
-  if (typeChart) {
-    typeChart.dispose()
-    typeChart = null
-  }
+const renderFrequencyChart = async () => {
+  frequencyChart?.dispose()
+  frequencyChart = null
   await nextTick()
-  const types = result.value?.question_types || []
-  if (!typeChartRef.value || !types.length) return
-  typeChart = echarts.init(typeChartRef.value)
-  typeChart.setOption({
+  const points = sortedKnowledge.value
+  if (!frequencyChartRef.value || !points.length) return
+  frequencyChart = echarts.init(frequencyChartRef.value)
+  frequencyChart.setOption({
     tooltip: {
-      trigger: 'axis',
-      formatter: (params) => `${params[0].name}<br/>占比 ${params[0].value}%`,
-    },
-    grid: { left: 48, right: 20, top: 30, bottom: 36 },
-    xAxis: {
-      type: 'category',
-      data: types.map((item) => item.type),
-      axisLabel: { color: '#454e48' },
-    },
-    yAxis: {
-      type: 'value',
-      max: 100,
-      axisLabel: { formatter: '{value}%', color: '#8b9084' },
-      splitLine: { lineStyle: { color: '#e9e5d7' } },
-    },
-    series: [
-      {
-        type: 'bar',
-        data: types.map((item) => Math.round(item.frequency * 100)),
-        barWidth: '46%',
-        itemStyle: { color: '#e66348', borderRadius: [6, 6, 0, 0] },
-        label: { show: true, position: 'top', formatter: '{c}%', color: '#0c1614' },
+      trigger: 'axis', renderMode: 'richText',
+      formatter: params => {
+        const point = points[params[0].dataIndex]
+        const count = Number.isInteger(point.occurrence_count) && point.occurrence_count > 0
+          ? `\n出现 ${point.occurrence_count} 次，涉及 ${point.occurrence_material_count} 份资料` : ''
+        return `${point.name}\n权重 ${Math.round(point.weight * 100)}%${count}`
       },
-    ],
+    },
+    grid: { left: 8, right: 112, top: 20, bottom: 28, containLabel: true },
+    xAxis: { type: 'value', max: Math.max(20, Math.ceil(Math.max(...points.map(point => point.weight)) * 10) * 10),
+      axisLabel: { formatter: '{value}%' } },
+    yAxis: { type: 'category', inverse: true, data: points.map(point => point.name),
+      axisLabel: { width: 140, overflow: 'break', interval: 0, fontSize: 11 } },
+    series: [{ type: 'bar', barMaxWidth: 22, data: points.map(point => Math.round(point.weight * 100)),
+      itemStyle: { color: '#e66348', borderRadius: [0, 4, 4, 0] },
+      label: { show: true, position: 'right', color: '#454e48', formatter: params => {
+        return knowledgeFrequencyLabel(points[params.dataIndex])
+      } },
+    }],
   })
-  typeChart.resize()
 }
 
 const resizeCharts = () => {
-  typeChart?.resize()
+  frequencyChart?.resize()
 }
 
 // 静态演示模式的本地问答：优先匹配知识点/考点
@@ -1322,10 +1274,10 @@ const onReplanApply = async () => {
         /* 保留当前展示 */
       }
       await loadStudy()
-      await renderTypeChart()
+      await renderFrequencyChart()
     }
     await loadStudy()
-    await renderTypeChart()
+    await renderFrequencyChart()
     replanVisible.value = false
     ElMessage.success('已按当前进度调整计划与权重')
   } catch (e) {
@@ -1413,7 +1365,7 @@ const onAnalyze = async () => {
           '分析已完成，但新任务无法在全科预算内排完，因此没有写入或覆盖现有任务。请调整预算、复习范围或目标后重新生成。'
     }
     await loadStudy()
-    await renderTypeChart()
+    await renderFrequencyChart()
     await loadQa()
     if (schedulingNote.value) ElMessage.warning(schedulingNote.value)
     else
@@ -1537,7 +1489,7 @@ onMounted(async () => {
 watch([step, analysisId], async () => {
   if (step.value === 2 && result.value && !analyzing.value) {
     await loadStudy()
-    await renderTypeChart()
+    await renderFrequencyChart()
   }
 })
 
@@ -1545,8 +1497,8 @@ onBeforeUnmount(() => {
   analysisPageActive = false
   window.removeEventListener('resize', resizeCharts)
   window.removeEventListener('scroll', updateActiveSection)
-  typeChart?.dispose()
-  typeChart = null
+  frequencyChart?.dispose()
+  frequencyChart = null
 })
 </script>
 
@@ -1952,16 +1904,8 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .flash-instructions { margin: 0; color: var(--text-low); font-size: 12px; line-height: 1.8; text-align: center; }
-.type-block {
-  margin-bottom: 8px;
-}
-.type-chart {
-  width: 100%;
-  height: 260px;
-}
-.type-table {
-  margin-top: 4px;
-}
+.frequency-chart { width: 100%; }
+.frequency-note { color: var(--ink-3); font-size: 12px; line-height: 1.8; }
 .flash-area {
   display: flex;
   flex-direction: column;

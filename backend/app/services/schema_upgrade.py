@@ -35,10 +35,15 @@ def upgrade_schema(engine):
                     conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {sql_type}'))
         if inspect(conn).has_table('qa_messages'):
             columns = {c['name'] for c in inspect(conn).get_columns('qa_messages')}
-            for name, sql_type in {'source_unit_id': 'VARCHAR(160)', 'source_help_kind': 'VARCHAR(16)'}.items():
+            for name, sql_type in {'source_unit_id': 'VARCHAR(160)', 'source_help_kind': 'VARCHAR(16)', 'source_input_hash': 'VARCHAR(64)'}.items():
                 if name not in columns:
                     conn.execute(text(f'ALTER TABLE qa_messages ADD COLUMN {name} {sql_type}'))
             next(i for i in QaMessage.__table__.indexes if i.name == 'ix_qa_messages_source_unit_id').create(conn, checkfirst=True)
+        if inspect(conn).has_table('materials'):
+            columns = {c['name'] for c in inspect(conn).get_columns('materials')}
+            if 'pdf_ocr_json' not in columns:
+                column_type = 'LONGTEXT' if conn.dialect.name == 'mysql' else 'TEXT'
+                conn.execute(text(f"ALTER TABLE materials ADD COLUMN pdf_ocr_json {column_type} NOT NULL DEFAULT ('{{}}')"))
         if inspect(conn).has_table('tasks'):
             columns = {c['name'] for c in inspect(conn).get_columns('tasks')}
             additions = {

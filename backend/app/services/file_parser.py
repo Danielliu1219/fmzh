@@ -28,7 +28,19 @@ def parse_document(path: Path, file_type: str) -> tuple[str, list[dict]]:
             offset += len(line)
     elif file_type == "pdf":
         from pypdf import PdfReader
-        pages = [(page.extract_text() or '') for page in PdfReader(str(path)).pages]
+        import re
+        pages = []
+        total = 0
+        for index, page in enumerate(PdfReader(str(path)).pages, 1):
+            body = (page.extract_text(extraction_mode='layout') or '') if '/Contents' in page else ''
+            # 数学字体的私用区字符、二维公式及扫描页交给混合OCR保留公式结构。
+            if not body.strip() or re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x80-\x9f\ue000-\uf8ff∫∑√=<>]|\b(?:lim|sin|cos)\b', body):
+                from .pdf_recognition import recognize_pdf_pages
+                body = recognize_pdf_pages(path, [index])[str(index)]
+            pages.append(body)
+            total += len(body)
+            if total >= MAX_TEXT_LENGTH:
+                break
         text, parts = _join_parts([(body, 'page', index, f'第 {index} 页') for index, body in enumerate(pages, 1)])
     elif file_type == "docx":
         from docx import Document

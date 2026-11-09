@@ -319,12 +319,13 @@ class QaAskIn(BaseModel):
     source_unit_id: Optional[str] = Field(None, max_length=160)
     source_help_kind: Optional[Literal['hint', 'answer']] = None
     source_regenerate: bool = False
+    source_input_hash: Optional[str] = Field(None, pattern='^[a-f0-9]{64}$')
 
     @model_validator(mode='after')
     def source_pair(self):
         if (self.source_material_id is None) != (self.source_unit_id is None):
             raise ValueError('资料与定位ID需要同时提供')
-        if (self.source_help_kind or self.source_regenerate) and self.source_unit_id is None:
+        if (self.source_help_kind or self.source_regenerate or self.source_input_hash) and self.source_unit_id is None:
             raise ValueError('题目解答需要指定来源')
         return self
 
@@ -387,6 +388,8 @@ class KnowledgePoint(BaseModel):
     suggest_minutes: Optional[int] = None
     practice_hint: str = ""
     citations: list[SourceReference] = []
+    occurrence_count: Optional[int] = None
+    occurrence_material_count: int = 0
 
 
 class MasteryEvidence(BaseModel):

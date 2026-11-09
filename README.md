@@ -139,7 +139,7 @@
 | 4.4 | 思维导图与记忆卡片生成 | 提纲可视化 + 卡片式背诵 | ✅（导图按文字和节点自动撑高、可展开收起，窄屏横向滚动；翻面卡片优先显示资料摘录，未匹配时显示分析依据） | 胡歆桐 |
 | 4.5 | 资料问答 | 就资料内容向大模型提问 | ✅（多轮追问、Markdown/公式渲染；按来源版本保存提示与解答，关闭/刷新后回看与续查，显式重新生成保留历史） | 胡歆桐 |
 | 4.6 | 自测题生成与自动判分 | 客观题生成、作答提交、后端判分、解析与历史得分，错题自动入本 | ✅ | 张诗琪 |
-| 4.7 | 常考题型与高频考点分析 | 从历年题提取题型分布与高频考点 | ✅（题型占比图 + 出现次数排序；缺题型数据时按考点描述兜底推断） | 胡歆桐 |
+| 4.7 | 常考题型与高频考点分析 | 从历年题提取题型分布与高频考点 | ✅（沿用知识点百分比绘图，可核实的来源去重计次，无法核实时隐藏次数） | 胡歆桐 |
 | 4.8 | 知识点权重计算 | 历年题必考点定基础值，画像调整 → 复习优先级 | ✅ | — |
 | 4.9 | 知识点可视化 | 权重/来源/建议时长与掌握状态；按最近覆盖该知识点的已交卷自测计算，≥80% 已掌握，无记录未测，支持查看判分依据 | ✅ | 胡歆桐 |
 | 4.10 | 个性化复习方案生成 | 按画像生成按天计划，自动落为首页任务 | ✅ | — |
@@ -333,7 +333,7 @@
 | 层 | 技术 |
 |---|---|
 | 前端 | Vue 3 + Vite + Pinia + Vue Router + Element Plus + Axios + ECharts |
-| 后端 | Python 3.12+ / FastAPI / SQLAlchemy 2 / Pydantic v2 |
+| 后端 | Python 3.12 / 3.13 / FastAPI / SQLAlchemy 2 / Pydantic v2 |
 | 数据库 | SQLite（默认，自动建表与迁移）；MySQL 需安装驱动、创建数据库并配置 `DATABASE_URL`，见部署文档 |
 | 大模型 | OpenAI 兼容接口（可更换任意兼容服务），内置 Mock 模式 |
 
@@ -392,7 +392,7 @@ git clone https://github.com/Danielliu1219/fmzh.git
 cd fmzh
 ```
 
-> 需要 Node.js ≥ 22.12（含 npm）和 Python 3.12+。组员运行完整功能直接按 6.2 操作；只浏览界面可用 6.1。首次安装需要联网，默认 SQLite 无需另装数据库。
+> 需要 Node.js ≥ 22.12（含 npm）和 Python 3.12 或 3.13。组员运行完整功能直接按 6.2 操作；只浏览界面可用 6.1。首次安装需要联网，默认 SQLite 无需另装数据库。
 
 ### 6.1 只看界面（不需要后端，最快上手）
 
@@ -464,6 +464,43 @@ backend/.venv/Scripts/python.exe -X utf8 backend/run.py --api-only --dev
 另开终端，在 `frontend/.env.local` 设置 `VITE_USE_MOCK=false`，进入 `frontend` 执行 `npm run dev`。后端默认 8000 端口，Vite 默认 5173 并代理 `/api`。
 
 `backend/smoke_test.py` 需要已启动的隔离 Mock 后端；它会创建测试账号，先检查 Mock 模式再生成分析。本轮在不含个人配置的代码副本上完成首次安装与 53 项 HTTP 流程检查。请勿直接对启用个人付费配置的服务运行。数据库、上传文件、会话密钥与个人 `.env` 均由本机创建并被 Git 忽略，不随下载提供。
+
+---
+
+### 6.5 本机 PDF 中文与公式识别
+
+完整应用使用 Pix2Text 的中文与公式混合 OCR，在本机将 PDF 原页识别为按阅读顺序排列的文字与 LaTeX 公式。题目解答使用这份输入，识别结果按原页缓存。已有资料打开来源时也会使用新版识别，旧版生成的回答保留并标注版本。
+
+本机公式 OCR 的兼容环境为 Python 3.12 或 3.13，CPU 版 PyTorch 2.8 与 torchvision 0.23。依赖文件已固定这组版本，启动器也会检查 Python 版本。
+
+Windows 用户运行 `start.ps1` 或 `start.ps1 -PrepareOnly` 即可完成依赖检查和模型准备。启动器先安装锁定依赖，然后检查中文识别、公式检测与公式识别模型，缺失的模型会自动下载。后续启动复用缓存。
+
+```powershell
+# 在项目根目录准备环境和模型
+.\start.ps1 -PrepareOnly
+
+# 单独补齐公式OCR模型，首次需要联网
+.\backend\.venv\Scripts\python.exe backend/tools/prepare_ocr.py
+
+# 离线检查依赖及已下载模型，缺失时返回非零退出码
+.\backend\.venv\Scripts\python.exe backend/tools/prepare_ocr.py --check
+```
+
+手动部署或使用 Linux/macOS 时，在已激活的 Python 虚拟环境中运行以下命令，再启动后端。
+
+```bash
+python -m pip install -r backend/requirements.txt
+python backend/tools/prepare_ocr.py
+python backend/tools/prepare_ocr.py --check
+```
+
+Windows 锁定依赖使用官方 CPU PyTorch 包源。首次准备会下载开源模型权重，终端会输出模型缓存目录。模型权重和缓存各自保存在运行机器上，GitHub 仓库发布识别代码、依赖与准备脚本。
+
+公式模型按清单中的固定版本与文件大小检查，缺失或下载中断时自动补齐。下载先使用 Hugging Face，连接失败时尝试 `hf-mirror.com` 公开镜像。公式模型默认缓存于 Windows 的 `%APPDATA%\pix2text`，Linux/macOS 的 `~/.pix2text`，也可通过 `PIX2TEXT_HOME` 指定目录。
+
+下载失败时，检查终端错误和网络连接后重新执行 `prepare_ocr.py`，已有模型会复用。部署时用实际运行后端的系统账号准备模型，便于服务直接读取该账号的缓存。准备完成后，原页与公式的识别在本机运行，识别图片不会发送到模型下载服务。AI 解题仍调用用户配置的大模型 API，发送识别后的题目文字与公式。
+
+知识点考频图沿用当前分析已有的知识点百分比，出现次数按可定位原题或资料片段去重统计，未定位到可靠来源时隐藏次数。
 
 ---
 

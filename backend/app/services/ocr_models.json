@@ -1,0 +1,22 @@
+{
+  "version": "1.1",
+  "models": {
+    "mfd-1.5": {
+      "revision": "f470a885e0fca1d3d2bfa2a54991db7ae01f1861",
+      "files": {"config.yaml": 23, "pix2text-mfd-1.5.onnx": 80311115}
+    },
+    "mfr-1.5": {
+      "revision": "1cef9f0bdcd6a4c63df7de1311fb0894593340cc",
+      "files": {
+        "config.json": 1573,
+        "decoder_model.onnx": 32026253,
+        "encoder_model.onnx": 87510770,
+        "generation_config.json": 211,
+        "preprocessor_config.json": 450,
+        "special_tokens_map.json": 964,
+        "tokenizer.json": 113168,
+        "tokenizer_config.json": 1244
+      }
+    }
+  }
+}

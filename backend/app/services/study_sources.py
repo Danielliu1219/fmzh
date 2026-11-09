@@ -99,6 +99,24 @@ def display_analysis(result, materials):
         for item in items:
             for field in fields:
                 setattr(item, field, readable(getattr(item, field)))
+    units = [unit for material in materials for unit in material_units(material)]
+    by_material = {material.id: material for material in materials}
+    for point in output.knowledge_points:
+        linked = {unit['id'] for unit, _ in linked_units(point, units, materials)}
+        matches = set()
+        for unit in units:
+            material = by_material[unit['material_id']]
+            if material.file_type == 'pdf':
+                from .pdf_recognition import cached_pages, recognized_unit
+                if not unit['pages'] or any(str(page) not in cached_pages(material) for page in unit['pages']):
+                    continue
+                recognized = recognized_unit(material, unit)
+                if recognized['question_identified'] and keyword_match(point.name, recognized['text']):
+                    matches.add((material.id, tuple(recognized['pages']), recognized['input_hash']))
+            elif unit['id'] in linked or keyword_match(point.name, unit['text']):
+                matches.add((material.id, unit['id']))
+        point.occurrence_count = len(matches) if matches else None
+        point.occurrence_material_count = len({match[0] for match in matches})
     return output
 
 
@@ -130,7 +148,8 @@ def keyword_match(name, body):
     phrases += re.split(r'[、与和/]', phrases[-1])
     phrases += [re.sub(r'(?:计算|应用|的概念|与方法|方法)$', '', p) for p in phrases[:]]
     return any(2 <= len(p.strip()) <= 80 and p.strip() not in ('计算','应用','函数','知识点','核心概念','综合','基础')
-               and ''.join(p.split()).casefold() in compact for p in phrases)
+               and (re.search(r'(?<!不)' + re.escape(''.join(p.split()).casefold()), compact)
+                    if p.strip().startswith('定积分') else ''.join(p.split()).casefold() in compact) for p in phrases)
 
 
 def linked_units(item, units, materials):
@@ -156,6 +175,14 @@ def attach_study_sources(result, materials):
 
 def library(materials, result=None):
     units = [u for m in materials for u in material_units(m)]
+    from .pdf_recognition import cached_pages, recognized_unit
+    by_material = {material.id: material for material in materials}
+    for unit in units:
+        material = by_material[unit['material_id']]
+        if material.file_type == 'pdf' and unit['pages'] and all(str(page) in cached_pages(material) for page in unit['pages']):
+            recognized = recognized_unit(material, unit)
+            for field in ('text', 'label', 'location', 'pages', 'subquestions', 'recognition'):
+                unit[field] = recognized[field]
     links = {u['id']: [] for u in units}
     if result:
         for point in result.knowledge_points:

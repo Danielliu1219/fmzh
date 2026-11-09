@@ -12,12 +12,17 @@ from app.schemas.schemas import AnalysisResult, KnowledgePoint, PlanItem, Source
 from app.services.study_sources import material_units, build_context, library, attach_study_sources, unit_detail, display_analysis
 from app.services.source_evidence import content_hash
 from app.services import study_planner
+from app.services import pdf_recognition
 from app.services.schema_upgrade import upgrade_schema
 import test_source_evidence as evidence_fixtures
 
 
 class StudySourcesTests(unittest.TestCase):
-    setUp = evidence_fixtures.EvidenceTests.setUp
+    def setUp(self):
+        evidence_fixtures.EvidenceTests.setUp(self)
+        patcher = patch.object(pdf_recognition, 'UPLOAD_DIR', self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
     tearDown = evidence_fixtures.EvidenceTests.tearDown
     material = evidence_fixtures.EvidenceTests.material
     analysis = evidence_fixtures.EvidenceTests.analysis
@@ -32,6 +37,14 @@ class StudySourcesTests(unittest.TestCase):
         row = self.material(text, locations=[dict(start=0,end=45,kind='page',number=1,label='第 1 页'),
                                             dict(start=45,end=len(text),kind='page',number=2,label='第 2 页')])
         row.file_type='pdf'; row.source_type='历年题'; self.db.commit()
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        writer.add_blank_page(width=595, height=842)
+        path = self.root / 'paper.pdf'
+        writer.write(path)
+        row.file_path = str(path)
+        row.pdf_ocr_json = json.dumps({'engine': pdf_recognition.ENGINE_VERSION, 'pages': {'1': text[:45], '2': text[45:]}})
+        self.db.commit()
         return row
 
     def test_composite_question_keeps_stem_subquestions_and_page_range(self):

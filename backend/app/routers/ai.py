@@ -697,8 +697,11 @@ def _qa_context(materials, payload):
     if material is None: raise HTTPException(404, '来源不属于当前账号和科目')
     unit = next((u for u in material_units(material) if u['id'] == payload.source_unit_id), None)
     if unit is None: raise HTTPException(409, '来源定位已失效，请刷新后再提问')
+    if material.file_type == 'pdf':
+        from ..services.pdf_recognition import recognized_unit
+        unit = recognized_unit(material, unit)
     # 单题只发送核对后的完整片段，避免重复题干和整科其他试卷干扰本次解答。
-    return f"【本次指定来源：{material.title} · {unit['label']}】\n{unit['text'][:QA_MATERIALS_LIMIT]}\n"
+    return f"【本次指定来源：{material.title} · {unit['label']}】\n{unit['text']}\n"
 
 
 @router.post(
@@ -716,6 +719,8 @@ def ask_qa(
     """把问题与历史对话一起发给大模型，回答写入会话，支持页面刷新后继续追问"""
     conversation = _get_own_conversation(db, user, conversation_id)
     exam = _get_own_exam(db, user, conversation.exam_id)
+    uid, auth_key, subject = user.id, user.auth_key, exam.subject
+    original_created, original_updated = conversation.created_at, conversation.updated_at
     question = payload.content.strip()
     if not question:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="问题不能为空")
@@ -730,12 +735,23 @@ def ask_qa(
         .order_by(Material.id)
         .all()
     )
+    input_hash = None
+    if payload.source_material_id is not None:
+        from ..services.pdf_recognition import prepare_source
+        material = next((item for item in materials if item.id == payload.source_material_id), None)
+        if material is None: raise HTTPException(404, '来源不属于当前账号和科目')
+        unit = next((item for item in material_units(material) if item['id'] == payload.source_unit_id), None)
+        if unit is None: raise HTTPException(409, '来源定位已失效，请刷新后再提问')
+        prepared = prepare_source(db, user, material, unit)
+        input_hash = prepared.get('input_hash')
+        if payload.source_input_hash and payload.source_input_hash != input_hash:
+            raise HTTPException(409, '原题识别结果已更新，请重新打开后生成')
     materials_text = _qa_context(materials, payload)
     if payload.source_help_kind and not payload.source_regenerate:
         from ..services.source_qa import help_history
         material = next(m for m in materials if m.id == payload.source_material_id)
         unit = next(u for u in material_units(material) if u['id'] == payload.source_unit_id)
-        saved = [m for m in help_history(db, user.id, unit) if m['kind'] == payload.source_help_kind]
+        saved = [m for m in help_history(db, user.id, unit, input_hash) if m['kind'] == payload.source_help_kind and m['current_input']]
         if saved:
             return _qa_conversation_out(db, _get_own_conversation(db, user, saved[-1]['conversation_id']))
     if not materials_text:
@@ -745,8 +761,6 @@ def ask_qa(
         )
 
     # 模型等待前只复制输入，不持有SQLite写锁，也不保存未得到回答的提问。
-    uid, auth_key, subject = user.id, user.auth_key, exam.subject
-    original_created, original_updated = conversation.created_at, conversation.updated_at
     original_materials = materials_text
     history_rows = (
         db.query(QaMessage)
@@ -785,6 +799,7 @@ def ask_qa(
         raise HTTPException(409,'会话或资料已变化，请查看最新消息后重新提问')
     from ..services.source_qa import legacy_help_kind
     source = dict(source_unit_id=payload.source_unit_id,
+                  source_input_hash=input_hash,
                   source_help_kind=payload.source_help_kind or (legacy_help_kind(question) if payload.source_unit_id else None))
     db.add(QaMessage(conversation_id=conversation.id, role="user", content=question, **source))
     db.add(QaMessage(conversation_id=conversation.id, role="assistant", content=answer, **source))
