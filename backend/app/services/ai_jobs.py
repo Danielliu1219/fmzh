@@ -13,6 +13,7 @@ from .task_conflicts import lock_schedule
 
 _pool = None
 _lock = Lock()
+_progress = {}
 logger = logging.getLogger('uvicorn.error.jobs')
 
 
@@ -21,6 +22,8 @@ def now():
 
 
 def output(job):
+    with _lock:
+        progress = dict(_progress.get(job.id, {}))
     return dict(
         id=job.id,
         kind=job.kind,
@@ -29,7 +32,19 @@ def output(job):
         result=json.loads(job.result_json) if job.result_json else None,
         error=job.error_message,
         error_status=job.error_status,
+        progress=progress,
     )
+
+
+def update_progress(job_id, kind, progress):
+    # 活跃任务进度只保存在内存，不逐 Token 写库，不缓存或传输思考正文。
+    if kind != 'qa':
+        progress = {key: value for key, value in progress.items() if key != 'content'}
+    with _lock:
+        previous = _progress.get(job_id, {})
+        if progress.get('stage') == 'connecting':
+            previous = {'queue_seconds': previous.get('queue_seconds', 0)}
+        _progress[job_id] = {**previous, **progress}
 
 
 def enqueue(factory, job_id):
@@ -67,6 +82,7 @@ def recover(factory):
 def execute(factory, job_id):
     started_at = time.perf_counter()
     from ..routers import ai, dashboard
+    from .llm_client import progress_listener
     from ..schemas.schemas import (
         ProfileRequest,
         AnalyzeRequest,
@@ -85,6 +101,9 @@ def execute(factory, job_id):
         job.status = "running"
         db.commit()
         kind, request_id = job.kind, job.request_id
+        queue_seconds = max(0, (datetime.now() - job.created_at).total_seconds())
+        update_progress(job_id, kind, dict(stage='preparing', queue_seconds=round(queue_seconds, 3)))
+        logger.info('model_job_started job_id=%s kind=%s queue_seconds=%.3f', job_id, kind, queue_seconds)
         actor_id = job.user_id
         try:
             user = db.get(User, job.user_id)
@@ -119,25 +138,26 @@ def execute(factory, job_id):
                         409,
                         "原科目或问答会话已删除或替换，本次未调用大模型，请刷新后重新选择",
                     )
-            if kind == "profile":
-                result = ai.create_profile(
-                    ProfileRequest.model_validate(payload), user=user, db=db
-                )
-            elif kind == "analysis":
-                result = ai.analyze(
-                    AnalyzeRequest.model_validate(payload), user=user, db=db
-                )
-            elif kind == "qa":
-                result = ai.ask_qa(
-                    payload["conversation_id"],
-                    QaAskIn.model_validate(payload),
-                    user=user,
-                    db=db,
-                )
-            else:
-                result = dashboard.weekly_report(
-                    WeeklyReportRequest.model_validate(payload), user=user, db=db
-                )
+            with progress_listener(lambda progress: update_progress(job_id, kind, progress)):
+                if kind == "profile":
+                    result = ai.create_profile(
+                        ProfileRequest.model_validate(payload), user=user, db=db
+                    )
+                elif kind == "analysis":
+                    result = ai.analyze(
+                        AnalyzeRequest.model_validate(payload), user=user, db=db
+                    )
+                elif kind == "qa":
+                    result = ai.ask_qa(
+                        payload["conversation_id"],
+                        QaAskIn.model_validate(payload),
+                        user=user,
+                        db=db,
+                    )
+                else:
+                    result = dashboard.weekly_report(
+                        WeeklyReportRequest.model_validate(payload), user=user, db=db
+                    )
             target = str(
                 getattr(result, "id", None)
                 or payload.get("exam_id")
@@ -173,6 +193,8 @@ def execute(factory, job_id):
             with factory() as db:
                 job = db.get(AIJob, job_id)
                 if job is None:
+                    with _lock:
+                        _progress.pop(job_id, None)
                     return  # 注销已清理任务，不能写回孤立数据。
                 job.status = "succeeded" if status_code < 400 else "failed"
                 job.result_json = (
@@ -204,7 +226,11 @@ def execute(factory, job_id):
                     )
                 )
                 db.commit()
-            logger.info('model_job_finished job_id=%s kind=%s status=%s elapsed_seconds=%.3f', job_id, kind, status_code, time.perf_counter() - started_at)
+            with _lock:
+                progress = _progress.pop(job_id, {})
+            stats = {key: value for key, value in progress.items() if key != 'content'}
+            logger.info('model_job_finished job_id=%s kind=%s status=%s elapsed_seconds=%.3f progress=%s',
+                        job_id, kind, status_code, time.perf_counter() - started_at, stats)
             return
         except Exception as exc:
             logger.error(
@@ -214,6 +240,8 @@ def execute(factory, job_id):
                 attempt + 1,
                 type(exc).__name__,
             )
+    with _lock:
+        _progress.pop(job_id, None)
 
 
 def payload_hash(kind, payload):

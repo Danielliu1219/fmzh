@@ -29,6 +29,7 @@ const router = createRouter({
   routes,
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) return savedPosition
+    if (to.name === 'analysis' || to.name === 'report') return false
     // Home scrolls after its asynchronous task list has mounted.
     if (to.hash === '#board') return false
     return { top: 0 }

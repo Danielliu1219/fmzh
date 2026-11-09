@@ -1,7 +1,7 @@
 <template>
-  <el-container class="layout">
+  <el-container class="layout" :style="{ '--app-header-height': `${headerHeight}px` }">
     <a class="skip-link" href="#main-content">跳转到主要内容</a>
-    <el-header class="header">
+    <el-header ref="headerRef" class="header">
       <router-link class="brand" to="/" aria-label="期末周别慌，返回首页">
         <span class="logo"
           ><el-icon :size="19"><Reading /></el-icon
@@ -47,7 +47,11 @@
       </div>
     </el-header>
     <el-main id="main-content" class="main" tabindex="-1">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <KeepAlive include="Analysis,WeeklyReport">
+          <component :is="Component" />
+        </KeepAlive>
+      </router-view>
       <footer class="site-footer">
         <span>期末周别慌！</span><span>把复习拆小，把每一步走好。</span>
       </footer>
@@ -70,6 +74,14 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const notices = useNotificationStore()
+const headerRef = ref(null)
+const headerHeight = ref(76)
+let headerObserver
+onMounted(() => {
+  headerObserver = new ResizeObserver(([entry]) => { headerHeight.value = entry.target.getBoundingClientRect().height })
+  headerObserver.observe(headerRef.value.$el)
+})
+onBeforeUnmount(() => headerObserver?.disconnect())
 watch(() => route.fullPath, () => notices.refresh(), { immediate: true })
 onBeforeUnmount(() => notices.reset())
 onMounted(() => window.addEventListener('beforeunload',protectBrowserClose))
@@ -226,6 +238,7 @@ const onLogout = async () => {
   color: var(--red);
 }
 .main {
+  overflow: visible;
   max-width: 1200px;
   width: 100%;
   margin: 0 auto;

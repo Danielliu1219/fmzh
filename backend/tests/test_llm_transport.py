@@ -39,6 +39,19 @@ class LocalUpstream:
                 data=item.get('raw',json.dumps(item.get('payload',{}),ensure_ascii=False).encode())
                 heartbeats=item.get('heartbeats',0)
                 try:
+                    if 'events' in item:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/event-stream')
+                        self.send_header('Connection', 'close')
+                        self.end_headers()
+                        self.close_connection = True
+                        self.wfile.write(b': heartbeat\n\n')
+                        for event in item['events']:
+                            time.sleep(item.get('event_delay', .05))
+                            text = event if isinstance(event, str) else json.dumps(event, ensure_ascii=False)
+                            self.wfile.write(('data: ' + text + '\n\n').encode())
+                            self.wfile.flush()
+                        return
                     self.send_response(item.get('status',200))
                     self.send_header('Content-Type','application/json')
                     self.send_header('Content-Length',str(len(data)+heartbeats))
@@ -285,6 +298,91 @@ class LlmTransportTests(unittest.TestCase):
         self.upstream.add('{"ok":true}', heartbeats=30)
         with self.assertRaisesRegex(llm_client.LLMError, '超时'):
             llm_client.chat_json('system', 'question', timeout=.05)
+
+    def test_streaming_delivers_partial_answer_before_completion_and_measures_first_content(self):
+        self.upstream.responses.append({'events': [
+            {'choices': [{'delta': {'reasoning_content': 'private reasoning'}}]},
+            {'choices': [{'delta': {'content': '### 解答\n'}}]},
+            {'choices': [{'delta': {'content': '分子求导：\n\\[x^2\\]'}}]},
+            {'choices': [{'delta': {}, 'finish_reason': 'stop'}]},
+            {'choices': [], 'usage': {'prompt_tokens': 10, 'completion_tokens': 20,
+                'completion_tokens_details': {'reasoning_tokens': 12}}}, '[DONE]'], 'event_delay': .06})
+        updates = []
+        with self.assertLogs(llm_client.logger, level='INFO') as logs:
+            with llm_client.progress_listener(lambda progress: updates.append((time.perf_counter(), progress))):
+                answer = llm_client.chat_text('system', [{'role': 'user', 'content': '求导'}])
+        finished = time.perf_counter()
+        partial_time, partial = next((stamp, p) for stamp, p in updates if p.get('content') == '### 解答\n')
+        self.assertGreater(finished - partial_time, .1)
+        self.assertEqual(answer, '### 解答\n分子求导：\n\\[x^2\\]')
+        self.assertGreater(partial['first_content_seconds'], 0)
+        self.assertLessEqual(partial['first_response_seconds'], partial['first_content_seconds'])
+        self.assertNotIn('private reasoning', json.dumps(updates))
+        self.assertNotIn('private reasoning', '\n'.join(logs.output))
+        body = self.upstream.requests[-1]['body']
+        self.assertTrue(body['stream'])
+        self.assertEqual(body['stream_options'], {'include_usage': True})
+
+    def test_streaming_json_profile_uses_complete_content_before_saving(self):
+        self.upstream.responses.append({'events': [
+            {'choices': [{'delta': {'content': '{"target":"pass",'}}]},
+            {'choices': [{'delta': {'content': '"learning_status":"weak","available_days":5,"daily_hours":2}'}}]},
+            {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}, '[DONE]']})
+        result = self.call('POST', '/ai/profile', {'exam_id': 1, 'raw_text': '流式画像'})
+        self.assertTrue(result['is_complete'])
+        self.assertEqual(result['target'], 'pass')
+
+    def test_unfinished_or_malformed_stream_does_not_save_messages_or_retry(self):
+        conversation = self.call('POST', '/ai/qa/conversations', {'exam_id': 1}, status=201)
+        path = f"/ai/qa/conversations/{conversation['id']}/messages"
+        for events in ([{'choices': [{'delta': {'content': '半截回答'}}]}, '[DONE]'], ['malformed-json'],
+                [{'choices': [{'delta': {'content': '截断'}, 'finish_reason': 'length'}]}, '[DONE]']):
+            before = self.state()
+            calls = len(self.upstream.requests)
+            self.upstream.responses.append({'events': events})
+            self.call('POST', path, {'content': '解释积分'}, status=502)
+            self.assertEqual(self.state(), before)
+            self.assertEqual(len(self.upstream.requests), calls + 1)
+
+    def test_timeout_after_partial_stream_does_not_duplicate_billable_call(self):
+        conversation = self.call('POST', '/ai/qa/conversations', {'exam_id': 1}, status=201)
+        path = f"/ai/qa/conversations/{conversation['id']}/messages"
+        self.upstream.responses.append({'events': [
+            {'choices': [{'delta': {'content': '半截回答'}}]},
+            {'choices': [{'delta': {'content': '延迟返回'}}]},
+            {'choices': [{'delta': {}, 'finish_reason': 'stop'}]}], 'event_delay': .15})
+        before = self.state()
+        with patch.object(llm_client, 'REQUEST_TIMEOUT', .28):
+            self.call('POST', path, {'content': '解释积分'}, status=502)
+        self.assertEqual(len(self.upstream.requests), 1)
+        self.assertEqual(self.state(), before)
+
+    def test_analysis_partial_stream_failure_does_not_enter_schema_retry(self):
+        self.upstream.responses.append({'events': [
+            {'choices': [{'delta': {'content': '{"course":"半截分析"'}}]}, '[DONE]']})
+        before = self.state()
+        self.call('POST', '/ai/analyze', {'exam_id': 1}, status=502)
+        self.assertEqual(len(self.upstream.requests), 1)
+        self.assertEqual(self.state(), before)
+
+    def test_job_progress_exposes_answer_but_omits_private_reasoning_and_profile_json(self):
+        from types import SimpleNamespace
+        from app.services import ai_jobs
+        job = SimpleNamespace(id='progress-test', kind='qa', status='running', request_id='',
+            result_json=None, error_message='', error_status=0)
+        try:
+            ai_jobs.update_progress(job.id, 'qa', dict(stage='answering', content='部分解答'))
+            self.assertEqual(ai_jobs.output(job)['progress']['content'], '部分解答')
+            ai_jobs.update_progress(job.id, 'qa', dict(stage='connecting', content=''))
+            self.assertEqual(ai_jobs.output(job)['progress']['content'], '')
+            self.assertNotIn('request_seconds', ai_jobs.output(job)['progress'])
+            # 独立画像任务不把未校验 JSON 作为正文展示。
+            ai_jobs.update_progress('profile-progress', 'profile', dict(stage='answering', content='{"target":"pass"}'))
+            job.id = 'profile-progress'
+            self.assertNotIn('content', ai_jobs.output(job)['progress'])
+        finally:
+            ai_jobs._progress.pop('progress-test', None)
+            ai_jobs._progress.pop('profile-progress', None)
 
 
 class ResponseStatsTests(unittest.TestCase):

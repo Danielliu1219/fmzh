@@ -22,7 +22,7 @@ const props=defineProps({materialId:Number,fileType:String,title:String,pages:{t
 const page=ref(null), imageUrl=ref(''),busy=ref(false),downloading=ref(false),error=ref('')
 let revision=0
 const canPreview=computed(()=>['png','jpg','jpeg'].includes(props.fileType) || (props.fileType==='pdf' && props.pages.length))
-const note=computed(()=>props.fileType==='pdf' ? '原页保留排版与公式；整页可能包含相邻题目，可点击图片放大。' : ['png','jpg','jpeg'].includes(props.fileType) ? '显示上传的原始图片，识别文字仅供检索。' : '课件按幻灯片号定位，Word 按段落定位；请下载原文件核对排版与公式。')
+const note=computed(()=>props.fileType==='pdf' ? '原页保留排版与公式，查看不消耗 Token。整页可能包含相邻题目，可点击图片放大。' : ['png','jpg','jpeg'].includes(props.fileType) ? '显示上传的原始图片，查看不消耗 Token，识别文字仅供检索。' : '课件按幻灯片号定位，Word 按段落定位；请下载原文件核对排版与公式。')
 function clear(){ if(imageUrl.value) URL.revokeObjectURL(imageUrl.value); imageUrl.value='' }
 function params(download=false){return {unit_id:props.unitId || undefined,revision:props.revision || undefined,page:props.fileType==='pdf' ? page.value : undefined,download}}
 async function loadImage(){

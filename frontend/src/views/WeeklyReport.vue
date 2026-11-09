@@ -7,19 +7,19 @@
       </div>
       <div class="head-actions">
         <el-button-group class="week-switch">
-          <el-button @click="shiftWeek(-1)">
+          <el-button :disabled="loading" @click="shiftWeek(-1)">
             <el-icon><ArrowLeft /></el-icon>
             上一周
           </el-button>
-          <el-button :disabled="weekOffset >= 0" @click="shiftWeek(1)">
+          <el-button :disabled="loading || weekOffset >= 0" @click="shiftWeek(1)">
             下一周
             <el-icon><ArrowRight /></el-icon>
           </el-button>
         </el-button-group>
         <el-button v-if="weekOffset !== 0" text type="primary" @click="resetWeek">回到最近 7 天</el-button>
-        <el-button type="primary" :loading="loading" @click="load">
+        <el-button type="primary" :loading="loading" @click="refreshReport">
           <el-icon v-if="!loading"><MagicStick /></el-icon>
-          {{ loading ? 'AI 正在评测…' : data ? '重新生成' : '生成周报' }}
+          {{ loading ? '正在刷新…' : '刷新周报' }}
         </el-button>
         <el-button :disabled="loading || !data || !data.subjects.length" @click="onExportMarkdown">
           <el-icon><Download /></el-icon>
@@ -36,6 +36,10 @@
       <span>生成时间 {{ formatTime(data.generated_at) }}</span>
     </div>
 
+    <p class="head-sub">点击“刷新周报”更新数据与 AI 评测，其他时间显示上次保存的结果。</p>
+    <el-alert v-if="error && data" :title="error + '，已保留上次周报。'" type="warning" :closable="false" />
+    <el-empty v-if="!loading && !error && !data" description="此区间还没有已保存的周报，点击刷新周报生成。" />
+
     <!-- ===== 首次加载骨架 ===== -->
     <template v-if="loading && !data">
       <div class="sk-tiles">
@@ -49,10 +53,10 @@
     </template>
 
     <!-- ===== 错误状态 ===== -->
-    <div v-else-if="error" class="panel error-box">
-      <el-result icon="warning" title="周报生成失败" :sub-title="error">
+    <div v-else-if="error && !data" class="panel error-box">
+      <el-result icon="warning" title="周报暂时无法读取" :sub-title="error">
         <template #extra>
-          <el-button type="primary" round @click="load">重新生成</el-button>
+          <el-button type="primary" round @click="restoreReport(weekOffset === 0 ? undefined : weekStart)">重试读取</el-button>
         </template>
       </el-result>
     </div>
@@ -191,9 +195,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onActivated, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dashboardApi } from '../api'
+import { onBeforeRouteLeave } from 'vue-router'
+import { usePendingWork } from '../composables/usePendingWork'
 import { USE_MOCK, getToday } from '../mock/dashboard'
 import { mockWeeklyReport } from '../mock/pages'
 
@@ -207,9 +213,14 @@ const addDays = (s, n) => {
 }
 
 const todayStr = getToday()
-const loading = ref(true)
+const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const mockReports = new Map()
+let scrollTop = 0
+onBeforeRouteLeave(() => { scrollTop = window.scrollY })
+onActivated(() => { window.scrollTo({ top: scrollTop, behavior: 'instant' }) })
+usePendingWork(() => ({ busy: loading.value ? '周报读取或刷新' : '' }))
 const weekOffset = ref(0)
 
 const weekStart = computed(() => addDays(todayStr, -6 + weekOffset.value * 7))
@@ -267,13 +278,15 @@ const freeSubject = computed(() => data.value?.subjects.find((s) => s.exam_id ==
 const archivedSubjects = computed(() => data.value?.subjects.filter((s) => s.archived) ?? [])
 const dailyRows = computed(() => [...(data.value?.days ?? [])].reverse())
 
-const load = async () => {
+const refreshReport = async () => {
+  if (loading.value) return
   loading.value = true
   error.value = ''
   try {
     data.value = USE_MOCK
       ? await mockWeeklyReport(weekStart.value)
       : await dashboardApi.weeklyReport(weekStart.value)
+    if (USE_MOCK) mockReports.set(weekStart.value, data.value)
   } catch (e) {
     error.value = e?.response?.data?.detail || e?.message || '网络异常，请稍后重试'
   } finally {
@@ -285,13 +298,13 @@ const shiftWeek = (delta) => {
   const next = weekOffset.value + delta
   if (next > 0 || loading.value) return
   weekOffset.value = next
-  load()
+  restoreReport(weekStart.value)
 }
 
 const resetWeek = () => {
   if (weekOffset.value === 0 || loading.value) return
   weekOffset.value = 0
-  load()
+  restoreReport(weekStart.value)
 }
 
 const onExportMarkdown = () => {
@@ -358,7 +371,20 @@ const onExportMarkdown = () => {
   ElMessage.success('已下载 Markdown 周报')
 }
 
-onMounted(load)
+const restoreReport = async (start) => {
+  if (loading.value) return
+  loading.value = true
+  error.value = ''
+  data.value = null
+  try {
+    data.value = USE_MOCK
+      ? (start ? mockReports.get(start) : [...mockReports.values()].at(-1)) || null
+      : await dashboardApi.savedWeeklyReport(start)
+  } catch (e) {
+    error.value = e?.response?.data?.detail || e?.message || '上次周报暂时无法读取，请重试'
+  } finally { loading.value = false }
+}
+onMounted(() => restoreReport())
 </script>
 
 <style scoped>

@@ -17,6 +17,7 @@ from ..services.study_sources import library, material_units, unit_detail
 from ..services.source_evidence import content_hash
 from ..services.mistakes import save_question
 from ..services.task_conflicts import lock_schedule
+from ..services.source_qa import help_history, pending_help
 from ..utils.security import get_current_user
 
 router = APIRouter()
@@ -56,6 +57,13 @@ def sources(exam_id: int, analysis_id: int | None = None, user: User = Depends(g
 @router.get('/{material_id}/unit')
 def detail(material_id: int, unit_id: str = Query(max_length=160), user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return unit_detail(checked_unit(own_material(db, user, material_id), unit_id))
+
+
+@router.get('/{material_id}/ai-help')
+def ai_help(material_id: int, unit_id: str = Query(max_length=160),
+            user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    unit = checked_unit(own_material(db, user, material_id), unit_id)
+    return dict(messages=help_history(db, user.id, unit), pending_jobs=pending_help(db, user.id, unit_id))
 
 
 class DifficultIn(BaseModel):

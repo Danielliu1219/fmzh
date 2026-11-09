@@ -13,3 +13,11 @@ test('source labels preserve exact location and distinguish local matching',()=>
   assert.match(sourceMethod(items[1],'极限'),/引文/)
   assert.match(sourceMethod(items[0],'极限',['a']),/已关联/)
 })
+test('考频引用只关联同版本且原文范围重合的题目', () => {
+  const units = [{ ...items[0], revision: 'current', start: 10, end: 40 },
+    { ...items[0], id: 'next', revision: 'current', start: 40, end: 80 }]
+  const citations = [{ match: 'quote', material_id: 2, content_hash: 'current', start: 20, end: 30 }]
+  assert.deepEqual(matchingSources(units, '考点描述', [], citations).map(unit => unit.id), ['a'])
+  assert.equal(sourceMethod(units[0], '考点描述', [], citations), '按原文引文定位')
+  assert.deepEqual(matchingSources(units, '考点描述', [], [{ ...citations[0], content_hash: 'old' }]), [])
+})

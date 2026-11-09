@@ -1,4 +1,4 @@
-"""按用户/北京时间自然日计量真实HTTP调用；重试也计次，超额不发请求。"""
+"""按用户/北京时间自然日记录真实HTTP调用。"""
 
 from contextvars import ContextVar
 from functools import wraps
@@ -42,9 +42,6 @@ def reserve_call():
             raise HTTPException(401, "会话已失效，本次未调用大模型")
         day = beijing_day()
         row = db.get(ModelUsage, (uid, day))
-        limit = max(1, settings.LLM_DAILY_LIMIT)
-        if row and row.calls >= limit:
-            raise HTTPException(429, f"今日真实大模型调用已达{limit}次上限，请明天再试")
         if row is None:
             row = ModelUsage(user_id=uid, usage_date=day, calls=0)
             db.add(row)
@@ -55,11 +52,10 @@ def reserve_call():
 def limits(db, user_id):
     row = db.get(ModelUsage, (user_id, beijing_day()))
     used = row.calls if row else 0
-    limit = max(1, settings.LLM_DAILY_LIMIT)
     return dict(
-        daily_limit=limit,
+        daily_limit=None,
         used_calls=used,
-        remaining_calls=max(0, limit - used),
+        remaining_calls=None,
         mock=settings.LLM_MOCK,
         timezone="Asia/Shanghai",
     )

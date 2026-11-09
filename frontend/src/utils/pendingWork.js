@@ -7,8 +7,11 @@ export function createPendingWork() {
       entries.set(key, {read, prepare})
       return () => entries.delete(key)
     },
-    state() {
-      const states = [...entries.values()].map(e => e.read() || {})
+    state({ navigation = false } = {}) {
+      const states = [...entries.values()].map(e => {
+        const state = e.read() || {}
+        return navigation && state.retainOnNavigation ? { ...state, warning: [] } : state
+      })
       const unique = key => [...new Set(states.flatMap(s => [s[key] || []].flat()).filter(Boolean))]
       return {busy:unique('busy'), warnings:unique('warning')}
     },

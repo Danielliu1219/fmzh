@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_MB: int = Field(20, ge=1, le=20)
     USER_STORAGE_LIMIT_MB: int = Field(256, ge=1)
-    LLM_DAILY_LIMIT: int = Field(50, ge=1)
     BACKUP_ENABLED: bool = True
     BACKUP_INTERVAL_HOURS: float = Field(24, gt=0, le=24)
     BACKUP_DIR: str = ''

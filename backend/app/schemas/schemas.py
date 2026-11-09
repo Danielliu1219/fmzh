@@ -295,6 +295,8 @@ class QaMessageOut(BaseModel):
     role: str  # user / assistant
     content: str
     created_at: datetime
+    source_unit_id: Optional[str] = None
+    source_help_kind: Optional[str] = None
 
 
 class QaConversationOut(BaseModel):
@@ -315,11 +317,15 @@ class QaAskIn(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
     source_material_id: Optional[int] = Field(None, ge=1)
     source_unit_id: Optional[str] = Field(None, max_length=160)
+    source_help_kind: Optional[Literal['hint', 'answer']] = None
+    source_regenerate: bool = False
 
     @model_validator(mode='after')
     def source_pair(self):
         if (self.source_material_id is None) != (self.source_unit_id is None):
             raise ValueError('资料与定位ID需要同时提供')
+        if (self.source_help_kind or self.source_regenerate) and self.source_unit_id is None:
+            raise ValueError('题目解答需要指定来源')
         return self
 
 

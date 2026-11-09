@@ -64,7 +64,7 @@ export const aiApi = {
   evidence: (examId, data) => request.post(`/ai/analyses/${examId}/evidence`, data),
   mastery: (examId) => request.get(`/ai/analyses/${examId}/mastery`),
   limits: () => request.get('/ai/limits'),
-  profile: (data) => modelJob('profile', data),
+  profile: (data, onProgress) => modelJob('profile', data, onProgress),
   completeProfile: (data) => request.post('/ai/profile/complete', data),
   savedProfile: (examId) => request.get(`/ai/profile/${examId}`, { quietNotFound: true }),
   analyze: (examId, onProgress) => modelJob('analysis', { exam_id: examId }, onProgress),
@@ -79,7 +79,7 @@ export const aiApi = {
   createQaConversation: (examId) =>
     request.post('/ai/qa/conversations', { exam_id: examId }),
   qaConversation: (id) => request.get(`/ai/qa/conversations/${id}`),
-  askQa: (id, content, source={}) => modelJob('qa', { conversation_id:id,content,...source }),
+  askQa: (id, content, source={}, onProgress) => modelJob('qa', { conversation_id:id,content,...source }, onProgress),
   latestAnalysis: (examId) => request.get(`/ai/analyses/${examId}`, { quietNotFound: true }),
 }
 
@@ -113,6 +113,7 @@ export const dashboardApi = {
   statsOverview: (days) => request.get('/stats/overview', { params: { days } }),
   // 5.3 备考周报（按需生成；week_start 为空时统计最近 7 天）
   weeklyReport: (weekStart) => modelJob('weekly', { week_start: weekStart }),
+  savedWeeklyReport: (weekStart) => request.get('/reports/weekly', { params: { week_start: weekStart } }),
 }
 
 export const focusApi = {
